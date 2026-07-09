@@ -464,9 +464,12 @@ function SessionDetail({ app }: { app: AppState }) {
   const [detail, setDetail] = useState<SessionDetailData | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [nowSec, setNowSec] = useState(0);
+  // Real recording length once the video's metadata resolves — used to scale the transcript/slide
+  // timeline to the video so they track it end-to-end (0 until known / no recording).
+  const [vidDur, setVidDur] = useState(0);
   useEffect(() => {
     let alive = true;
-    setDetail(null); setSel(0);
+    setDetail(null); setSel(0); setNowSec(0); setVidDur(0);
     if (!app.selectedSessionId) return;
     (async () => {
       try {
@@ -514,21 +517,41 @@ function SessionDetail({ app }: { app: AppState }) {
 
   if (real && detail) {
     const s = detail.session;
-    const sourcesCited = new Set(exchanges.flatMap((e) => e.sourceIds)).size;
+    const sourcesCited = new Set(turns.filter((t) => t.speaker === "rep").flatMap((t) => t.sourceIds)).size;
     const gate = detail.audit.filter((a) => a.type === "compliance_decision");
     const approved = gate.filter((a) => a.payload.decision === "approved").length;
     const summary = [
       { label: "Turns", value: String(turns.length), color: "var(--dn-fg)" },
       { label: "Questions", value: String(s.questionCount), color: "var(--dn-fg)" },
-      { label: "Gate cleared", value: `${approved}/${gate.length || exchanges.length}`, color: "var(--dn-success)" },
+      { label: "Gated outputs", value: `${approved}/${gate.length || exchanges.length}`, color: "var(--dn-success)" },
       { label: "Sources cited", value: String(sourcesCited), color: "var(--dn-brand-base)" },
       { label: "Compliance", value: COMP_LABEL[s.complianceStatus] ?? s.complianceStatus, color: "var(--dn-fg)" },
     ];
     // Align the timeline to the FIRST turn — the recording starts at the replica's
     // first live frame (~the greeting), not the session-created timestamp — so the
     // transcript + slide changes track the video.
+    // Replay timeline. Turn `at` timestamps are stamped at API-call time, so a burst of turns (a
+    // deck walkthrough, or several Tavus replies logged back-to-back) collapses to the same second —
+    // which made every line show ~00:18 and the slide jump to the last turn and freeze. Instead we
+    // build a MONOTONIC timeline: each turn starts no earlier than the previous turn's estimated
+    // speaking time, while a real pause (a larger `at` gap) is preserved. When a recording exists we
+    // scale the whole timeline to its true length so the transcript + slide track the video.
+    type Turn = (typeof turns)[number];
     const startMs = turns[0]?.at ? Date.parse(turns[0]!.at!) : Date.parse(s.startedAt);
-    const offsetOf = (t: { at?: string | null }) => (t.at ? Math.max(0, (Date.parse(t.at) - startMs) / 1000) : 0);
+    const estDur = (t: Turn) => Math.min(32, Math.max(2.5, (t.text ?? "").trim().split(/\s+/).filter(Boolean).length * 0.42)); // ~140 wpm, clamped
+    const rawOffsets: number[] = [];
+    for (let i = 0; i < turns.length; i++) {
+      const at = turns[i]!.at ? Math.max(0, (Date.parse(turns[i]!.at!) - startMs) / 1000) : 0;
+      rawOffsets[i] = i === 0 ? 0 : Math.max(at, rawOffsets[i - 1]! + estDur(turns[i - 1]!));
+    }
+    const estTotal = (rawOffsets[turns.length - 1] ?? 0) + (turns.length ? estDur(turns[turns.length - 1]!) : 0);
+    const recordingShort = vidDur > 1 && estTotal > vidDur + 8;
+    const scale = vidDur > 1 && estTotal > 0 && !recordingShort ? vidDur / estTotal : 1;
+    const offsets = rawOffsets.map((o) => o * scale);
+    const offsetOf = (t: Turn) => { const i = turns.indexOf(t); return i >= 0 ? offsets[i]! : 0; };
+    // Duration: the real recording length if known; else the recorded seconds; else the estimated
+    // transcript span — so the header shows a real length, never "00:00" for a live/Tavus session.
+    const effectiveDuration = Math.round(Math.max(s.durationSeconds || 0, estTotal, recordingShort ? vidDur : 0));
     const seekTo = (off: number, i: number) => {
       setSel(i);
       const v = videoRef.current;
@@ -563,7 +586,12 @@ function SessionDetail({ app }: { app: AppState }) {
         {back}
         <div style={eyebrow}>Session Detail · live record</div>
         <h1 style={{ ...h1, marginBottom: 6 }}>{s.hcp} — session review</h1>
-        <p style={{ font: "400 12.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "0 0 12px" }}>{app.selectedSessionId} · {mmss(s.durationSeconds)} · {detail.audit.length} audited events — every turn is a provable record.</p>
+        <p style={{ font: "400 12.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "0 0 12px" }}>{app.selectedSessionId} · {mmss(effectiveDuration)} · {detail.audit.length} audited events — every turn is a provable record.</p>
+        {recordingShort && (
+          <div style={{ margin: "0 0 12px", padding: "9px 12px", border: "1px solid #f3c969", background: "#fff8e6", borderRadius: 8, font: "600 11.5px/1.45 var(--dn-font-sans)", color: "#7a4b00" }}>
+            Recording ends at {mmss(Math.round(vidDur))}, but the transcript runs to {mmss(Math.round(estTotal))}. Later transcript lines were logged after the captured Tavus media stopped, so this replay is not a clean recording.
+          </div>
+        )}
         {/* Compact stat strip (was a tall 5-card grid) — keeps the replay above the fold. */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
           {summary.map((a) => (
@@ -584,6 +612,7 @@ function SessionDetail({ app }: { app: AppState }) {
                 controls
                 src={s.recordingUrl}
                 onTimeUpdate={(e) => setNowSec(e.currentTarget.currentTime)}
+                onDurationChange={(e) => { const d = e.currentTarget.duration; if (isFinite(d) && d > 0) setVidDur(d); }}
                 // MediaRecorder webm has no duration header (duration === Infinity), which
                 // breaks the scrubber + click-to-seek; force a seek to the end so the browser
                 // computes the real duration, then snap back to the start.

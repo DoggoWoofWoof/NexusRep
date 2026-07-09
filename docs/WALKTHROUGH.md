@@ -26,8 +26,34 @@ behind them. Implemented stage-by-stage with review gates.
 | 9 — Analytics console | ✅ done | Live aggregation across sessions/follow-ups/content/targeting |
 | 10 — Integration + hardening, demo + handover | ✅ done | Brand generalization (any brand = a `BrandProfile`, no code edits) + self-serve setup/upload, humanlike conversation, clean demo recording, full E2E (functional + visual) green end-to-end |
 
-**Test status:** `typecheck` clean · **168 unit/integration tests** pass (1 guarded live test skipped) ·
+**Test status:** `typecheck` clean · **169 unit/integration tests** pass (1 guarded live test skipped) ·
 **17 Playwright E2E pass** (14 functional lifecycle + 3 visual) with the deterministic Playwright server.
+
+### Latest — Session recording + replay sync (2026-07-09)
+
+Fixed the "Session review" replay and recording trust issues:
+
+- **Mic and typed turns now share the same NexusRep runtime path.** Tavus voice calls
+  `/api/tavus/llm`, but that endpoint now delegates to `ConversationService.turn()` just like
+  typed chat. Tavus is ASR/avatar transport only; classification, retrieval, composition,
+  compliance gate, transcript/source/slide logging, follow-up, and CRM outbox all live in NexusRep.
+- **Duration no longer shows `00:00`.** Review/list APIs derive duration from the actual transcript
+  span when a live/Tavus call never called `SessionService.end()`. Regression covered in
+  `tests/sessions.test.ts`.
+- **Replay metrics are computed from real records.** Turns/questions/audit/gated outputs come from
+  session turns + audit events. "Sources cited" now counts all rep turns, not just the first rep turn
+  after each HCP question, so multi-slide overview sources are included.
+- **Short recordings are called out honestly.** If a WebM ends before the transcript timeline, the
+  review page warns that later lines were logged after captured Tavus media stopped instead of
+  pretending the video and transcript are synced.
+- **Overview narration no longer logs six slides at one instant.** The presentation overview endpoint
+  spaces rep turns by estimated speaking time, matching the video echo playback cadence.
+- **Recorder now fails closed.** `scripts/record-full-tavus-session.mjs` stops producing a "clean"
+  output if the Tavus replica leaves live state or does not emit a real `stopped_speaking` event for a
+  prompted answer. It should not attach a longer transcript to a shorter/dead video anymore.
+- Verified saved session `session_mrdcoo0zn963lj`: persisted duration was `0`, derived transcript span
+  is `721s`, turns `22`, questions `8`, gated outputs `13/13`, audit events `59`, sources cited `6`
+  (`ans_title`, `ans_moa`, `ans_program`, `ans_status`, `ans_isi`, `ans_contact`).
 
 ### Latest — First-party KB/RAG + deck presentation skill (2026-07-09)
 

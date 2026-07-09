@@ -7,7 +7,7 @@
 import { NextResponse } from "next/server";
 import { getContainer } from "@lib/container";
 import { hcpNameOf } from "@lib/demo-seed";
-import type { SessionComplianceStatus } from "@modules/sessions";
+import { deriveSessionDurationSeconds, type SessionComplianceStatus } from "@modules/sessions";
 import type { FollowUpType } from "@modules/followups";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +42,7 @@ export async function GET(): Promise<NextResponse> {
       id: s.id,
       hcp: hcpNameOf(s.hcpId),
       date: s.startedAt.replace("T", " ").slice(0, 16),
-      duration: mmss(s.durationSeconds),
+      duration: mmss(deriveSessionDurationSeconds(s)),
       questions: s.questionCount,
       comp: COMP[s.complianceStatus].label,
       compTone: COMP[s.complianceStatus].tone,

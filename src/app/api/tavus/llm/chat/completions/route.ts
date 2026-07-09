@@ -10,8 +10,10 @@
  * a streamable endpoint). Non-streaming requests get a normal completion object.
  */
 
+import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { env } from "@lib/env";
+import { getActiveTavusSession } from "@lib/tavus-session";
 
 export const dynamic = "force-dynamic";
 
@@ -46,11 +48,16 @@ export async function POST(req: Request): Promise<Response> {
     reply = "Connection confirmed.";
   } else if (text) {
     const c = await getContainer();
-    // Gate ONLY — do not log turns here. The live video client (TavusStage) logs
-    // the actual spoken utterances (both the doctor's ASR and the rep's reply) into
-    // the call's own session, so logging here too would double every rep line.
-    const output = await c.orchestrator.handleTurn({
-      sessionId: c.demo.sessionId, // audit context only; transcript is client-logged
+    // Tavus supplies ASR + avatar transport only. The actual turn goes through the same
+    // ConversationService used by typed chat, so mic and chat share one NexusRep path:
+    // log HCP turn -> orchestrate -> gate -> log rep turn/source/slide -> CRM/follow-up.
+    let sessionId = asId<"session_id">(getActiveTavusSession() ?? (c.demo.sessionId as string));
+    if (!(await c.sessions.get(sessionId))) {
+      const fresh = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId, seed: sessionId === c.demo.sessionId ? "demo" : undefined });
+      sessionId = fresh.id;
+    }
+    const { output } = await c.conversation.turn({
+      sessionId,
       hcpId: c.demo.hcpId,
       audience: c.demo.audience,
       indication: c.demo.indication,

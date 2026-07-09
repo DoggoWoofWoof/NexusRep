@@ -5,9 +5,10 @@
  * session transcript is the faithful, both-sided record of the actual call,
  * time-ordered and reviewable alongside the recording (YouTube-style).
  *
- * This is the transcript source of truth for Tavus calls; the custom-LLM endpoint
- * only runs the compliance gate and returns text (it does not log), so nothing is
- * double-counted.
+ * This is a fallback transcript path for local video calls where Tavus cannot
+ * reach our custom-LLM endpoint. In normal Tavus calls, /api/tavus/llm logs via
+ * ConversationService.turn(), including approved source IDs and slide IDs, so
+ * this endpoint stays quiet and nothing is double-counted.
  */
 
 import { NextResponse } from "next/server";

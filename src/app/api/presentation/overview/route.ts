@@ -31,6 +31,11 @@ function normalized(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
+function estimateSpeechMs(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(5500, Math.min(28000, words * 360));
+}
+
 export async function POST(req: Request): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as {
     text?: unknown;
@@ -58,6 +63,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   await c.sessions.appendTurn(sessionId, { speaker: "hcp", text });
+  let nextRepAt = Date.now() + 350;
 
   const steps = await c.presentation.overview({
     context: { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market },
@@ -115,7 +121,9 @@ export async function POST(req: Request): Promise<NextResponse> {
       text: finalText,
       sourceIds: decision.decision === "approved" ? sourceIds : [],
       ...(decision.decision === "approved" && detailAidSlideId ? { detailAidSlideId } : {}),
+      at: new Date(nextRepAt).toISOString(),
     });
+    nextRepAt += estimateSpeechMs(finalText) + 900;
     await c.sessions.recordOutcome(sessionId, { route, decision: decision.decision });
     await c.audit.record(sessionId, "response_output", {
       route,

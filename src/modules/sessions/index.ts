@@ -73,6 +73,23 @@ function worse(a: SessionComplianceStatus, b: SessionComplianceStatus): SessionC
   return SEVERITY[b] > SEVERITY[a] ? b : a;
 }
 
+export function sessionTranscriptSpanSeconds(session: Pick<ConversationSession, "startedAt" | "turns">): number {
+  const times = session.turns
+    .map((turn) => (turn.at ? Date.parse(turn.at) : NaN))
+    .filter(Number.isFinite);
+  if (times.length >= 2) {
+    return Math.max(0, Math.round((Math.max(...times) - Math.min(...times)) / 1000));
+  }
+  if (times.length === 1) {
+    return Math.max(0, Math.round((times[0]! - Date.parse(session.startedAt)) / 1000));
+  }
+  return 0;
+}
+
+export function deriveSessionDurationSeconds(session: ConversationSession): number {
+  return Math.max(0, session.durationSeconds, sessionTranscriptSpanSeconds(session));
+}
+
 export class SessionService {
   private readonly sessions: Repository<ConversationSession>;
   constructor(repos: RepositoryFactory = new MemoryRepositoryFactory()) {

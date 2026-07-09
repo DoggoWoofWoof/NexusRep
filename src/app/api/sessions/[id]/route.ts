@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { hcpNameOf } from "@lib/demo-seed";
+import { deriveSessionDurationSeconds } from "@modules/sessions";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +39,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       id: session.id,
       hcp: hcpNameOf(session.hcpId),
       startedAt: session.startedAt,
-      durationSeconds: session.durationSeconds,
+      durationSeconds: deriveSessionDurationSeconds(session),
       questionCount: session.questionCount,
       complianceStatus: session.complianceStatus,
       recordingUrl: session.recordingUrl ?? null,

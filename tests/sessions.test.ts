@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { asId } from "@lib/ids";
-import { SessionService, outcomeToStatus } from "@modules/sessions";
+import { SessionService, deriveSessionDurationSeconds, outcomeToStatus } from "@modules/sessions";
 import { ConversationService, type TurnOrchestrator, type TurnOutput } from "@modules/realtime";
 import { AuditService } from "@modules/audit";
 import { CrmOutbox } from "@modules/crm";
@@ -57,6 +57,17 @@ describe("SessionService", () => {
     const s = await svc.start({ aiRepId, hcpId, seed: "s3", startedAt: "2026-07-08T09:00:00.000Z" });
     const ended = await svc.end(s.id, { endedAt: "2026-07-08T09:07:48.000Z" });
     expect(ended?.durationSeconds).toBe(7 * 60 + 48);
+  });
+
+  it("derives review duration from transcript span when a live call was not explicitly ended", async () => {
+    const svc = new SessionService();
+    const s = await svc.start({ aiRepId, hcpId, seed: "s4", startedAt: "2026-07-08T09:00:00.000Z" });
+    await svc.appendTurn(s.id, { speaker: "rep", text: "hello", at: "2026-07-08T09:00:12.000Z" });
+    await svc.appendTurn(s.id, { speaker: "hcp", text: "question", at: "2026-07-08T09:01:30.000Z" });
+    await svc.appendTurn(s.id, { speaker: "rep", text: "answer", at: "2026-07-08T09:02:42.000Z" });
+    const after = await svc.get(s.id);
+    expect(after?.durationSeconds).toBe(0);
+    expect(after ? deriveSessionDurationSeconds(after) : 0).toBe(150);
   });
 
   it("maps routes to statuses", () => {

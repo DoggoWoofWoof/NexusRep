@@ -95,8 +95,10 @@ async function main() {
 
     for (const step of steps) {
       console.log(`Prompt: ${step.text}`);
+      await assertTavusLive(page);
       await runAskStep(page, step.text);
       await waitForReplicaStop(page, 65_000);
+      await assertTavusLive(page);
       await sleep(900);
     }
 
@@ -194,19 +196,29 @@ async function waitForRecorder(page) {
 
 async function waitForReplicaStop(page, timeoutMs) {
   const before = await stoppedCount(page);
-  await page
-    .waitForFunction(
-      (count) => (window.__nexusrepEvents || []).filter((e) => /replica\.stopped_speaking/i.test(e.type)).length > count,
-      before,
-      { timeout: timeoutMs },
-    )
-    .catch(async () => {
-      await sleep(10_000);
-    });
+  await page.waitForFunction(
+    (count) => (window.__nexusrepEvents || []).filter((e) => /replica\.stopped_speaking/i.test(e.type)).length > count,
+    before,
+    { timeout: timeoutMs },
+  );
 }
 
 async function stoppedCount(page) {
   return page.evaluate(() => (window.__nexusrepEvents || []).filter((e) => /replica\.stopped_speaking/i.test(e.type)).length);
+}
+
+async function assertTavusLive(page) {
+  const state = await page.evaluate(() => {
+    const t = window.__nexusrepTavus;
+    if (!t) return null;
+    return {
+      stage: typeof t.getStage === "function" ? t.getStage() : undefined,
+      note: typeof t.getNote === "function" ? t.getNote() : undefined,
+    };
+  });
+  if (state?.stage !== "live") {
+    throw new Error(`Tavus left the live state during recording: ${JSON.stringify(state)}`);
+  }
 }
 
 async function pollSession(sessionId) {

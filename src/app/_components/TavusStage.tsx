@@ -20,7 +20,9 @@ export interface TavusStageHandle {
   speak: (text: string) => void;
 }
 
-export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; bare?: boolean }>(function TavusStage({ onClose, bare = false }, ref) {
+type RepTurnNotice = { text: string; detailAidSlideId?: string | null; sourceIds?: string[] };
+
+export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void }>(function TavusStage({ onClose, bare = false, onRepTurn }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const callRef = useRef<CallObj | null>(null);
@@ -28,6 +30,12 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
   const sessionIdRef = useRef<string | null>(null);
   const convIdRef = useRef<string>("");
   const lastUtterRef = useRef<string>("");
+  const onRepTurnRef = useRef<typeof onRepTurn>(onRepTurn);
+  // When Tavus can reach our LLM endpoint, /api/tavus/llm logs the authoritative transcript (with
+  // detail-aid slideIds). The client then logs NOTHING (avoids double-logging). Only when Tavus
+  // can't reach us (localhost / no public URL) does the client log the spoken utterances as a
+  // text-only fallback so the transcript isn't empty.
+  const serverLogsRef = useRef(false);
 
   // Make the replica speak our (already gated) text verbatim. Tavus "echo"
   // interaction over the Daily data channel; we interrupt any current speech
@@ -56,6 +64,28 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
   const [stage, setStage] = useState<Stage>("loading");
   const [note, setNote] = useState("");
   const [caption, setCaption] = useState("");
+
+  useEffect(() => {
+    onRepTurnRef.current = onRepTurn;
+  }, [onRepTurn]);
+
+  async function notifyAuthoritativeRepTurn(sessionId: string, utterance: string) {
+    const notify = onRepTurnRef.current;
+    if (!notify) return;
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { turns?: RepTurnNotice[] };
+      const reps = (data.turns ?? []).filter((t) => t && "text" in t);
+      const normalized = utterance.replace(/\s+/g, " ").trim();
+      const turn =
+        [...reps].reverse().find((t) => t.text.replace(/\s+/g, " ").trim() === normalized) ??
+        [...reps].reverse().find((t) => t.text);
+      if (turn) notify(turn);
+    } catch {
+      // Slide hydration is best-effort; the transcript still lives server-side.
+    }
+  }
 
   useEffect(() => {
     const w = window as unknown as { __nexusrepTavus?: unknown };
@@ -87,6 +117,8 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
         // recording to the right session). Harmless in normal use.
         (window as unknown as { __nexusrep?: unknown }).__nexusrep = { sessionId: d.sessionId ?? null, conversationUrl: d.conversationUrl };
         if (d.reachableLlm === false) setNote(d.note);
+        // Reachable → the server (/api/tavus/llm) is the transcript source of truth; client stays quiet.
+        serverLogsRef.current = d.reachableLlm === true;
         setStage("joining");
         const Daily = (await import("@daily-co/daily-js")).default;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -147,8 +179,11 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
           const stream = new MediaStream([ev.track]);
           if (ev.track.kind === "video" && videoRef.current) { videoRef.current.srcObject = stream; void videoRef.current.play?.(); }
           if (ev.track.kind === "audio" && audioRef.current) { audioRef.current.srcObject = stream; void audioRef.current.play?.(); }
-          // Start recording shortly after the video track arrives (give audio a beat).
-          if (ev.track.kind === "video") setTimeout(maybeStartRec, 700);
+          // Fallback: if the replica never emits an utterance event, still start recording a few
+          // seconds after the video track arrives so we never miss a clip. The PRIMARY start is on
+          // the replica's first spoken words (see the utterance handler) — that trims the connect
+          // boot + any idle before the rep speaks.
+          if (ev.track.kind === "video") setTimeout(maybeStartRec, 6000);
         });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         call.on("app-message", (ev: any) => {
@@ -167,11 +202,20 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
           // Log BOTH sides into the call's session (the transcript source of truth).
           const role = String(props.role ?? "").toLowerCase();
           const speaker = role.includes("replica") ? "rep" : role.includes("user") ? "hcp" : null;
+          // Begin the recording at the replica's FIRST words (the greeting) so the clip trims the
+          // "Connecting" boot + any idle before the rep speaks. No-op once already recording.
+          if (speaker === "rep") maybeStartRec();
           const sid = sessionIdRef.current;
           if (!speaker || !sid) return;
           const key = `${speaker}:${utter}`;
           if (key === lastUtterRef.current) return; // client-side dedup of re-emits
           lastUtterRef.current = key;
+          // Only log from the client when the server can't (unreachable LLM). When reachable,
+          // /api/tavus/llm already logged this turn with its slideId — logging here would double it.
+          if (serverLogsRef.current) {
+            if (speaker === "rep") void notifyAuthoritativeRepTurn(sid, utter);
+            return;
+          }
           void fetch("/api/sessions/utterance", {
             method: "POST",
             headers: { "Content-Type": "application/json" },

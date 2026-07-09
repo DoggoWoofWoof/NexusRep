@@ -11,6 +11,7 @@ import { getContainer } from "@lib/container";
 import { env } from "@lib/env";
 import { getRealtimeProvider } from "@modules/vendors";
 import { resolveBrandProfile, setupAnswersOf } from "@modules/brand";
+import { setActiveTavusSession } from "@lib/tavus-session";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,11 @@ export async function POST(): Promise<NextResponse> {
   // that call (not pooled into the shared demo session). The recording attaches
   // to it via the recording_ready webhook (keyed by the Tavus conversation id).
   const hist = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
+  // Mark this as the active call so /api/tavus/llm logs the authoritative transcript here (with
+  // slideIds), and log the opening greeting once server-side (Tavus speaks it directly, not via
+  // the LLM endpoint, so the endpoint never sees it).
+  setActiveTavusSession(hist.id);
+  if (persona.customGreeting) await c.sessions.appendTurn(hist.id, { speaker: "rep", text: persona.customGreeting });
 
   let session;
   try {
