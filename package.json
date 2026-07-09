@@ -1,0 +1,43 @@
+{
+  "name": "nexusrep",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NexusRep — AI-first pharma AI Rep Studio. Source-agnostic, vendor-agnostic, CRM-compatible.",
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "dev:webpack": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:report": "playwright show-report",
+    "e2e:update-snapshots": "playwright test --update-snapshots"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.105.0",
+    "@daily-co/daily-js": "^0.91.0",
+    "@electric-sql/pglite": "^0.5.4",
+    "@xenova/transformers": "^2.17.2",
+    "jszip": "^3.10.1",
+    "next": "^15.1.6",
+    "pdf-parse": "^2.4.5",
+    "pptxgenjs": "^4.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "@types/node": "^22.10.7",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

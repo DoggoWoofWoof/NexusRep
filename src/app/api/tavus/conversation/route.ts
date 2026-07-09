@@ -1,0 +1,90 @@
+/**
+ * Starts a Tavus CVI conversation for the HCP preview and returns the join URL.
+ * The persona is created with its custom-LLM layer pointed at our compliance
+ * endpoint (/api/tavus/llm), so the replica only ever speaks approved, gated
+ * text. When no TAVUS_API_KEY is set the resolver returns the mock (no join URL)
+ * and we report `configured: false` so the UI can fall back to the 3D avatar.
+ */
+
+import { NextResponse } from "next/server";
+import { getContainer } from "@lib/container";
+import { env } from "@lib/env";
+import { getRealtimeProvider } from "@modules/vendors";
+import { resolveBrandProfile, setupAnswersOf } from "@modules/brand";
+
+export const dynamic = "force-dynamic";
+
+export async function POST(): Promise<NextResponse> {
+  const c = await getContainer();
+  const provider = getRealtimeProvider();
+  // Persona is brand config resolved from the Setup Assistant's answers — so what the brand
+  // user set by chatting (name / greeting / audience) is what the live replica speaks.
+  const draft = (await c.studio.get(c.demo.aiRepId))?.draft;
+  const persona = resolveBrandProfile(c.brand, setupAnswersOf(draft)).persona;
+
+  // Each video call is its own reviewable session, so its transcript is exactly
+  // that call (not pooled into the shared demo session). The recording attaches
+  // to it via the recording_ready webhook (keyed by the Tavus conversation id).
+  const hist = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
+
+  let session;
+  try {
+    session = await provider.startSession({
+      record: true,
+      callbackUrl: `${env.publicBaseUrl}/api/tavus/webhook`,
+      sessionId: hist.id,
+      systemPrompt: persona.systemPrompt,
+      customGreeting: persona.customGreeting,
+      context: persona.context,
+      customLlm: {
+        baseUrl: `${env.publicBaseUrl}/api/tavus/llm`,
+        apiKey: env.tavusLlmKey || undefined,
+        model: "nexusrep-compliance",
+      },
+      replicaId: env.tavusReplicaId || undefined,
+      hotwords: persona.hotwords,
+      language: persona.language,
+      tools: [],
+      // Routing (off-label→MSL, AE→PV) is handled inside our custom-LLM endpoint, so
+      // no inline persona tools are needed. External tool-calling would use Tavus's
+      // /v2/tools registry. No external_voice_id — the replica uses its default voice.
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({
+      provider: provider.name,
+      configured: false,
+      conversationUrl: null,
+      token: null,
+      sessionId: hist.id,
+      reachableLlm: !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl),
+      note: `Tavus could not start this conversation: ${message}`,
+    });
+  }
+
+  // Link the Tavus conversation id to our per-call session, so the recording_ready
+  // callback attaches the playback URL to the same session the transcript lives in.
+  if (session.transportUrl) {
+    await c.sessions.setTavusConversation(hist.id, session.id);
+  }
+
+  // Tavus's servers call our custom-LLM endpoint to get each reply. If our public
+  // URL is localhost they can't reach it, so the replica will greet but stay silent
+  // on HCP turns until NEXUSREP_PUBLIC_URL points at a public tunnel/deploy.
+  const reachableLlm = !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl);
+  return NextResponse.json({
+    provider: provider.name,
+    configured: Boolean(session.transportUrl),
+    conversationUrl: session.transportUrl ?? null,
+    token: session.token ?? null,
+    // Our reviewable session id (the client logs utterances here). The Tavus
+    // conversation id is separate and lives on the session as tavusConversationId.
+    sessionId: hist.id,
+    reachableLlm,
+    note: !session.transportUrl
+      ? "Set TAVUS_API_KEY (and TAVUS_REPLICA_ID) to enable the live Tavus avatar; using the built-in 3D avatar meanwhile."
+      : reachableLlm
+        ? "Live Tavus replica — replies produced by our compliance endpoint."
+        : "Replica renders and greets, but replies need a public NEXUSREP_PUBLIC_URL so Tavus can reach our compliance endpoint.",
+  });
+}

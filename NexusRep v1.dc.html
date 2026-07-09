@@ -1,0 +1,1717 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link rel="stylesheet" href="./colors_and_type.css"/>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body { font-family: var(--dn-font-sans); background: var(--dn-bg); color: var(--dn-fg); -webkit-font-smoothing: antialiased; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; border: 2px solid #fff; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    input, select, button, textarea { font-family: inherit; }
+    nav::-webkit-scrollbar { width: 6px; }
+    nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); border: none; border-radius: 3px; }
+    nav::-webkit-scrollbar-track { background: transparent; }
+    @keyframes dn-wave { 0%,100% { transform: scaleY(0.25); } 50% { transform: scaleY(1); } }
+    @keyframes dn-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+    @keyframes dn-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</helmet>
+
+<div style="height: 100vh; overflow: hidden;">
+
+  <!-- ============================================================ BRAND CONSOLE ============================================================ -->
+  <div style="display: {{ brandDisplay }}; height: 100vh;">
+    <div style="display: flex; height: 100%; overflow: hidden;">
+
+      <!-- LEFT NAV RAIL -->
+      <aside style="width: 236px; flex-shrink: 0; background: var(--dn-brand-dark); color: #fff; display: flex; flex-direction: column; border-right: 1px solid rgba(255,255,255,.07);">
+        <div style="padding: 17px 18px 15px; border-bottom: 1px solid rgba(255,255,255,.08); display: flex; align-items: center; gap: 10px;">
+          <img src="./assets/docnexus-logo.png" alt="DocNexus" style="height: 21px;"/>
+          <span style="font: 700 12.5px/1 var(--dn-font-sans); padding: 3px 7px; background: rgba(96,165,250,.2); color: #bfdbfe; border-radius: 5px;">NexusRep</span>
+        </div>
+        <nav style="flex: 1; overflow-y: auto; padding: 10px 10px; display: flex; flex-direction: column; gap: 1px;">
+          <div style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .12em; color: rgba(255,255,255,.38); padding: 12px 12px 7px;">PLAN</div>
+          <sc-for list="{{ navPlan }}" as="item" hint-placeholder-count="4">
+            <div style="{{ item.style }}" style-hover="background: rgba(96,165,250,.13);" onClick="{{ item.onClick }}"><span style="{{ item.bar }}"></span>{{ item.label }}</div>
+          </sc-for>
+          <div style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .12em; color: rgba(255,255,255,.38); padding: 13px 12px 7px;">ACTIVATE</div>
+          <sc-for list="{{ navActivate }}" as="item" hint-placeholder-count="2">
+            <div style="{{ item.style }}" style-hover="background: rgba(96,165,250,.13);" onClick="{{ item.onClick }}"><span style="{{ item.bar }}"></span>{{ item.label }}</div>
+          </sc-for>
+          <div style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .12em; color: rgba(255,255,255,.38); padding: 13px 12px 7px;">MEASURE &amp; GOVERN</div>
+          <sc-for list="{{ navGovern }}" as="item" hint-placeholder-count="4">
+            <div style="{{ item.style }}" style-hover="background: rgba(96,165,250,.13);" onClick="{{ item.onClick }}"><span style="{{ item.bar }}"></span>{{ item.label }}</div>
+          </sc-for>
+        </nav>
+        <div style="display: {{ adminSectionDisplay }}; padding: 8px 10px; border-top: 1px solid rgba(255,255,255,.08);">
+          <div style="{{ adminNavStyle }}" style-hover="background: rgba(96,165,250,.1);" onClick="{{ goAdmin }}">
+            <span style="width: 6px; height: 6px; border-radius: 50%; background: #64748b;"></span>Platform Admin <span style="font: 500 9.5px/1 var(--dn-font-sans); color: rgba(255,255,255,.4); margin-left: auto;">INTERNAL</span>
+          </div>
+        </div>
+        <div style="padding: 11px 14px; border-top: 1px solid rgba(255,255,255,.08); display: flex; align-items: center; gap: 10px;">
+          <div style="width: 30px; height: 30px; border-radius: 50%; background: var(--dn-brand-light); display: flex; align-items: center; justify-content: center; font: 600 12px/1 var(--dn-font-sans); color: #fff;">JR</div>
+          <div style="line-height: 1.3;">
+            <div style="font: 600 12px/1.2 var(--dn-font-sans); color: #fff;">J. Rivera</div>
+            <div style="font: 400 11px/1.2 var(--dn-font-sans); color: rgba(255,255,255,.5);">Brand Lead</div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- MAIN COLUMN -->
+      <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+        <!-- context bar -->
+        <header style="height: 60px; flex-shrink: 0; background: #fff; border-bottom: 1px solid var(--dn-border); display: flex; align-items: center; padding: 0 22px; gap: 16px;">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: var(--dn-success); box-shadow: 0 0 0 3px rgba(22,163,74,.15);"></span>
+              <span style="font: 700 14px/1 var(--dn-font-sans); color: var(--dn-fg);">CardioNova — Q3 Whitespace Activation</span>
+            </div>
+            <span style="font: 500 11px/1 var(--dn-font-sans); color: var(--dn-fg-muted); padding-left: 16px;">Cardiology · US HCP campaign · Day 18 of 92</span>
+          </div>
+
+          <div style="margin-left: auto; display: flex; align-items: center; gap: 10px;">
+            <span style="display: flex; align-items: center; gap: 6px; font: 600 11px/1 var(--dn-font-sans); color: #166534; background: var(--dn-accent-green-bg); padding: 6px 11px; border-radius: 20px;"><span style="width: 7px; height: 7px; border-radius: 50%; background: var(--dn-success);"></span>Campaign live</span>
+            <span style="position: relative;">
+              <span style="display: flex; align-items: center; gap: 6px; font: 600 11px/1 var(--dn-font-sans); color: #92400e; background: var(--dn-accent-yellow-bg); padding: 6px 11px; border-radius: 20px; cursor: pointer;" onClick="{{ toggleAttn }}"><span style="width: 7px; height: 7px; border-radius: 50%; background: var(--dn-warning);"></span>Needs attention: 3</span>
+              <div style="display: {{ attnDisplay }}; position: absolute; top: 34px; right: 0; width: 250px; background: #fff; border: 1px solid var(--dn-border); border-radius: 11px; box-shadow: var(--dn-shadow-popover); padding: 8px; z-index: 30;">
+                <div style="display: flex; align-items: center; gap: 10px; padding: 10px 11px; border-radius: 8px; cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ goContent }}"><span style="font: 700 12px/1 var(--dn-font-sans); color: #92400e; background: var(--dn-accent-yellow-bg); width: 22px; height: 22px; border-radius: 6px; display: flex; align-items: center; justify-content: center;">1</span><span style="font: 500 12px/1.3 var(--dn-font-sans); color: var(--dn-fg);">MLR item pending review</span></div>
+                <div style="display: flex; align-items: center; gap: 10px; padding: 10px 11px; border-radius: 8px; cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ goCrm }}"><span style="font: 700 12px/1 var(--dn-font-sans); color: #92400e; background: var(--dn-accent-yellow-bg); width: 22px; height: 22px; border-radius: 6px; display: flex; align-items: center; justify-content: center;">2</span><span style="font: 500 12px/1.3 var(--dn-font-sans); color: var(--dn-fg);">CRM export issues</span></div>
+              </div>
+            </span>
+            <div style="width: 1px; height: 26px; background: var(--dn-border);"></div>
+            <div style="width: 30px; height: 30px; border-radius: 50%; background: var(--dn-brand-base); display: flex; align-items: center; justify-content: center; font: 600 11px/1 var(--dn-font-sans); color: #fff;">JR</div>
+          </div>
+        </header>
+
+        <!-- SCROLL REGION -->
+        <main style="flex: 1; overflow-y: auto; position: relative;">
+
+          <!-- ===== OVERVIEW / COMMAND CENTER ===== -->
+          <section style="display: {{ scr.overview }};" data-screen-label="Overview">
+            <div style="padding: 24px 30px 40px; max-width: 1340px;">
+              <div style="display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 18px;">
+                <div>
+                  <div style="font: 600 11px/1.2 var(--dn-font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 6px;">Command Center</div>
+                  <h1 style="font: 600 26px/1.2 var(--dn-font-sans); letter-spacing: -0.02em; margin: 0; color: var(--dn-fg);">Good morning, Jordan</h1>
+                  <div style="font: 400 13px/1.4 var(--dn-font-sans); color: var(--dn-fg-muted); margin-top: 5px;">Q3 Whitespace Activation · CardioNova · day 18 of 92</div>
+                </div>
+                <button style="padding: 11px 18px; background: var(--dn-brand-base); color: #fff; border: none; border-radius: 9px; font: 600 13px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-brand-dark);" onClick="{{ goTargeting }}">Review priority HCPs →</button>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1.62fr 1fr; gap: 16px;">
+                <!-- LEFT: status grid + learnings -->
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px;">
+                    <sc-for list="{{ commandKpis }}" as="k" hint-placeholder-count="6">
+                      <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 15px 16px; box-shadow: var(--dn-shadow-card); cursor: pointer;" style-hover="border-color: var(--dn-brand-light);" onClick="{{ k.onClick }}">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+                          <span style="font: 600 10.5px/1.3 var(--dn-font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dn-fg-muted);">{{ k.label }}</span>
+                          <span style="{{ k.dotStyle }}"></span>
+                        </div>
+                        <div style="font: 600 25px/1 var(--dn-font-sans); color: var(--dn-fg); letter-spacing: -0.02em;">{{ k.value }}</div>
+                        <div style="font: 400 11px/1.4 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-top: 5px;">{{ k.sub }}</div>
+                      </div>
+                    </sc-for>
+                  </div>
+
+                  <!-- what HCPs are asking -->
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 18px 20px; box-shadow: var(--dn-shadow-card);">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
+                      <span style="font: 600 13px/1 var(--dn-font-sans); color: var(--dn-fg);">What HCPs are asking</span>
+                      <span style="font: 600 11px/1 var(--dn-font-sans); color: var(--dn-brand-light); cursor: pointer;" onClick="{{ goAnalytics }}">View analytics →</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 11px;">
+                      <sc-for list="{{ topQuestions }}" as="q" hint-placeholder-count="5">
+                        <div style="display: flex; align-items: center; gap: 11px;">
+                          <span style="width: 150px; flex-shrink: 0; font: 500 11.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ q.label }}</span>
+                          <span style="flex: 1; height: 13px; border-radius: 4px; background: var(--dn-surface-2); overflow: hidden;"><span style="display: block; height: 100%; border-radius: 4px; background: var(--dn-brand-light); width: {{ q.pct }}%;"></span></span>
+                          <span style="width: 32px; text-align: right; font: 600 11.5px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">{{ q.pct }}%</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+
+                  <!-- campaign readiness -->
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 15px 18px; box-shadow: var(--dn-shadow-card);">
+                    <div style="font: 600 11px/1 var(--dn-font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 12px;">Campaign readiness</div>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
+                      <div><div style="font: 600 15px/1 var(--dn-font-sans); color: var(--dn-fg);">17/18</div><div style="font: 400 10.5px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-top: 4px;">Content approved</div></div>
+                      <div><div style="font: 600 15px/1 var(--dn-font-sans); color: var(--dn-fg);">342</div><div style="font: 400 10.5px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-top: 4px;">Targets selected</div></div>
+                      <div><div style="font: 600 15px/1 var(--dn-font-sans); color: var(--dn-success);">Approved</div><div style="font: 400 10.5px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-top: 4px;">AI rep persona</div></div>
+                      <div><div style="font: 600 15px/1 var(--dn-font-sans); color: var(--dn-warning);">2 failed</div><div style="font: 400 10.5px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-top: 4px;">CRM export</div></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- RIGHT: today's actions + health -->
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 18px 20px; box-shadow: var(--dn-shadow-card);">
+                    <div style="font: 600 13px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 4px;">Today's actions</div>
+                    <div style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-bottom: 14px;">4 items need your attention</div>
+                    <div style="display: flex; flex-direction: column; gap: 9px;">
+                      <sc-for list="{{ todayActions }}" as="a" hint-placeholder-count="4">
+                        <div style="display: flex; align-items: center; gap: 12px; padding: 11px 13px; border: 1px solid var(--dn-border); border-radius: 10px; cursor: pointer; transition: border-color 150ms;" style-hover="border-color: var(--dn-brand-light); background: var(--dn-surface-2);" onClick="{{ a.onClick }}">
+                          <span style="{{ a.iconStyle }}">{{ a.count }}</span>
+                          <span style="flex: 1; font: 500 12px/1.4 var(--dn-font-sans); color: var(--dn-fg);">{{ a.label }}</span>
+                          <span style="font: 600 14px/1 var(--dn-font-sans); color: var(--dn-fg-subtle);">›</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 18px 20px; box-shadow: var(--dn-shadow-card);">
+                    <div style="font: 600 13px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 14px;">Compliance &amp; export health</div>
+                    <sc-for list="{{ healthRows }}" as="h" hint-placeholder-count="5">
+                      <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--dn-surface-2);">
+                        <span style="font: 500 12px/1.3 var(--dn-font-sans); color: var(--dn-fg-muted);">{{ h.label }}</span>
+                        <span style="display: flex; align-items: center; gap: 8px;"><span style="font: 600 12.5px/1 var(--dn-font-sans); color: var(--dn-fg);">{{ h.value }}</span><span style="{{ h.badgeStyle }}">{{ h.badge }}</span></span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ===== CAMPAIGN SETUP ===== -->
+          <section style="display: {{ scr.setup }};" data-screen-label="Campaign Setup">
+            <div style="padding: 24px 30px 40px; max-width: 1180px;">
+              <div style="font: 600 11px/1.2 var(--dn-font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 6px;">Campaign Setup</div>
+              <h1 style="font: 600 24px/1.2 var(--dn-font-sans); letter-spacing: -0.02em; margin: 0 0 22px; color: var(--dn-fg);">CardioNova — Q3 Whitespace Activation</h1>
+              <div style="display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px;">
+                <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 20px 22px; box-shadow: var(--dn-shadow-card);">
+                  <div style="font: 600 13px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 18px; padding-bottom: 13px; border-bottom: 1px solid var(--dn-border);">Brand &amp; scope</div>
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px 18px;">
+                    <label style="display: block;"><span style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Brand</span><input value="CardioNova" style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 13px/1 var(--dn-font-sans); color: var(--dn-fg);"/></label>
+                    <label style="display: block;"><span style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Therapeutic area</span><input value="Cardiology" style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 13px/1 var(--dn-font-sans); color: var(--dn-fg);"/></label>
+                    <label style="display: block;"><span style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Approved indication scope</span><input value="Acute Coronary Syndrome (ACS)" style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 13px/1 var(--dn-font-sans); color: var(--dn-fg);"/></label>
+                    <label style="display: block;"><span style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Approved content pack</span><select style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 13px/1 var(--dn-font-sans); color: var(--dn-fg); background: #fff;"><option>Cardiology Suite — 2026 (v4)</option></select></label>
+                    <label style="display: block;"><span style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Target HCP segment</span><select style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 13px/1 var(--dn-font-sans); color: var(--dn-fg); background: #fff;"><option>Decile 2–4 whitespace</option><option>All targeted</option></select></label>
+                    <label style="display: block;"><span style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Escalation contact (MSL)</span><input value="msl-cardio@cardionova.example" style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 13px/1 var(--dn-font-sans); color: var(--dn-fg);"/></label>
+                    <label style="display: block;"><span style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">CRM export preference</span><select value="{{ crmMode }}" onChange="{{ onCrmChange }}" style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 13px/1 var(--dn-font-sans); color: var(--dn-fg); background: #fff;"><option>Veeva</option><option>Salesforce</option><option>IQVIA</option><option>CSV / JSON</option></select></label>
+                    <label style="display: block;"><span style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Launch window</span><input value="Jul 1 – Sep 30, 2026" style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 13px/1 var(--dn-font-sans); color: var(--dn-fg);"/></label>
+                  </div>
+                </div>
+                <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 20px 22px; box-shadow: var(--dn-shadow-card);">
+                  <div style="font: 600 13px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 18px; padding-bottom: 13px; border-bottom: 1px solid var(--dn-border);">Guardrails <span style="font: 500 11px/1 var(--dn-font-sans); color: var(--dn-fg-subtle);">· enforced on every response</span></div>
+                  <sc-for list="{{ guardrails }}" as="g" hint-placeholder-count="5">
+                    <div style="display: flex; align-items: center; justify-content: space-between; padding: 11px 0; border-bottom: 1px solid var(--dn-surface-2);">
+                      <div><div style="font: 600 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ g.label }}</div><div style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-top: 2px;">{{ g.desc }}</div></div>
+                      <span style="flex-shrink: 0; margin-left: 14px; display: flex; align-items: center; gap: 5px; font: 600 10px/1 var(--dn-font-sans); color: var(--dn-fg-muted); background: var(--dn-surface-2); border: 1px solid var(--dn-border); padding: 5px 9px; border-radius: 20px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Enforced</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="display: flex; gap: 10px; margin-top: 18px;">
+                <button style="padding: 11px 20px; background: var(--dn-brand-base); color: #fff; border: none; border-radius: 9px; font: 600 13px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-brand-dark);" onClick="{{ goContent }}">Review content library →</button>
+                <button style="padding: 11px 20px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 13px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);">Save</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- ===== CONTENT & MLR LIBRARY ===== -->
+          <section style="display: {{ scr.content }};" data-screen-label="Content & MLR Library">
+            <div style="padding: 24px 30px 40px; max-width: 1320px;">
+              <div style="font: 600 11px/1.2 var(--dn-font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 6px;">Content &amp; MLR</div>
+              <h1 style="font: 600 24px/1.2 var(--dn-font-sans); letter-spacing: -0.02em; margin: 0 0 6px; color: var(--dn-fg);">Approved Content</h1>
+              <p style="font: 400 13px/1.5 var(--dn-font-sans); color: var(--dn-fg-muted); margin: 0 0 18px; max-width: 720px;">Only active MLR-approved assets can be used by the AI rep.</p>
+              <div style="display: flex; gap: 9px; margin-bottom: 16px; flex-wrap: wrap;">
+                <button style="display: flex; align-items: center; gap: 7px; padding: 10px 15px; background: var(--dn-brand-base); color: #fff; border: none; border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-brand-dark);" onClick="{{ openContentDrawer }}"><span style="font-size: 14px;">↑</span> Upload approved content</button>
+                <button style="padding: 10px 15px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ openContentDrawer }}">Import from Veeva / Vault</button>
+                <button style="padding: 10px 15px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ openContentDrawer }}">Add script</button>
+                <button style="padding: 10px 15px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ openContentDrawer }}">Add ISI</button>
+              </div>
+              <div style="display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap;">
+                <span style="padding: 7px 13px; background: var(--dn-brand-base); color: #fff; border-radius: 8px; font: 600 12px/1 var(--dn-font-sans); cursor: pointer;">All assets · 18</span>
+                <span style="padding: 7px 13px; background: #fff; color: var(--dn-fg-muted); border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);">Detail aids · 7</span>
+                <span style="padding: 7px 13px; background: #fff; color: var(--dn-fg-muted); border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);">ISI · 2</span>
+                <span style="padding: 7px 13px; background: #fff; color: var(--dn-accent-orange); border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);">Expiring soon · 3</span>
+              </div>
+              <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; box-shadow: var(--dn-shadow-card); overflow: hidden;">
+                <div style="display: grid; grid-template-columns: 2.1fr 1.1fr 1fr 1.1fr 0.8fr 1.2fr; padding: 12px 18px; background: var(--dn-surface-2); border-bottom: 1px solid var(--dn-border); font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">
+                  <span>Asset</span><span>Type</span><span>MLR ID</span><span>Status</span><span>Expires</span><span>Actions</span>
+                </div>
+                <sc-for list="{{ contentLibrary }}" as="c" hint-placeholder-count="6">
+                  <div style="display: grid; grid-template-columns: 2.1fr 1.1fr 1fr 1.1fr 0.8fr 1.2fr; padding: 13px 18px; border-bottom: 1px solid var(--dn-surface-2); align-items: center; font: 400 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);" style-hover="background: var(--dn-surface-2);">
+                    <span style="font-weight: 600;">{{ c.name }}</span>
+                    <span style="color: var(--dn-fg-muted);">{{ c.type }}</span>
+                    <span style="font-family: var(--dn-font-mono); font-size: 12px; color: var(--dn-brand-base);">{{ c.mlrId }}</span>
+                    <span><span style="{{ c.statusStyle }}">{{ c.status }}</span></span>
+                    <span style="font-size: 12px; color: var(--dn-fg-muted);">{{ c.expiry }}</span>
+                    <span style="display: flex; gap: 12px;"><span style="font: 600 11.5px/1 var(--dn-font-sans); color: var(--dn-brand-light); cursor: pointer;">View</span><span style="font: 600 11.5px/1 var(--dn-font-sans); color: var(--dn-fg-muted); cursor: pointer;">Review</span></span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </section>
+
+          <!-- ===== AI REP PERSONA ===== -->
+          <section style="display: {{ scr.persona }};" data-screen-label="AI Rep Persona">
+            <div style="padding: 24px 30px 40px; max-width: 1240px;">
+              <div style="font: 600 11px/1.2 var(--dn-font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 6px;">AI Rep Persona</div>
+              <h1 style="font: 600 24px/1.2 var(--dn-font-sans); letter-spacing: -0.02em; margin: 0 0 6px; color: var(--dn-fg);">How the AI rep looks and sounds</h1>
+              <p style="font: 400 13px/1.5 var(--dn-font-sans); color: var(--dn-fg-muted); margin: 0 0 20px; max-width: 720px;">Create the CardioNova AI representative — choose a persona type, configure appearance and voice, set the disclosure and greeting, then submit for approval. Every response stays grounded in approved content regardless of persona.</p>
+
+              <div style="display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px;">
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 18px 20px; box-shadow: var(--dn-shadow-card);">
+                    <div style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 13px;">Persona type</div>
+                    <div style="display: flex; gap: 10px; margin-bottom: 18px;">
+                      <sc-for list="{{ personaTypes }}" as="p" hint-placeholder-count="2">
+                        <div style="{{ p.style }}" onClick="{{ p.onClick }}"><div>{{ p.label }}</div><div style="font: 400 10.5px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-top: 4px;">{{ p.desc }}</div></div>
+                      </sc-for>
+                    </div>
+                    <label style="display: block; margin-bottom: 16px;"><span style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Display name</span><input value="CardioNova AI Specialist" style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 13px/1 var(--dn-font-sans); color: var(--dn-fg);"/></label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                      <div><span style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Avatar still / video</span><div style="{{ dropzone }}; margin-top: 6px;" style-hover="border-color: var(--dn-brand-light);"><span style="font-size: 18px; color: var(--dn-brand-light);">↑</span><span style="font: 600 11px/1.3 var(--dn-font-sans); color: var(--dn-fg);">Upload avatar sample</span><span style="font: 400 10px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle);">PNG / MP4 · Tavus preview</span></div></div>
+                      <div style="display: {{ consentDisplay }};"><span style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Rep consent file</span><div style="{{ dropzone }}; margin-top: 6px;" style-hover="border-color: var(--dn-brand-light);" onClick="{{ uploadConsent }}"><span style="font-size: 18px; color: var(--dn-accent-orange);">{{ consentUploadIcon }}</span><span style="font: 600 11px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ consentUploadLabel }}</span><span style="font: 400 10px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle);">{{ consentUploadSub }}</span></div></div>
+                    </div>
+                  </div>
+
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 18px 20px; box-shadow: var(--dn-shadow-card);">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px;"><div style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg);">Voice style</div><span style="font: 600 11px/1 var(--dn-font-sans); color: var(--dn-brand-light); cursor: pointer;">↑ Upload voice sample</span></div>
+                    <div style="display: flex; gap: 9px; margin-bottom: 20px;">
+                      <sc-for list="{{ voiceOptions }}" as="v" hint-placeholder-count="3">
+                        <div style="{{ v.style }}" onClick="{{ v.onClick }}">{{ v.label }}</div>
+                      </sc-for>
+                    </div>
+                    <label style="display: block; margin-bottom: 16px;"><span style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">AI disclosure language</span><textarea style="margin-top: 6px; width: 100%; padding: 10px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 400 12px/1.5 var(--dn-font-sans); color: var(--dn-fg); resize: vertical; min-height: 52px;">This is an AI representative, not a person. It shares approved CardioNova information only.</textarea></label>
+                    <label style="display: block; margin-bottom: 18px;"><span style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Approved greeting script</span><textarea style="margin-top: 6px; width: 100%; padding: 10px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 400 12px/1.5 var(--dn-font-sans); color: var(--dn-fg); resize: vertical; min-height: 58px;">Hi, I'm the CardioNova AI specialist — an AI representative, not a person. I can walk you through approved information about CardioNova for ACS. How can I help?</textarea></label>
+                    <div style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 12px;">Tone boundaries</div>
+                    <sc-for list="{{ toneToggles }}" as="t" hint-placeholder-count="4">
+                      <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--dn-surface-2);">
+                        <div><div style="font: 600 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ t.label }}</div><div style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-top: 2px;">{{ t.desc }}</div></div>
+                        <span style="{{ t.toggleStyle }}" onClick="{{ t.onClick }}"><span style="{{ t.knobStyle }}"></span></span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+
+                <!-- preview -->
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 18px 20px; box-shadow: var(--dn-shadow-card);">
+                    <div style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 14px;">Live preview</div>
+                    <div style="border-radius: 12px; overflow: hidden; background: radial-gradient(120% 120% at 50% 0%, #15315f 0%, #0a1a33 70%); padding: 26px 20px; display: flex; flex-direction: column; align-items: center;">
+                      <div style="position: relative;">
+                        <div style="{{ previewRingStyle }}"><svg width="56" height="56" viewBox="0 0 24 24" fill="rgba(255,255,255,.92)"><circle cx="12" cy="8" r="4.2"/><path d="M3.5 21c0-4.4 3.8-7.5 8.5-7.5s8.5 3.1 8.5 7.5z"/></svg></div>
+                        <span style="position: absolute; bottom: 0; right: -4px; font: 600 8.5px/1 var(--dn-font-sans); background: #fbbf24; color: #1a1205; padding: 4px 6px; border-radius: 10px;">AI</span>
+                      </div>
+                      <div style="font: 600 14px/1 var(--dn-font-sans); color: #fff; margin-top: 14px;">CardioNova AI Specialist</div>
+                      <div style="font: 500 11px/1 var(--dn-font-sans); color: rgba(191,219,254,.85); margin-top: 5px;">{{ personaSummary }}</div>
+                      <div style="font: 500 9.5px/1 var(--dn-font-sans); color: rgba(191,219,254,.6); margin-top: 8px;">Tavus avatar preview · sample</div>
+                    </div>
+                    <div style="margin-top: 14px; padding: 13px 15px; background: var(--dn-surface-2); border-radius: 10px;">
+                      <div style="font: 600 9.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 7px;">Sample greeting (approved)</div>
+                      <div style="font: 400 12.5px/1.5 var(--dn-font-sans); color: var(--dn-fg); font-style: italic;">"{{ greetingPreview }}"</div>
+                    </div>
+                  </div>
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 16px 18px; box-shadow: var(--dn-shadow-card);">
+                    <div style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 12px;">Persona readiness</div>
+                    <sc-for list="{{ personaReadiness }}" as="r" hint-placeholder-count="5">
+                      <div style="display: flex; align-items: center; gap: 10px; padding: 7px 0;"><span style="{{ r.iconStyle }}">{{ r.icon }}</span><span style="font: 500 12px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ r.label }}</span></div>
+                    </sc-for>
+                  </div>
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 16px 18px; box-shadow: var(--dn-shadow-card);">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;"><span style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg);">Approval status</span><span style="{{ personaStatusStyle }}">{{ personaStatusLabel }}</span></div>
+                    <div style="display: flex; gap: 9px;">
+                      <button style="{{ submitPersonaStyle }}" onClick="{{ submitPersona }}">{{ submitPersonaLabel }}</button>
+                      <button style="padding: 12px 16px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ previewHcp }}">Preview as HCP ↗</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ===== HCP TARGETING ===== -->
+          <section style="display: {{ scr.targeting }};" data-screen-label="HCP Targeting">
+            <div style="padding: 24px 30px 40px; max-width: 1380px;">
+              <div style="display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 6px;">
+                <div>
+                  <div style="font: 600 11px/1.2 var(--dn-font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 6px;">HCP Targeting</div>
+                  <h1 style="font: 600 24px/1.2 var(--dn-font-sans); letter-spacing: -0.02em; margin: 0; color: var(--dn-fg);">Which HCPs should I target?</h1>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <span style="font: 500 12px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">Activation list</span>
+                  <span style="font: 700 13px/1 var(--dn-font-sans); color: #fff; background: var(--dn-brand-base); padding: 7px 12px; border-radius: 20px;">{{ activationCount }}</span>
+                  <button style="padding: 9px 15px; background: #fff; color: var(--dn-brand-base); border: 1px solid var(--dn-brand-base); border-radius: 8px; font: 600 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ goOutreach }}">Go to launch →</button>
+                </div>
+              </div>
+              <p style="font: 400 13px/1.5 var(--dn-font-sans); color: var(--dn-fg-muted); margin: 8px 0 18px; max-width: 760px;">Ranked by opportunity score — claims-derived eligible-patient density, prescribing whitespace, and growth trend. Click a row to see why, then add to your activation list.</p>
+
+              <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 18px;">
+                <sc-for list="{{ targetSummary }}" as="t" hint-placeholder-count="5">
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 12px; padding: 14px 15px; box-shadow: var(--dn-shadow-card);">
+                    <div style="font: 600 10.5px/1.3 var(--dn-font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 8px;">{{ t.label }}</div>
+                    <div style="font: 600 22px/1 var(--dn-font-sans); color: {{ t.color }}; letter-spacing: -0.01em;">{{ t.value }}</div>
+                    <div style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-top: 4px;">{{ t.sub }}</div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                <input placeholder="Search HCP, NPI, institution…" style="flex: 1; max-width: 300px; padding: 9px 12px; border: 1px solid var(--dn-border); border-radius: 8px; font: 400 12.5px/1 var(--dn-font-sans); background: #fff;"/>
+                <select style="padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12px/1 var(--dn-font-sans); background: #fff; color: var(--dn-fg);"><option>All deciles</option><option>Decile 1–3</option><option>Decile 4–6</option></select>
+                <select style="padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12px/1 var(--dn-font-sans); background: #fff; color: var(--dn-fg);"><option>All segments</option><option>ACS Whitespace</option><option>Adherence Gap</option></select>
+                <span style="margin-left: auto; font: 500 12px/1 var(--dn-font-sans); color: var(--dn-fg-subtle);">8 of 37 shown · sorted by opportunity</span>
+              </div>
+
+              <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; box-shadow: var(--dn-shadow-card); overflow: hidden;">
+                <div style="display: grid; grid-template-columns: 36px 1.6fr 1.2fr 0.6fr 1.1fr 0.9fr 1.4fr 92px; padding: 12px 18px; background: var(--dn-surface-2); border-bottom: 1px solid var(--dn-border); font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted); align-items: center;">
+                  <span>#</span><span>HCP</span><span>Specialty</span><span>Decile</span><span>Segment</span><span>Opp</span><span>Recommended topic</span><span></span>
+                </div>
+                <sc-for list="{{ hcps }}" as="h" hint-placeholder-count="8">
+                  <div style="display: grid; grid-template-columns: 36px 1.6fr 1.2fr 0.6fr 1.1fr 0.9fr 1.4fr 92px; padding: 13px 18px; border-bottom: 1px solid var(--dn-surface-2); align-items: center; font: 400 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ h.onOpen }}">
+                    <span style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg-subtle);">{{ h.rank }}</span>
+                    <span style="font-weight: 600;">{{ h.name }}</span>
+                    <span style="color: var(--dn-fg-muted);">{{ h.specialty }}</span>
+                    <span><span style="font: 600 11px/1 var(--dn-font-sans); padding: 3px 7px; background: var(--dn-surface-2); border: 1px solid var(--dn-border); border-radius: 5px; color: var(--dn-fg);">{{ h.decile }}</span></span>
+                    <span><span style="{{ h.segStyle }}">{{ h.segment }}</span></span>
+                    <span style="display: flex; align-items: center; gap: 6px;"><span style="font: 700 13px/1 var(--dn-font-sans); color: var(--dn-brand-base);">{{ h.score }}</span></span>
+                    <span style="font: 500 11.5px/1.3 var(--dn-font-sans); color: var(--dn-fg-muted);">{{ h.topic }}</span>
+                    <span><span style="{{ h.ctaStyle }}" onClick="{{ h.onOpen }}">{{ h.ctaLabel }}</span></span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </section>
+
+          <!-- ===== OUTREACH / LAUNCH ===== -->
+          <section style="display: {{ scr.outreach }};" data-screen-label="Outreach / Launch">
+            <div style="padding: 24px 30px 40px; max-width: 1240px;">
+              <div style="font: 600 11px/1.2 var(--dn-font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 6px;">Outreach / Launch</div>
+              <h1 style="font: 600 24px/1.2 var(--dn-font-sans); letter-spacing: -0.02em; margin: 0 0 20px; color: var(--dn-fg);">Launch AI rep invitations</h1>
+
+              <div style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; align-items: start;">
+                <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; box-shadow: var(--dn-shadow-card); overflow: hidden;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--dn-border);">
+                    <span style="font: 600 13px/1 var(--dn-font-sans); color: var(--dn-fg);">Activation list · {{ activationCount }} HCPs</span>
+                    <span style="font: 500 11.5px/1 var(--dn-font-sans); color: var(--dn-fg-subtle);">Secure portal invite</span>
+                  </div>
+                  <div style="display: grid; grid-template-columns: 1.5fr 1.3fr 1.5fr 84px; padding: 11px 18px; background: var(--dn-surface-2); border-bottom: 1px solid var(--dn-border); font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">
+                    <span>HCP</span><span>Segment</span><span>Topic</span><span>Status</span>
+                  </div>
+                  <sc-for list="{{ activationRows }}" as="a" hint-placeholder-count="3">
+                    <div style="display: grid; grid-template-columns: 1.5fr 1.3fr 1.5fr 84px; padding: 13px 18px; border-bottom: 1px solid var(--dn-surface-2); align-items: center; font: 400 12.5px/1.3 var(--dn-font-sans);">
+                      <span style="font-weight: 600; color: var(--dn-fg);">{{ a.name }}</span>
+                      <span style="color: var(--dn-fg-muted);">{{ a.decile }} · {{ a.segment }}</span>
+                      <span style="color: var(--dn-fg-muted);">{{ a.topic }}</span>
+                      <span><span style="{{ a.statusStyle }}">{{ a.statusLabel }}</span></span>
+                    </div>
+                  </sc-for>
+                  <div style="display: {{ activationEmptyDisplay }}; padding: 28px; text-align: center; font: 400 12.5px/1.5 var(--dn-font-sans); color: var(--dn-fg-subtle);">No HCPs added yet. Go to <strong style="color: var(--dn-brand-base);">HCP Targeting</strong> and add high-opportunity HCPs to your activation list.</div>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 18px 20px; box-shadow: var(--dn-shadow-card);">
+                    <div style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 14px;">Launch readiness</div>
+                    <sc-for list="{{ readiness }}" as="r" hint-placeholder-count="4">
+                      <div style="display: flex; align-items: center; gap: 10px; padding: 8px 0;">
+                        <span style="{{ r.iconStyle }}">{{ r.icon }}</span>
+                        <span style="flex: 1; font: 500 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ r.label }}</span>
+                        <span style="font: 500 11.5px/1 var(--dn-font-sans); color: {{ r.color }};">{{ r.value }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 18px 20px; box-shadow: var(--dn-shadow-card);">
+                    <div style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 13px;">Send</div>
+                    <label style="display: block; margin-bottom: 12px;"><span style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Channel</span><select style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 13px/1 var(--dn-font-sans); color: var(--dn-fg); background: #fff;"><option>Secure portal invite</option><option>Email</option></select></label>
+                    <label style="display: block; margin-bottom: 16px;"><span style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Schedule</span><select style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 13px/1 var(--dn-font-sans); color: var(--dn-fg); background: #fff;"><option>Send now</option><option>Schedule for later</option></select></label>
+                    <button style="{{ launchBtnStyle }}" onClick="{{ askLaunch }}">{{ launchBtnLabel }}</button>
+                    <button style="width: 100%; margin-top: 9px; padding: 11px; background: #fff; color: var(--dn-brand-base); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ previewHcp }}">Preview HCP experience ↗</button>
+                    <div style="display: {{ launchSentDisplay }}; align-items: center; gap: 9px; margin-top: 13px; padding: 11px 13px; background: var(--dn-accent-green-bg); border-radius: 9px;">
+                      <span style="flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; background: #166534; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 10px;">✓</span>
+                      <span style="font: 500 11.5px/1.4 var(--dn-font-sans); color: #166534;">Invites sent. Track responses in <strong style="cursor: pointer;" onClick="{{ goSessions }}">Sessions</strong>.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ===== SESSIONS ===== -->
+          <section style="display: {{ scr.sessions }};" data-screen-label="Sessions">
+            <div style="padding: 24px 30px 40px; max-width: 1340px;">
+              <div style="font: 600 11px/1.2 var(--dn-font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 6px;">Sessions</div>
+              <h1 style="font: 600 24px/1.2 var(--dn-font-sans); letter-spacing: -0.02em; margin: 0 0 6px; color: var(--dn-fg);">Who engaged?</h1>
+              <p style="font: 400 13px/1.5 var(--dn-font-sans); color: var(--dn-fg-muted); margin: 0 0 16px;">Completed and in-progress AI rep sessions. Open any session to review its full compliance evidence.</p>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 14px;">
+                <input placeholder="Search HCP…" style="flex: 1; max-width: 260px; padding: 9px 12px; border: 1px solid var(--dn-border); border-radius: 8px; font: 400 12.5px/1 var(--dn-font-sans); background: #fff;"/>
+                <select style="padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12px/1 var(--dn-font-sans); background: #fff; color: var(--dn-fg);"><option>All compliance</option><option>Approved</option><option>Needs review</option><option>Blocked + escalated</option><option>AE routed</option></select>
+                <select style="padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12px/1 var(--dn-font-sans); background: #fff; color: var(--dn-fg);"><option>All follow-ups</option><option>MSL follow-up</option><option>Rep follow-up</option><option>Materials sent</option></select>
+                <select style="padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12px/1 var(--dn-font-sans); background: #fff; color: var(--dn-fg);"><option>Last 7 days</option><option>Last 30 days</option><option>Campaign to date</option></select>
+              </div>
+              <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; box-shadow: var(--dn-shadow-card); overflow: hidden;">
+                <div style="display: grid; grid-template-columns: 1.5fr 1.2fr 0.8fr 0.8fr 1fr 1.1fr 80px; padding: 12px 18px; background: var(--dn-surface-2); border-bottom: 1px solid var(--dn-border); font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">
+                  <span>HCP</span><span>Date</span><span>Duration</span><span>Questions</span><span>Compliance</span><span>Follow-up</span><span></span>
+                </div>
+                <sc-for list="{{ sessionList }}" as="s" hint-placeholder-count="6">
+                  <div style="display: grid; grid-template-columns: 1.5fr 1.2fr 0.8fr 0.8fr 1fr 1.1fr 80px; padding: 13px 18px; border-bottom: 1px solid var(--dn-surface-2); align-items: center; font: 400 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ s.onOpen }}">
+                    <span style="font-weight: 600;">{{ s.hcp }}</span>
+                    <span style="color: var(--dn-fg-muted); font-family: var(--dn-font-mono); font-size: 11.5px;">{{ s.date }}</span>
+                    <span style="color: var(--dn-fg-muted);">{{ s.duration }}</span>
+                    <span style="color: var(--dn-fg-muted);">{{ s.questions }}</span>
+                    <span><span style="{{ s.compStyle }}">{{ s.comp }}</span></span>
+                    <span style="font: 500 12px/1.3 var(--dn-font-sans); color: var(--dn-fg-muted);">{{ s.followup }}</span>
+                    <span><span style="display: inline-block; padding: 6px 10px; background: rgba(6,73,172,.08); color: var(--dn-brand-base); border-radius: 7px; font: 600 11px/1 var(--dn-font-sans);" style-hover="background: var(--dn-brand-base); color: #fff;">Audit ›</span></span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </section>
+
+          <!-- ===== ANALYTICS ===== -->
+          <section style="display: {{ scr.analytics }};" data-screen-label="Analytics">
+            <div style="padding: 24px 30px 40px; max-width: 1360px;">
+              <div style="font: 600 11px/1.2 var(--dn-font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 6px;">Analytics</div>
+              <h1 style="font: 600 24px/1.2 var(--dn-font-sans); letter-spacing: -0.02em; margin: 0 0 4px; color: var(--dn-fg);">Campaign Analytics</h1>
+              <p style="font: 400 13px/1.5 var(--dn-font-sans); color: var(--dn-fg-muted); margin: 0 0 16px;">Targeting, engagement, content, compliance, CRM, and realtime performance.</p>
+
+              <div style="display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--dn-border); flex-wrap: wrap;">
+                <sc-for list="{{ analyticsTabs }}" as="tab" hint-placeholder-count="6">
+                  <div style="{{ tab.style }}" onClick="{{ tab.onClick }}">{{ tab.label }}</div>
+                </sc-for>
+              </div>
+
+              <div style="font: 500 11.5px/1 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-bottom: 12px;">Click any metric to drill into the records behind it.</div>
+              <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin-bottom: 16px;">
+                <sc-for list="{{ analyticsKpis }}" as="k" hint-placeholder-count="4">
+                  <div style="{{ k.cardStyle }}" style-hover="border-color: var(--dn-brand-light); box-shadow: 0 4px 16px -4px rgba(6,73,172,.18);" onClick="{{ k.onClick }}">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                      <span style="font: 600 11px/1.3 var(--dn-font-sans); letter-spacing: .03em; text-transform: uppercase; color: var(--dn-fg-muted);">{{ k.label }}</span>
+                      <span style="font: 600 13px/1 var(--dn-font-sans); color: var(--dn-fg-subtle);">{{ k.chev }}</span>
+                    </div>
+                    <div style="font: 600 27px/1.1 var(--dn-font-sans); color: {{ k.color }}; margin: 9px 0 5px; letter-spacing: -0.02em;">{{ k.value }}</div>
+                    <div style="font: 400 11px/1.4 var(--dn-font-sans); color: var(--dn-fg-subtle);">{{ k.sub }}</div>
+                    <div style="margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--dn-surface-2); font: 600 10.5px/1 var(--dn-font-sans); color: var(--dn-brand-light);">View records →</div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <!-- drill-down panel -->
+              <div style="display: {{ drillDisplay }}; background: #fff; border: 1px solid var(--dn-brand-light); border-radius: 14px; box-shadow: var(--dn-shadow-card); overflow: hidden; animation: dn-fade .25s ease;">
+                <div style="display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; background: rgba(6,73,172,.04); border-bottom: 1px solid var(--dn-border);">
+                  <div>
+                    <div style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 5px;">Drill-down</div>
+                    <div style="font: 600 16px/1.2 var(--dn-font-sans); color: var(--dn-fg);">{{ drillTitle }} · <span style="color: var(--dn-brand-base);">{{ drillValue }}</span></div>
+                  </div>
+                  <button style="background: #fff; border: 1px solid var(--dn-border); border-radius: 8px; padding: 7px 12px; font: 600 11.5px/1 var(--dn-font-sans); color: var(--dn-fg-muted); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ closeDrill }}">✕ Close</button>
+                </div>
+                <div style="padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px;">
+                  <div>
+                    <div style="font: 600 11px/1 var(--dn-font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 14px;">{{ drillA.title }}</div>
+                    <div style="display: flex; flex-direction: column; gap: 11px;">
+                      <sc-for list="{{ drillA.rows }}" as="r" hint-placeholder-count="4">
+                        <div style="display: flex; align-items: center; gap: 11px;">
+                          <span style="width: 120px; flex-shrink: 0; font: 500 11.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ r.label }}</span>
+                          <span style="flex: 1; height: 13px; border-radius: 4px; background: var(--dn-surface-2); overflow: hidden;"><span style="display: block; height: 100%; border-radius: 4px; background: var(--dn-brand-light); width: {{ r.pct }}%;"></span></span>
+                          <span style="width: 40px; text-align: right; font: 600 11.5px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">{{ r.val }}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+                  <div>
+                    <div style="font: 600 11px/1 var(--dn-font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 14px;">{{ drillB.title }}</div>
+                    <div style="display: flex; flex-direction: column; gap: 11px;">
+                      <sc-for list="{{ drillB.rows }}" as="r" hint-placeholder-count="4">
+                        <div style="display: flex; align-items: center; gap: 11px;">
+                          <span style="width: 120px; flex-shrink: 0; font: 500 11.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ r.label }}</span>
+                          <span style="flex: 1; height: 13px; border-radius: 4px; background: var(--dn-surface-2); overflow: hidden;"><span style="display: block; height: 100%; border-radius: 4px; background: var(--dn-accent-purple); width: {{ r.pct }}%;"></span></span>
+                          <span style="width: 40px; text-align: right; font: 600 11.5px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">{{ r.val }}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+                </div>
+                <div style="padding: 0 20px 20px;">
+                  <div style="font: 600 11px/1 var(--dn-font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 11px;">{{ drillTable.title }}</div>
+                  <div style="border: 1px solid var(--dn-border); border-radius: 10px; overflow: hidden;">
+                    <div style="{{ drillTable.headStyle }}">
+                      <sc-for list="{{ drillTable.cols }}" as="c" hint-placeholder-count="4"><span>{{ c }}</span></sc-for>
+                    </div>
+                    <sc-for list="{{ drillTable.rows }}" as="row" hint-placeholder-count="4">
+                      <div style="{{ row.style }}">
+                        <sc-for list="{{ row.cells }}" as="cell" hint-placeholder-count="4"><span>{{ cell }}</span></sc-for>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+
+              <!-- charts (shown when no drill) -->
+              <div style="display: {{ chartsDisplay }}; grid-template-columns: 1fr 1fr; gap: 14px;">
+                <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 18px 20px; box-shadow: var(--dn-shadow-card);">
+                  <div style="font: 600 12.5px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 4px;">Engagement funnel</div>
+                  <div style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-bottom: 16px;">Outreach → session start → completed detail → follow-up</div>
+                  <div style="display: flex; flex-direction: column; gap: 11px;">
+                    <sc-for list="{{ funnel }}" as="f" hint-placeholder-count="4">
+                      <div>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;"><span style="font: 500 12px/1 var(--dn-font-sans); color: var(--dn-fg);">{{ f.label }}</span><span style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">{{ f.count }} · {{ f.pct }}%</span></div>
+                        <div style="height: 22px; border-radius: 6px; background: var(--dn-surface-2); overflow: hidden;"><div style="height: 100%; border-radius: 6px; background: var(--dn-gradient-primary); width: {{ f.pct }}%;"></div></div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+                <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 18px 20px; box-shadow: var(--dn-shadow-card);">
+                  <div style="font: 600 12.5px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 4px;">Completed sessions per week</div>
+                  <div style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-bottom: 14px;">Trending up — week 8 is the campaign high</div>
+                  <svg viewBox="0 0 320 120" style="width: 100%; height: 150px;">
+                    <line x1="0" y1="30" x2="320" y2="30" stroke="#eef2f7" stroke-width="1"/>
+                    <line x1="0" y1="60" x2="320" y2="60" stroke="#eef2f7" stroke-width="1"/>
+                    <line x1="0" y1="90" x2="320" y2="90" stroke="#eef2f7" stroke-width="1"/>
+                    <polyline points="0,98 46,86 92,90 137,66 183,58 229,40 274,34 320,18" fill="none" stroke="#0649ac" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <polygon points="0,98 46,86 92,90 137,66 183,58 229,40 274,34 320,18 320,120 0,120" fill="rgba(6,73,172,.07)"/>
+                    <circle cx="320" cy="18" r="4" fill="#0649ac"/>
+                  </svg>
+                  <div style="display: flex; justify-content: space-between; font: 500 10px/1 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-top: 4px;"><span>W1</span><span>W2</span><span>W3</span><span>W4</span><span>W5</span><span>W6</span><span>W7</span><span>W8</span></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ===== AUDIT & COMPLIANCE ===== -->
+          <section style="display: {{ scr.audit }};" data-screen-label="Audit & Compliance">
+            <div style="padding: 24px 30px 40px; max-width: 1400px;">
+              <div style="font: 600 11px/1.2 var(--dn-font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 6px;">Audit &amp; Compliance</div>
+              <h1 style="font: 600 24px/1.2 var(--dn-font-sans); letter-spacing: -0.02em; margin: 0 0 6px; color: var(--dn-fg);">Proof of what happened</h1>
+              <p style="font: 400 13px/1.5 var(--dn-font-sans); color: var(--dn-fg-muted); margin: 0 0 20px;">Session #SX-4471 · {{ sessionHcpName }} · {{ sessionClock }} · 4 turns · every turn is a provable record.</p>
+
+              <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 18px;">
+                <sc-for list="{{ auditSummary }}" as="a" hint-placeholder-count="5">
+                  <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 12px; padding: 14px 15px; box-shadow: var(--dn-shadow-card);">
+                    <div style="font: 600 10.5px/1.3 var(--dn-font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 8px;">{{ a.label }}</div>
+                    <div style="font: 600 20px/1 var(--dn-font-sans); color: {{ a.color }};">{{ a.value }}</div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1.5fr 1fr; gap: 14px; align-items: start;">
+                <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; box-shadow: var(--dn-shadow-card); overflow: hidden;">
+                  <div style="display: grid; grid-template-columns: 56px 2.1fr 1.3fr 0.7fr 86px; padding: 12px 16px; background: var(--dn-surface-2); border-bottom: 1px solid var(--dn-border); font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">
+                    <span>Time</span><span>HCP question</span><span>Intent</span><span>ISI</span><span>Decision</span>
+                  </div>
+                  <sc-for list="{{ auditLog }}" as="row" hint-placeholder-count="4">
+                    <div style="{{ row.rowStyle }}" style-hover="background: var(--dn-surface-2);" onClick="{{ row.onSelect }}">
+                      <span style="font-family: var(--dn-font-mono); font-size: 11.5px; color: var(--dn-fg-muted);">{{ row.time }}</span>
+                      <span style="font: 500 12px/1.35 var(--dn-font-sans); color: var(--dn-fg); padding-right: 10px;">{{ row.q }}</span>
+                      <span style="font: 500 11.5px/1.3 var(--dn-font-sans); color: var(--dn-fg-muted);">{{ row.intent }}</span>
+                      <span style="font: 500 11.5px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">{{ row.isi }}</span>
+                      <span><span style="{{ row.decisionStyle }}">{{ row.decision }}</span></span>
+                    </div>
+                  </sc-for>
+
+                  <!-- evidence trace for selected turn -->
+                  <div style="padding: 18px; border-top: 1px solid var(--dn-border); background: var(--dn-surface-2);">
+                    <div style="font: 600 11px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 4px;">Turn-level decision path</div>
+                    <div style="font: 400 11px/1.4 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-bottom: 14px;">How this answer was produced and gated before the HCP heard it.</div>
+                    <div style="display: flex; flex-direction: column; gap: 5px;">
+                      <sc-for list="{{ traceNodes }}" as="n" hint-placeholder-count="7">
+                        <div>
+                          <div style="{{ n.boxStyle }}">
+                            <span style="{{ n.tagStyle }}">{{ n.tag }}</span>
+                            <span style="font: 600 11.5px/1.2 var(--dn-font-sans); color: var(--dn-fg);">{{ n.label }}</span>
+                            <span style="margin-left: auto; font: 400 10.5px/1.2 var(--dn-font-sans); color: var(--dn-fg-subtle); text-align: right;">{{ n.sub }}</span>
+                          </div>
+                          <div style="{{ n.arrowStyle }}">↓</div>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; box-shadow: var(--dn-shadow-card); padding: 18px 20px;">
+                  <div style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 4px;">Turn evidence</div>
+                  <div style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-bottom: 15px;">Full chain for the selected turn.</div>
+                  <sc-for list="{{ auditDetail }}" as="d" hint-placeholder-count="6">
+                    <div style="margin-bottom: 14px;">
+                      <div style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 5px;">{{ d.label }}</div>
+                      <div style="{{ d.valueStyle }}">{{ d.value }}</div>
+                    </div>
+                  </sc-for>
+                  <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 8px;">
+                    <button style="width: 100%; padding: 11px; background: var(--dn-brand-base); color: #fff; border: none; border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-brand-dark);">Approve audit record</button>
+                    <div style="display: flex; gap: 8px;">
+                      <button style="flex: 1; padding: 10px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ goCrm }}">Create follow-up</button>
+                      <button style="flex: 1; padding: 10px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);">Export package</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ===== FOLLOW-UPS / CRM ===== -->
+          <section style="display: {{ scr.crm }};" data-screen-label="Follow-ups / CRM">
+            <div style="padding: 24px 30px 40px; max-width: 1400px;">
+              <div style="font: 600 11px/1.2 var(--dn-font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 6px;">Follow-ups / CRM</div>
+              <h1 style="font: 600 24px/1.2 var(--dn-font-sans); letter-spacing: -0.02em; margin: 0 0 6px; color: var(--dn-fg);">Who needs follow-up?</h1>
+              <p style="font: 400 13px/1.5 var(--dn-font-sans); color: var(--dn-fg-muted); margin: 0 0 20px;">Each session creates an approved follow-up. Export to {{ crmMode }} or hand to the field — every record links back to its audit package.</p>
+
+              <div style="display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; align-items: start;">
+                <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; box-shadow: var(--dn-shadow-card); overflow: hidden;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; padding: 13px 16px; border-bottom: 1px solid var(--dn-border);">
+                    <span style="font: 600 12.5px/1 var(--dn-font-sans); color: var(--dn-fg);">Follow-up queue</span>
+                    <button style="padding: 8px 14px; background: var(--dn-brand-base); color: #fff; border: none; border-radius: 8px; font: 600 11.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-brand-dark);" onClick="{{ exportAll }}">Export all to CRM</button>
+                  </div>
+                  <div style="display: grid; grid-template-columns: 1.4fr 1.5fr 1.1fr 1fr 96px; padding: 11px 16px; background: var(--dn-surface-2); border-bottom: 1px solid var(--dn-border); font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">
+                    <span>HCP</span><span>Reason for follow-up</span><span>Owner</span><span>Target</span><span>Status</span>
+                  </div>
+                  <sc-for list="{{ crmEvents }}" as="e" hint-placeholder-count="5">
+                    <div style="{{ e.rowStyle }}" style-hover="background: var(--dn-surface-2);" onClick="{{ e.onSelect }}">
+                      <span style="font: 600 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ e.hcp }}</span>
+                      <span style="font: 500 12px/1.35 var(--dn-font-sans); color: var(--dn-fg-muted); padding-right: 8px;">{{ e.reason }}</span>
+                      <span style="font: 400 12px/1.3 var(--dn-font-sans); color: var(--dn-fg-muted);">{{ e.owner }}</span>
+                      <span style="font: 500 12px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ e.target }}</span>
+                      <span><span style="{{ e.statusStyle }}">{{ e.status }}</span></span>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; box-shadow: var(--dn-shadow-card); padding: 18px 20px;">
+                  <div style="font: 600 12.5px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 16px;">{{ crmSelHcp }}</div>
+                  <sc-for list="{{ crmDetail }}" as="d" hint-placeholder-count="5">
+                    <div style="display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--dn-surface-2);">
+                      <span style="font: 500 11.5px/1.3 var(--dn-font-sans); color: var(--dn-fg-muted); flex-shrink: 0;">{{ d.label }}</span>
+                      <span style="font: 500 12px/1.4 var(--dn-font-sans); color: var(--dn-fg); text-align: right;">{{ d.value }}</span>
+                    </div>
+                  </sc-for>
+                  <div style="display: flex; align-items: center; gap: 7px; margin-top: 12px; font: 600 11.5px/1 var(--dn-font-sans); color: var(--dn-brand-light); cursor: pointer;" onClick="{{ goAudit }}">↳ View audit package</div>
+
+                  <button style="{{ pushBtnStyle }}" onClick="{{ pushSelected }}">{{ pushBtnLabel }}</button>
+
+                  <div style="margin-top: 12px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 9px 0; border-top: 1px solid var(--dn-surface-2);" onClick="{{ toggleJson }}">
+                      <span style="font: 600 11px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">Technical payload (JSON)</span>
+                      <span style="font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg-subtle);">{{ jsonChevron }}</span>
+                    </div>
+                    <pre style="display: {{ jsonDisplay }}; margin: 6px 0 0; padding: 14px; background: #0a1a33; border-radius: 10px; overflow-x: auto; font: 400 11px/1.6 var(--dn-font-mono); color: #bfdbfe; white-space: pre-wrap;">{{ crmPayload }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ===== PLATFORM ADMIN (internal) ===== -->
+          <section style="display: {{ scr.admin }};" data-screen-label="Platform Admin">
+            <div style="padding: 24px 30px 40px; max-width: 1100px;">
+              <div style="display: inline-flex; align-items: center; gap: 8px; font: 600 10px/1 var(--dn-font-sans); letter-spacing: .08em; text-transform: uppercase; color: #fff; background: #475569; padding: 5px 10px; border-radius: 6px; margin-bottom: 12px;">Internal · Platform Admin</div>
+              <h1 style="font: 600 24px/1.2 var(--dn-font-sans); letter-spacing: -0.02em; margin: 0 0 6px; color: var(--dn-fg);">Vendor stack &amp; connectors</h1>
+              <p style="font: 400 13px/1.5 var(--dn-font-sans); color: var(--dn-fg-muted); margin: 0 0 22px; max-width: 720px;">Not visible to brand teams. The runtime vendor stack is swappable without changing governance — brand users only configure persona, content, targeting and outreach.</p>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 20px 22px; box-shadow: var(--dn-shadow-card);">
+                  <div style="font: 600 13px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--dn-border);">AI vendor stack</div>
+                  <sc-for list="{{ vendorStack }}" as="v" hint-placeholder-count="5">
+                    <div style="display: flex; align-items: center; justify-content: space-between; padding: 11px 0; border-bottom: 1px solid var(--dn-surface-2);">
+                      <div><div style="font: 600 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ v.role }}</div><div style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle); margin-top: 2px;">{{ v.vendor }}</div></div>
+                      <span style="font: 600 10.5px/1 var(--dn-font-sans); padding: 5px 10px; border-radius: 20px; background: var(--dn-accent-green-bg); color: #166534;">Connected</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 20px 22px; box-shadow: var(--dn-shadow-card);">
+                  <div style="font: 600 13px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--dn-border);">CRM &amp; export connectors</div>
+                  <sc-for list="{{ crmConnectors }}" as="c" hint-placeholder-count="4">
+                    <div style="display: flex; align-items: center; justify-content: space-between; padding: 11px 0; border-bottom: 1px solid var(--dn-surface-2);">
+                      <div style="font: 600 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ c.name }}</div>
+                      <span style="{{ c.toggleStyle }}"><span style="{{ c.knobStyle }}"></span></span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </section>
+
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAUNCH CONFIRMATION MODAL -->
+  <div style="display: {{ launchConfirmDisplay }}; position: fixed; inset: 0; background: rgba(15,23,42,.5); z-index: 50; align-items: center; justify-content: center; padding: 24px;" onClick="{{ cancelLaunch }}">
+    <div style="max-width: 400px; width: 100%; background: #fff; border-radius: 16px; box-shadow: var(--dn-shadow-dark); padding: 26px 26px 22px;">
+      <div style="font: 600 17px/1.3 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 8px;">Launch {{ launchConfirmCount }} invitations?</div>
+      <div style="font: 400 12.5px/1.55 var(--dn-font-sans); color: var(--dn-fg-muted); margin-bottom: 20px;">Secure portal invites will be sent to the {{ launchConfirmCount }} HCPs on your activation list. Each invite opens the disclosed AI rep session. You can track responses in Sessions.</div>
+      <div style="display: flex; gap: 10px;">
+        <button style="flex: 1; padding: 11px; background: var(--dn-brand-base); color: #fff; border: none; border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-brand-dark);" onClick="{{ confirmLaunch }}">Send invites</button>
+        <button style="padding: 11px 18px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ cancelLaunch }}">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONTENT UPLOAD DRAWER (brand) -->
+  <div style="display: {{ contentDrawerOverlayDisplay }}; position: fixed; inset: 0; background: rgba(15,23,42,.45); z-index: 40;" onClick="{{ closeContentDrawer }}"></div>
+  <aside style="position: fixed; top: 0; right: 0; bottom: 0; width: 460px; max-width: 92vw; background: #fff; z-index: 41; box-shadow: -12px 0 40px rgba(15,23,42,.18); transform: {{ contentDrawerTransform }}; transition: transform 260ms cubic-bezier(.4,0,.2,1); display: flex; flex-direction: column;">
+    <div style="padding: 20px 22px; border-bottom: 1px solid var(--dn-border); display: flex; align-items: flex-start; justify-content: space-between;">
+      <div>
+        <div style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 7px;">Add approved content</div>
+        <div style="font: 600 18px/1.2 var(--dn-font-sans); color: var(--dn-fg);">Upload &amp; parse</div>
+      </div>
+      <button style="background: var(--dn-surface-2); border: 1px solid var(--dn-border); border-radius: 8px; width: 32px; height: 32px; cursor: pointer; font-size: 16px; color: var(--dn-fg-muted); line-height: 1;" style-hover="background: var(--dn-border);" onClick="{{ closeContentDrawer }}">×</button>
+    </div>
+    <div style="flex: 1; overflow-y: auto; padding: 20px 22px;">
+      <!-- form -->
+      <div style="display: {{ contentFormDisplay }};">
+        <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 16px;">
+          <span style="font: 600 10px/1 var(--dn-font-sans); color: var(--dn-brand-base); background: rgba(6,73,172,.08); padding: 5px 8px; border-radius: 6px;">1 Upload</span>
+          <span style="color: var(--dn-border-strong);">→</span>
+          <span style="font: 600 10px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">2 Parse</span>
+          <span style="color: var(--dn-border-strong);">→</span>
+          <span style="font: 600 10px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">3 Review</span>
+          <span style="color: var(--dn-border-strong);">→</span>
+          <span style="font: 600 10px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">4 MLR</span>
+          <span style="color: var(--dn-border-strong);">→</span>
+          <span style="font: 600 10px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">5 Activate</span>
+        </div>
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 26px; border: 1.5px dashed var(--dn-border-strong); border-radius: 12px; background: var(--dn-surface-2); cursor: pointer; text-align: center; margin-bottom: 18px;" style-hover="border-color: var(--dn-brand-light);">
+          <span style="font-size: 26px; color: var(--dn-brand-light);">↑</span>
+          <span style="font: 600 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">Drop a PPT, PDF, ISI or FAQ — or paste a link</span>
+          <span style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle);">We parse it into answer blocks for MLR review</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;">
+          <label style="display: block;"><span style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Asset name</span><input value="CardioNova ACS — Coverage & Access" style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12.5px/1 var(--dn-font-sans); color: var(--dn-fg);"/></label>
+          <label style="display: block;"><span style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Type</span><select style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12.5px/1 var(--dn-font-sans); color: var(--dn-fg); background: #fff;"><option>Detail aid</option><option>ISI</option><option>FAQ / script</option></select></label>
+          <label style="display: block;"><span style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">MLR ID</span><input value="MLR-2026-026" style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12.5px/1 var(--dn-font-mono); color: var(--dn-brand-base);"/></label>
+          <label style="display: block;"><span style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted);">Expiry date</span><input value="2027-03-31" style="margin-top: 6px; width: 100%; padding: 9px 11px; border: 1px solid var(--dn-border); border-radius: 8px; font: 500 12.5px/1 var(--dn-font-sans); color: var(--dn-fg);"/></label>
+        </div>
+        <div style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted); margin: 6px 0 10px;">Parsed answer blocks · review</div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; gap: 10px; align-items: flex-start; padding: 11px 13px; border: 1px solid var(--dn-border); border-radius: 9px;"><span style="flex-shrink: 0; margin-top: 1px; width: 16px; height: 16px; border-radius: 50%; background: var(--dn-accent-green-bg); color: #166534; display: flex; align-items: center; justify-content: center; font-size: 10px;">✓</span><span style="font: 400 12px/1.45 var(--dn-font-sans); color: var(--dn-fg);">Coverage varies by plan; prior authorization may apply for ACS.</span></div>
+          <div style="display: flex; gap: 10px; align-items: flex-start; padding: 11px 13px; border: 1px solid var(--dn-border); border-radius: 9px;"><span style="flex-shrink: 0; margin-top: 1px; width: 16px; height: 16px; border-radius: 50%; background: var(--dn-accent-green-bg); color: #166534; display: flex; align-items: center; justify-content: center; font-size: 10px;">✓</span><span style="font: 400 12px/1.45 var(--dn-font-sans); color: var(--dn-fg);">Patient assistance program available for eligible patients.</span></div>
+          <div style="display: flex; gap: 10px; align-items: flex-start; padding: 11px 13px; border: 1px solid var(--dn-border); border-radius: 9px;"><span style="flex-shrink: 0; margin-top: 1px; width: 16px; height: 16px; border-radius: 50%; background: var(--dn-accent-yellow-bg); color: #92400e; display: flex; align-items: center; justify-content: center; font-size: 10px;">!</span><span style="font: 400 12px/1.45 var(--dn-font-sans); color: var(--dn-fg);">1 block needs an ISI cross-reference before activation.</span></div>
+        </div>
+      </div>
+      <!-- submitted state -->
+      <div style="display: {{ contentSubmittedDisplay }}; flex-direction: column; align-items: center; text-align: center; padding: 30px 16px;">
+        <div style="width: 52px; height: 52px; border-radius: 50%; background: var(--dn-accent-yellow-bg); display: flex; align-items: center; justify-content: center; font-size: 22px; color: #92400e; margin-bottom: 14px;">⏱</div>
+        <div style="font: 600 15px/1.3 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 6px;">Submitted to MLR review</div>
+        <div style="font: 400 12.5px/1.5 var(--dn-font-sans); color: var(--dn-fg-muted); max-width: 300px;">MLR-2026-026 is now pending approval. It becomes usable by the AI rep once approved and activated in the content pack.</div>
+      </div>
+    </div>
+    <div style="padding: 14px 22px; border-top: 1px solid var(--dn-border); display: flex; gap: 10px;">
+      <button style="flex: 1; padding: 12px; background: var(--dn-brand-base); color: #fff; border: none; border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-brand-dark);" onClick="{{ submitContent }}">Submit for MLR review</button>
+      <button style="padding: 12px 16px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ closeContentDrawer }}">Close</button>
+    </div>
+  </aside>
+
+  <!-- HCP PROFILE DRAWER (brand) -->
+  <div style="display: {{ drawerOverlayDisplay }}; position: fixed; inset: 0; background: rgba(15,23,42,.45); z-index: 40;" onClick="{{ closeDrawer }}"></div>
+  <aside style="position: fixed; top: 0; right: 0; bottom: 0; width: 444px; max-width: 92vw; background: #fff; z-index: 41; box-shadow: -12px 0 40px rgba(15,23,42,.18); transform: {{ drawerTransform }}; transition: transform 260ms cubic-bezier(.4,0,.2,1); display: flex; flex-direction: column;">
+    <div style="padding: 20px 22px; border-bottom: 1px solid var(--dn-border); display: flex; align-items: flex-start; justify-content: space-between;">
+      <div>
+        <div style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 7px;">HCP Profile</div>
+        <div style="font: 600 19px/1.2 var(--dn-font-sans); color: var(--dn-fg);">{{ drawerName }}</div>
+        <div style="font: 400 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg-muted); margin-top: 3px;">{{ drawerSpecialty }} · {{ drawerInstitution }}</div>
+      </div>
+      <button style="background: var(--dn-surface-2); border: 1px solid var(--dn-border); border-radius: 8px; width: 32px; height: 32px; cursor: pointer; font-size: 16px; color: var(--dn-fg-muted); line-height: 1;" style-hover="background: var(--dn-border);" onClick="{{ closeDrawer }}">×</button>
+    </div>
+    <div style="flex: 1; overflow-y: auto; padding: 20px 22px;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 18px;">
+        <div style="background: var(--dn-surface-2); border-radius: 10px; padding: 12px 13px;"><div style="font: 600 9.5px/1.2 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 6px;">Opp Score</div><div style="font: 700 20px/1 var(--dn-font-sans); color: var(--dn-brand-base);">{{ drawerScore }}</div></div>
+        <div style="background: var(--dn-surface-2); border-radius: 10px; padding: 12px 13px;"><div style="font: 600 9.5px/1.2 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 6px;">Decile</div><div style="font: 700 20px/1 var(--dn-font-sans); color: var(--dn-fg);">{{ drawerDecile }}</div></div>
+        <div style="background: var(--dn-surface-2); border-radius: 10px; padding: 12px 13px;"><div style="font: 600 9.5px/1.2 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 6px;">Eligible Pts</div><div style="font: 700 20px/1 var(--dn-font-sans); color: var(--dn-fg);">{{ drawerPatients }}</div></div>
+      </div>
+
+      <div style="margin-bottom: 18px; padding: 14px 16px; border: 1px solid var(--dn-border); border-radius: 11px; background: rgba(6,73,172,.03);">
+        <div style="font: 600 10px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-brand-light); margin-bottom: 7px;">Recommended approved topic</div>
+        <div style="font: 600 13.5px/1.4 var(--dn-font-sans); color: var(--dn-fg);">{{ drawerTopic }}</div>
+        <div style="display: flex; align-items: center; gap: 7px; margin-top: 10px;"><span style="font: 600 10px/1 var(--dn-font-sans); padding: 4px 9px; border-radius: 20px; background: var(--dn-accent-green-bg); color: #166534;">● Outreach ready</span><span style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-subtle);">approved content available</span></div>
+      </div>
+
+      <div style="font: 600 11px/1 var(--dn-font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 10px;">Why this HCP</div>
+      <div style="display: flex; flex-direction: column; gap: 9px; margin-bottom: 22px;">
+        <sc-for list="{{ drawerRationale }}" as="r" hint-placeholder-count="3">
+          <div style="display: flex; gap: 10px; align-items: flex-start;">
+            <span style="flex-shrink: 0; margin-top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--dn-accent-green-bg); color: #166534; display: flex; align-items: center; justify-content: center; font-size: 10px;">✓</span>
+            <span style="font: 400 12.5px/1.5 var(--dn-font-sans); color: var(--dn-fg);">{{ r }}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="font: 600 11px/1 var(--dn-font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 12px;">Content affinity</div>
+      <div style="display: flex; flex-direction: column; gap: 11px;">
+        <sc-for list="{{ drawerAffinity }}" as="a" hint-placeholder-count="3">
+          <div style="display: flex; align-items: center; gap: 11px;">
+            <span style="width: 140px; flex-shrink: 0; font: 500 11.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ a.label }}</span>
+            <span style="flex: 1; height: 12px; border-radius: 4px; background: var(--dn-surface-2); overflow: hidden;"><span style="display: block; height: 100%; border-radius: 4px; background: var(--dn-brand-light); width: {{ a.pct }}%;"></span></span>
+            <span style="width: 32px; text-align: right; font: 600 11px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">{{ a.pct }}%</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    <div style="padding: 14px 22px; border-top: 1px solid var(--dn-border); display: flex; flex-direction: column; gap: 9px;">
+      <div style="display: flex; gap: 9px;">
+        <button style="{{ addListBtnStyle }}" onClick="{{ toggleActivation }}">{{ addListLabel }}</button>
+        <button style="flex: 1; padding: 11px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ goPersona }}">Preview AI rep</button>
+      </div>
+      <button style="width: 100%; padding: 12px; background: var(--dn-brand-base); color: #fff; border: none; border-radius: 9px; font: 600 13px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-brand-dark);" onClick="{{ launchInviteFromDrawer }}">Preview AI rep invite ↗</button>
+    </div>
+  </aside>
+
+  <!-- ============================================================ HCP EXPERIENCE ============================================================ -->
+  <div style="display: {{ hcpDisplay }}; height: 100vh; overflow-y: auto; background: var(--dn-bg);">
+    <!-- minimal header -->
+    <header style="height: 56px; background: #fff; border-bottom: 1px solid var(--dn-border); display: flex; align-items: center; padding: 0 24px; gap: 12px; position: sticky; top: 0; z-index: 10;">
+      <img src="./assets/docnexus-logo-large.png" alt="" style="height: 26px;"/>
+      <span style="font: 600 13px/1 var(--dn-font-sans); color: var(--dn-fg-muted);">CardioNova Information Session</span>
+      <div style="margin-left: auto; display: flex; align-items: center; gap: 12px;">
+        <span style="display: flex; align-items: center; gap: 7px; font: 600 11px/1 var(--dn-font-sans); color: #92400e; background: var(--dn-accent-yellow-bg); padding: 6px 11px; border-radius: 20px;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #f59e0b;"></span>AI Representative</span>
+        <button style="padding: 8px 13px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 8px; font: 600 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ reqHuman }}">Need help?</button>
+        <button style="padding: 8px 13px; background: var(--dn-surface-2); color: var(--dn-fg-muted); border: 1px solid var(--dn-border); border-radius: 8px; font: 600 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-border);" onClick="{{ closeHcpSession }}">End session</button>
+      </div>
+    </header>
+
+    <!-- HCP: INVITE LANDING -->
+    <div style="display: {{ hcpScr.invite }}; min-height: calc(100vh - 56px); display: flex; align-items: center; justify-content: center; padding: 40px 24px;">
+      <div style="max-width: 540px; width: 100%; background: #fff; border: 1px solid var(--dn-border); border-radius: 18px; box-shadow: var(--dn-shadow-medical); overflow: hidden;">
+        <div style="background: var(--dn-gradient-hero); padding: 30px 32px; color: #fff;">
+          <div style="display: inline-flex; align-items: center; gap: 7px; background: rgba(255,255,255,.15); padding: 6px 11px; border-radius: 20px; font: 600 10.5px/1 var(--dn-font-sans); margin-bottom: 16px;"><span style="width: 7px; height: 7px; border-radius: 50%; background: #fbbf24;"></span>AI-guided · not a person</div>
+          <h1 style="font: 600 23px/1.25 var(--dn-font-sans); margin: 0; letter-spacing: -0.01em;">You're invited to an AI-guided session on CardioNova</h1>
+          <p style="font: 400 13px/1.55 var(--dn-font-sans); color: rgba(255,255,255,.85); margin: 12px 0 0;">A brief, on-demand walkthrough of approved information for Acute Coronary Syndrome — answer questions at your own pace.</p>
+        </div>
+        <div style="padding: 26px 32px;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 22px;">
+            <div style="text-align: center;"><div style="font: 600 18px/1 var(--dn-font-sans); color: var(--dn-brand-base);">~8 min</div><div style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-muted); margin-top: 4px;">Typical length</div></div>
+            <div style="text-align: center;"><div style="font: 600 18px/1 var(--dn-font-sans); color: var(--dn-brand-base);">Approved</div><div style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-muted); margin-top: 4px;">MLR content only</div></div>
+            <div style="text-align: center;"><div style="font: 600 18px/1 var(--dn-font-sans); color: var(--dn-brand-base);">Anytime</div><div style="font: 400 11px/1.3 var(--dn-font-sans); color: var(--dn-fg-muted); margin-top: 4px;">Human rep on request</div></div>
+          </div>
+          <div style="padding: 14px 16px; background: var(--dn-surface-2); border-radius: 11px; margin-bottom: 22px;">
+            <div style="font: 600 11px/1 var(--dn-font-sans); color: var(--dn-fg); margin-bottom: 8px;">What to expect</div>
+            <div style="font: 400 12px/1.6 var(--dn-font-sans); color: var(--dn-fg-muted);">You'll talk with an AI representative that shares approved CardioNova materials and Important Safety Information. It won't discuss off-label use — you can request a human rep or MSL at any time.</div>
+          </div>
+          <button style="width: 100%; padding: 14px; background: var(--dn-brand-base); color: #fff; border: none; border-radius: 10px; font: 600 14px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-brand-dark);" onClick="{{ startConversation }}">Start session</button>
+          <button style="width: 100%; margin-top: 10px; padding: 12px; background: #fff; color: var(--dn-fg-muted); border: 1px solid var(--dn-border); border-radius: 10px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);">Request a human representative instead</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- HCP: CONVERSATION -->
+    <div style="display: {{ hcpScr.convo }}; max-width: 1180px; margin: 0 auto; padding: 24px;">
+      <div style="display: {{ hcpNoticeDisplay }}; align-items: center; gap: 11px; margin-bottom: 16px; padding: 12px 16px; background: #fff; border: 1px solid var(--dn-brand-light); border-left: 4px solid var(--dn-brand-base); border-radius: 10px; box-shadow: var(--dn-shadow-card);">
+        <span style="flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; background: var(--dn-brand-base); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 11px;">✓</span>
+        <span style="flex: 1; font: 500 12.5px/1.45 var(--dn-font-sans); color: var(--dn-fg);">{{ hcpNotice }}</span>
+        <span style="font: 600 16px/1 var(--dn-font-sans); color: var(--dn-fg-subtle); cursor: pointer;" onClick="{{ dismissNotice }}">×</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; align-items: start;">
+        <!-- video panel + controls -->
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <div style="position: relative; border-radius: 16px; overflow: hidden; aspect-ratio: 16/10; background: radial-gradient(120% 120% at 50% 0%, #15315f 0%, #0a1a33 60%, #060f1f 100%); display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: var(--dn-shadow-dark);">
+            <div style="position: absolute; top: 14px; left: 14px; display: flex; align-items: center; gap: 7px; background: rgba(0,0,0,.45); backdrop-filter: blur(6px); padding: 7px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12);">
+              <span style="width: 7px; height: 7px; border-radius: 50%; background: #fbbf24;"></span><span style="font: 600 11px/1 var(--dn-font-sans); color: #fff;">AI Representative · not a person</span>
+            </div>
+            <div style="position: absolute; top: 14px; right: 14px; display: {{ hcpStatusDisplay }}; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 20px; background: rgba(255,255,255,.15); backdrop-filter: blur(6px);">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: #93c5fd; animation: dn-pulse 1s infinite;"></span><span style="font: 600 11.5px/1 var(--dn-font-sans); color: #fff;">{{ hcpStatusLabel }}</span>
+            </div>
+            <div style="width: 130px; height: 130px; border-radius: 50%; background: linear-gradient(160deg, #2d4f86, #1a3258); display: flex; align-items: flex-end; justify-content: center; overflow: hidden; box-shadow: 0 0 0 6px rgba(96,165,250,.12), 0 0 50px rgba(37,99,235,.35);">
+              <svg width="90" height="90" viewBox="0 0 24 24" fill="rgba(191,219,254,.9)"><circle cx="12" cy="8" r="4.2"/><path d="M3.5 21c0-4.4 3.8-7.5 8.5-7.5s8.5 3.1 8.5 7.5z"/></svg>
+            </div>
+            <div style="margin-top: 16px; font: 600 14px/1 var(--dn-font-sans); color: rgba(255,255,255,.92);">CardioNova AI Specialist</div>
+            <div style="margin-top: 5px; font: 500 9.5px/1 var(--dn-font-sans); color: rgba(191,219,254,.6);">Tavus avatar preview</div>
+            <div style="margin-top: 13px; height: 28px; display: flex; align-items: center; gap: 4px;">
+              <span style="width: 4px; height: 100%; border-radius: 2px; background: #60a5fa; animation: dn-wave .9s ease-in-out infinite;"></span>
+              <span style="width: 4px; height: 100%; border-radius: 2px; background: #60a5fa; animation: dn-wave .9s ease-in-out infinite; animation-delay: .15s;"></span>
+              <span style="width: 4px; height: 100%; border-radius: 2px; background: #93c5fd; animation: dn-wave .9s ease-in-out infinite; animation-delay: .3s;"></span>
+              <span style="width: 4px; height: 100%; border-radius: 2px; background: #60a5fa; animation: dn-wave .9s ease-in-out infinite; animation-delay: .45s;"></span>
+              <span style="width: 4px; height: 100%; border-radius: 2px; background: #93c5fd; animation: dn-wave .9s ease-in-out infinite; animation-delay: .6s;"></span>
+              <span style="width: 4px; height: 100%; border-radius: 2px; background: #60a5fa; animation: dn-wave .9s ease-in-out infinite; animation-delay: .75s;"></span>
+            </div>
+            <div style="position: absolute; left: 16px; right: 16px; bottom: 14px; background: rgba(0,0,0,.5); backdrop-filter: blur(6px); border-radius: 9px; padding: 11px 14px; min-height: 42px; display: flex; align-items: center;">
+              <span style="font: 400 12.5px/1.45 var(--dn-font-sans); color: rgba(255,255,255,.92);">{{ hcpCaption }}</span>
+            </div>
+          </div>
+
+          <!-- ask + suggested -->
+          <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; padding: 15px 16px; box-shadow: var(--dn-shadow-card);">
+            <div style="display: flex; gap: 8px; margin-bottom: 11px;">
+              <input value="{{ hcpInput }}" onInput="{{ onHcpInput }}" placeholder="Ask a question…" style="flex: 1; padding: 11px 13px; border: 1px solid var(--dn-border); border-radius: 9px; font: 400 13px/1 var(--dn-font-sans); background: var(--dn-surface-2);"/>
+              <button style="{{ hcpAskBtnStyle }}" onClick="{{ askNext }}">{{ hcpAskLabel }}</button>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 7px;">
+              <span style="font: 500 11px/1 var(--dn-font-sans); color: var(--dn-fg-subtle); align-self: center;">Try:</span>
+              <span style="padding: 7px 11px; background: var(--dn-surface-2); border: 1px solid var(--dn-border); border-radius: 20px; font: 500 11.5px/1 var(--dn-font-sans); color: var(--dn-fg); cursor: pointer;" style-hover="border-color: var(--dn-brand-light);" onClick="{{ fillDosing }}">Dosing</span>
+              <span style="padding: 7px 11px; background: var(--dn-surface-2); border: 1px solid var(--dn-border); border-radius: 20px; font: 500 11.5px/1 var(--dn-font-sans); color: var(--dn-fg); cursor: pointer;" style-hover="border-color: var(--dn-brand-light);" onClick="{{ fillSafety }}">Safety information</span>
+              <span style="padding: 7px 11px; background: var(--dn-surface-2); border: 1px solid var(--dn-border); border-radius: 20px; font: 500 11.5px/1 var(--dn-font-sans); color: var(--dn-fg); cursor: pointer;" style-hover="border-color: var(--dn-brand-light);" onClick="{{ fillRwe }}">Real-world evidence</span>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 9px; flex-wrap: wrap;">
+            <button style="padding: 10px 14px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ reqHuman }}">Request human rep</button>
+            <button style="padding: 10px 14px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ reqMsl }}">Request MSL</button>
+            <button style="padding: 10px 14px; background: #fff; color: var(--dn-accent-orange); border: 1px solid var(--dn-border); border-radius: 9px; font: 600 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ reqSideEffect }}">Report side effect</button>
+            <button style="margin-left: auto; padding: 10px 16px; background: var(--dn-brand-dark); color: #fff; border: none; border-radius: 9px; font: 600 12px/1 var(--dn-font-sans); cursor: pointer;" style-hover="opacity:.9;" onClick="{{ finishSession }}">End session →</button>
+          </div>
+        </div>
+
+        <!-- right: captions + detail aid + ISI -->
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; box-shadow: var(--dn-shadow-card); display: flex; flex-direction: column; height: 300px;">
+            <div style="padding: 13px 16px; border-bottom: 1px solid var(--dn-border); font: 600 12px/1 var(--dn-font-sans); color: var(--dn-fg);">Captions</div>
+            <div style="flex: 1; overflow-y: auto; padding: 15px 16px; display: flex; flex-direction: column; gap: 11px;">
+              <sc-for list="{{ hcpTranscript }}" as="m" hint-placeholder-count="2">
+                <div style="{{ m.wrapStyle }}">
+                  <div style="{{ m.roleStyle }}">{{ m.role }}</div>
+                  <div style="{{ m.bubbleStyle }}">{{ m.text }}</div>
+                </div>
+              </sc-for>
+              <div style="display: {{ hcpEmptyDisplay }}; text-align: center; color: var(--dn-fg-subtle); font: 400 12px/1.5 var(--dn-font-sans); padding: 24px 10px;">Ask a question or pick a topic below to begin.</div>
+            </div>
+          </div>
+
+          <div style="background: #fff; border: 1px solid var(--dn-border); border-radius: 13px; box-shadow: var(--dn-shadow-card); padding: 15px 17px;">
+            <div style="font: 600 11px/1 var(--dn-font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 12px;">On screen now</div>
+            <div style="display: flex; gap: 12px; align-items: center;">
+              <div style="width: 78px; height: 56px; border-radius: 8px; background: var(--dn-gradient-primary); flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #fff; font: 700 10px/1.2 var(--dn-font-sans); text-align: center;">{{ hcpDetailSlide }}</div>
+              <div style="font: 600 12.5px/1.35 var(--dn-font-sans); color: var(--dn-fg);">{{ hcpDetailTitle }}</div>
+            </div>
+          </div>
+
+          <div style="background: #fffbeb; border: 1.5px solid #fcd34d; border-radius: 13px; box-shadow: var(--dn-shadow-card); padding: 16px 18px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px;">
+              <span style="font: 700 12.5px/1 var(--dn-font-sans); letter-spacing: .02em; color: #92400e;">Important Safety Information</span>
+              <span style="{{ hcpIsiBadgeStyle }}">{{ hcpIsiBadge }}</span>
+            </div>
+            <ul style="margin: 0 0 12px; padding-left: 17px; display: flex; flex-direction: column; gap: 6px;">
+              <li style="font: 400 12px/1.5 var(--dn-font-sans); color: #4b3a16;">Not for use in patients with active pathological bleeding.</li>
+              <li style="font: 400 12px/1.5 var(--dn-font-sans); color: #4b3a16;">Assess renal function prior to initiation.</li>
+              <li style="font: 400 12px/1.5 var(--dn-font-sans); color: #4b3a16;">Discontinue ahead of major elective surgery.</li>
+              <li style="font: 400 12px/1.5 var(--dn-font-sans); color: #4b3a16;">Report adverse events to your care team.</li>
+            </ul>
+            <div style="padding-top: 11px; border-top: 1px solid #fcd34d; display: flex; align-items: center; justify-content: space-between; gap: 8px;"><span style="font: 400 9.5px/1.3 var(--dn-font-sans); color: #92400e; font-style: italic;">Sample placeholder — brand-provided verbatim text shown exactly as approved.</span><span style="flex-shrink: 0; font: 600 11.5px/1 var(--dn-font-sans); color: #92400e; cursor: pointer;">Full PI ↗</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- HCP: SESSION COMPLETE -->
+    <div style="display: {{ hcpScr.complete }}; min-height: calc(100vh - 56px); display: flex; align-items: center; justify-content: center; padding: 40px 24px;">
+      <div style="max-width: 540px; width: 100%; background: #fff; border: 1px solid var(--dn-border); border-radius: 18px; box-shadow: var(--dn-shadow-medical); overflow: hidden;">
+        <div style="padding: 30px 32px 22px; text-align: center;">
+          <div style="width: 56px; height: 56px; border-radius: 50%; background: var(--dn-accent-green-bg); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; font-size: 26px; color: #166534;">✓</div>
+          <h1 style="font: 600 21px/1.25 var(--dn-font-sans); margin: 0; color: var(--dn-fg);">Thanks for your time</h1>
+          <p style="font: 400 13px/1.55 var(--dn-font-sans); color: var(--dn-fg-muted); margin: 10px 0 0;">Here's what we covered. Request a follow-up and we'll send approved materials or connect you with our team.</p>
+        </div>
+        <div style="padding: 0 32px 26px;">
+          <div style="padding: 15px 16px; background: var(--dn-surface-2); border-radius: 11px; margin-bottom: 20px;">
+            <div style="font: 600 10.5px/1 var(--dn-font-sans); letter-spacing: .05em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 10px;">Topics discussed</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 7px;">
+              <span style="padding: 6px 11px; background: #fff; border: 1px solid var(--dn-border); border-radius: 20px; font: 500 11.5px/1 var(--dn-font-sans); color: var(--dn-fg);">ACS dosing</span>
+              <span style="padding: 6px 11px; background: #fff; border: 1px solid var(--dn-border); border-radius: 20px; font: 500 11.5px/1 var(--dn-font-sans); color: var(--dn-fg);">Bleeding risk · ISI</span>
+              <span style="padding: 6px 11px; background: #fff; border: 1px solid var(--dn-border); border-radius: 20px; font: 500 11.5px/1 var(--dn-font-sans); color: var(--dn-fg);">Real-world evidence</span>
+            </div>
+          </div>
+          <div style="font: 600 11px/1 var(--dn-font-sans); letter-spacing: .04em; text-transform: uppercase; color: var(--dn-fg-muted); margin-bottom: 11px;">Request a follow-up</div>
+          <div style="display: flex; flex-direction: column; gap: 9px; margin-bottom: 20px;">
+            <sc-for list="{{ followupOptions }}" as="f" hint-placeholder-count="3">
+              <div style="{{ f.style }}" onClick="{{ f.onClick }}">
+                <span style="{{ f.radioStyle }}"></span>
+                <span style="font: 500 12.5px/1.3 var(--dn-font-sans); color: var(--dn-fg);">{{ f.label }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <button style="{{ followupBtnStyle }}" onClick="{{ submitFollowup }}">{{ followupBtnLabel }}</button>
+          <div style="display: flex; gap: 10px; margin-top: 11px;">
+            <button style="flex: 1; padding: 11px; background: #fff; color: var(--dn-fg); border: 1px solid var(--dn-border); border-radius: 10px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-surface-2);" onClick="{{ downloadMaterials }}">{{ downloadLabel }}</button>
+            <button style="flex: 1; padding: 11px; background: var(--dn-surface-2); color: var(--dn-fg-muted); border: 1px solid var(--dn-border); border-radius: 10px; font: 600 12.5px/1 var(--dn-font-sans); cursor: pointer;" style-hover="background: var(--dn-border);" onClick="{{ closeHcpSession }}">Close session</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FLOATING DEMO CONTROL (outside product chrome) -->
+  <div style="position: fixed; right: 14px; bottom: 14px; z-index: 60; display: {{ demoDisplay }}; align-items: center; gap: 7px; background: rgba(4,48,122,.92); backdrop-filter: blur(6px); padding: 5px 7px 5px 10px; border-radius: 9px; box-shadow: 0 6px 20px rgba(4,48,122,.35); opacity: .9;">
+    <span style="font: 600 8px/1 var(--dn-font-sans); letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.45);">Demo</span>
+    <div style="display: flex; background: rgba(255,255,255,.08); border-radius: 7px; padding: 2px; gap: 2px;">
+      <span style="{{ demoBrandStyle }}" onClick="{{ setBrandMode }}">Brand</span>
+      <span style="{{ demoHcpStyle }}" onClick="{{ setHcpMode }}">HCP</span>
+    </div>
+  </div>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{}">
+
+class Component extends DCLogic {
+  state = {
+    mode: 'brand',
+    nav: 'overview',
+    hcpNav: 'invite',
+    crmMode: 'Veeva',
+    drawerId: null,
+    activation: ['sharma','okafor'],
+    sessionHcp: null,
+    turnIndex: -1, pendingTurn: -1, processing: false, gateStage: 'idle',
+    anCat: 'targeting', anDrill: null,
+    auditSel: 0,
+    crmSel: 0, crmStatuses: {}, jsonOpen: false,
+    launched: false, launchConfirm: false, showDemo: false, attnOpen: false,
+    persona: { type: 'brand', avatar: 'clinical', voice: 'Warm', empathy: true, concise: false, msl: true, name: 'CardioNova AI Specialist', consentUploaded: false },
+    personaStatus: 'draft',
+    contentDrawer: false, contentSubmitted: false,
+    followup: 'msl', followupDone: false,
+    hcpInput: '', typed: {}, hcpNotice: '', downloaded: false,
+  };
+
+  // ---------- data ----------
+  getHcps() {
+    return [
+      { id:'sharma', rank:1, name:'Dr. A. Sharma', specialty:'Cardiology', institution:'Mercy Heart Institute', decile:'D3', segment:'High Growth', segTone:'green', patients:'2,847', score:'92.1', trend:'+18%', up:true, topic:'ACS dosing & titration',
+        rationale:['Top-quartile eligible-patient density for ACS in region (2,847).','Prescribing whitespace: high diagnosis volume, low brand share.','Growth trend +18% QoQ — accelerating new starts.'],
+        affinity:[{label:'ACS dosing detail',pct:88},{label:'Safety / ISI',pct:64},{label:'RWE adherence',pct:52}] },
+      { id:'okafor', rank:2, name:'Dr. M. Okafor', specialty:'Interventional Cardiology', institution:'St. Vincent Cardiovascular', decile:'D2', segment:'ACS Whitespace', segTone:'yellow', patients:'3,102', score:'90.4', trend:'+12%', up:true, topic:'Efficacy vs standard of care',
+        rationale:['Highest eligible-patient density in cohort (3,102).','Decile 2 writer with minimal current brand exposure.','Strong fit for interventional ACS messaging.'],
+        affinity:[{label:'ACS dosing detail',pct:79},{label:'Efficacy vs SoC',pct:71},{label:'Safety / ISI',pct:58}] },
+      { id:'castellano', rank:3, name:'Dr. L. Castellano', specialty:'Cardiology', institution:'Lakeshore Medical Group', decile:'D4', segment:'Adherence Gap', segTone:'pink', patients:'1,956', score:'87.9', trend:'+9%', up:true, topic:'Real-world adherence evidence',
+        rationale:['Documented adherence gap among existing patients.','Responsive to RWE and patient-support content historically.','Moderate density, steady +9% growth.'],
+        affinity:[{label:'RWE adherence',pct:84},{label:'Patient support',pct:62},{label:'ACS dosing detail',pct:49}] },
+      { id:'nguyen', rank:4, name:'Dr. R. Nguyen', specialty:'Electrophysiology', institution:'Summit Arrhythmia Center', decile:'D3', segment:'New Writer', segTone:'green', patients:'2,134', score:'85.3', trend:'+22%', up:true, topic:'Mechanism of action',
+        rationale:['Fastest-growing trend in cohort (+22%).','Recently began writing in category — early-adopter profile.','High receptivity to MoA and efficacy content.'],
+        affinity:[{label:'MoA detail',pct:77},{label:'Efficacy vs SoC',pct:69},{label:'ACS dosing detail',pct:55}] },
+      { id:'andersson', rank:5, name:'Dr. P. Andersson', specialty:'Cardiology', institution:'Northgate Physicians', decile:'D5', segment:'Re-engage', segTone:'yellow', patients:'1,420', score:'81.7', trend:'-3%', up:false, topic:'Updated safety profile',
+        rationale:['Declining trend (-3%) — at risk of lapse.','Previously engaged; no touch in 90 days.','Re-engagement opportunity with updated safety data.'],
+        affinity:[{label:'Safety / ISI',pct:66},{label:'ACS dosing detail',pct:51},{label:'Efficacy vs SoC',pct:44}] },
+      { id:'haddad', rank:6, name:'Dr. S. Haddad', specialty:'Interventional Cardiology', institution:'Riverside Heart & Vascular', decile:'D2', segment:'ACS Whitespace', segTone:'yellow', patients:'2,560', score:'80.2', trend:'+6%', up:true, topic:'Efficacy vs standard of care',
+        rationale:['Decile 2 with clear ACS whitespace.','Solid density (2,560), modest growth.','Good candidate for efficacy-led detail.'],
+        affinity:[{label:'Efficacy vs SoC',pct:73},{label:'ACS dosing detail',pct:60},{label:'Safety / ISI',pct:48}] },
+      { id:'whitfield', rank:7, name:'Dr. J. Whitfield', specialty:'Cardiology', institution:'Parkview Cardiology', decile:'D6', segment:'Low Touch', segTone:'pink', patients:'980', score:'74.5', trend:'+1%', up:true, topic:'ACS dosing & titration',
+        rationale:['Lower density but under-served (low touch).','Efficient incremental-reach opportunity.','Flat trend — awareness-building candidate.'],
+        affinity:[{label:'ACS dosing detail',pct:54},{label:'MoA detail',pct:47},{label:'Safety / ISI',pct:39}] },
+      { id:'volkova', rank:8, name:'Dr. E. Volkova', specialty:'Cardiology', institution:'Eastside Medical Partners', decile:'D4', segment:'Adherence Gap', segTone:'pink', patients:'1,610', score:'72.8', trend:'+4%', up:true, topic:'Real-world adherence evidence',
+        rationale:['Adherence gap with moderate density (1,610).','Receptive to patient-support resources.','Steady +4% growth.'],
+        affinity:[{label:'RWE adherence',pct:68},{label:'Patient support',pct:57},{label:'ACS dosing detail',pct:43}] },
+    ];
+  }
+
+  getConversation() {
+    return [
+      { time:'00:42', q:"What's the approved maintenance dose of CardioNova for ACS patients?", intent:'Dosing · On-label', source:'MLR-2026-014', sourceTitle:'CardioNova ACS Detail — Dosing & titration', slide:'Slide 4 / 12', isi:false, offLabel:false,
+        response:"Per the approved detail aid, CardioNova is given once daily as a maintenance dose following the loading dose. I'm showing the titration schedule now." },
+      { time:'02:15', q:"How does it compare on major bleeding risk versus standard of care?", intent:'Safety · On-label', source:'MLR-2026-002', sourceTitle:'Important Safety Information (ISI)', slide:'ISI', isi:true, offLabel:false,
+        response:"I can share the safety profile from the approved information. I'm also delivering the full Important Safety Information for your review." },
+      { time:'04:38', q:"Could I use this off-label for my pediatric patients?", intent:'Off-label request', source:null, sourceTitle:null, slide:null, isi:false, offLabel:true,
+        response:"I'm not able to discuss off-label or pediatric use — that's outside the approved indication. I can connect you with a Medical Science Liaison who can help." },
+      { time:'06:10', q:"Is there real-world evidence on treatment adherence?", intent:'Clinical evidence · On-label', source:'MLR-2026-019', sourceTitle:'Real-World Evidence Brief — Adherence', slide:'Slide 9 / 12', isi:false, offLabel:false,
+        response:"Yes — the approved real-world evidence brief reports adherence outcomes from a retrospective cohort. I'm displaying the summary figure now." },
+    ];
+  }
+
+  // ---------- helpers ----------
+  segStyle(tone) {
+    const m = { green:['var(--dn-accent-green-bg)','#166534'], yellow:['var(--dn-accent-yellow-bg)','#92400e'], pink:['var(--dn-accent-pink-bg)','#9d174d'] };
+    const [bg,c] = m[tone] || m.green;
+    return `display:inline-block; padding:4px 9px; border-radius:20px; font:600 10.5px/1 var(--dn-font-sans); background:${bg}; color:${c};`;
+  }
+  navItem(id, label) {
+    const active = this.state.nav === id && this.state.mode === 'brand';
+    const style = `display:flex; align-items:center; gap:10px; padding:10px 13px; border-radius:9px; font:${active?'600':'500'} 13px/1.2 var(--dn-font-sans); cursor:pointer; position:relative; color:${active?'#fff':'rgba(255,255,255,.72)'}; background:${active?'rgba(96,165,250,.18)':'transparent'};`;
+    const bar = `position:absolute; left:0; top:8px; bottom:8px; width:3px; border-radius:2px; background:${active?'#60a5fa':'transparent'};`;
+    return { id, label, style, bar, onClick: () => this.go(id) };
+  }
+
+  // ---------- nav ----------
+  go(id) { this.setState({ nav:id, mode:'brand', drawerId:null }); this._scrollTop(); }
+  goAdmin() { this.setState({ nav:'admin', mode:'brand' }); this._scrollTop(); }
+  _scrollTop() { const m = this.el && this.el.querySelector('main'); if (m) m.scrollTop = 0; }
+  setBrandMode() { this.setState({ mode:'brand' }); }
+  setHcpMode() { this.setState({ mode:'hcp' }); }
+  goHcp(s) { this.setState({ mode:'hcp', hcpNav:s }); }
+
+  componentDidMount() {
+    const patch = {};
+    if (!this.state.sessionHcp) patch.sessionHcp = this.getHcps()[0];
+    try {
+      const p = new URLSearchParams(location.search);
+      const v = p.get('view'); if (v==='hcp'||v==='brand') patch.mode = v;
+      if (p.get('demo')==='true' || p.get('admin')==='true') patch.showDemo = true;
+    } catch(e) {}
+    if (Object.keys(patch).length) this.setState(patch);
+    this._onKey = (e) => {
+      const tag = (e.target && e.target.tagName) || '';
+      if (/INPUT|TEXTAREA|SELECT/.test(tag)) return;
+      if (e.key === 'd' || e.key === 'D') this.setState(s => ({ showDemo: !s.showDemo }));
+    };
+    window.addEventListener('keydown', this._onKey);
+  }
+  toggleAttn() { this.setState(s => ({ attnOpen: !s.attnOpen })); }
+  componentWillUnmount() { [this._t1,this._t2,this._t3].forEach(t => t && clearTimeout(t)); if (this._onKey) window.removeEventListener('keydown', this._onKey); }
+
+  // ---------- drawer ----------
+  openHcp(id) { this.setState({ drawerId:id }); }
+  closeDrawer() { this.setState({ drawerId:null }); }
+  toggleActivation() {
+    const id = this.state.drawerId; if (!id) return;
+    const set = new Set(this.state.activation);
+    if (set.has(id)) set.delete(id); else set.add(id);
+    this.setState({ activation:[...set] });
+  }
+  launchInviteFromDrawer() {
+    const hcp = this.getHcps().find(h => h.id === this.state.drawerId) || this.getHcps()[0];
+    this.setState({ sessionHcp:hcp, drawerId:null, mode:'hcp', hcpNav:'invite', turnIndex:-1, pendingTurn:-1, processing:false, gateStage:'idle' });
+  }
+  goPersona() { this.setState({ nav:'persona', mode:'brand', drawerId:null }); this._scrollTop(); }
+
+  // ---------- outreach ----------
+  askLaunch() { if (this.state.activation.length) this.setState({ launchConfirm:true }); }
+  cancelLaunch() { this.setState({ launchConfirm:false }); }
+  confirmLaunch() { this.setState({ launched:true, launchConfirm:false }); }
+  previewHcp() { this.setState({ sessionHcp:this.getHcps().find(h=>h.id===(this.state.activation[0]||'sharma')) || this.getHcps()[0], mode:'hcp', hcpNav:'invite', turnIndex:-1, pendingTurn:-1, processing:false, gateStage:'idle' }); }
+
+  // ---------- content upload ----------
+  openContentDrawer() { this.setState({ contentDrawer:true, contentSubmitted:false }); }
+  closeContentDrawer() { this.setState({ contentDrawer:false }); }
+  submitContent() { this.setState({ contentSubmitted:true }); }
+
+  // ---------- persona ----------
+  setPersonaType(t) { this.setState({ persona:{ ...this.state.persona, type:t } }); }
+  uploadConsent() { this.setState({ persona:{ ...this.state.persona, consentUploaded:true } }); }
+  submitPersona() {
+    if (this.state.persona.type==='clone' && !this.state.persona.consentUploaded) return;
+    this.setState({ personaStatus:'pending' });
+    setTimeout(()=>this.setState({ personaStatus:'approved' }), 1300);
+  }
+
+  // ---------- HCP experience ----------
+  startConversation() { this.setState({ hcpNav:'convo', turnIndex:-1, pendingTurn:-1, processing:false, gateStage:'idle', typed:{}, hcpNotice:'' }); }
+  finishSession() { this.setState({ hcpNav:'complete' }); }
+  closeHcpSession() { this.setState({ hcpNav:'invite', turnIndex:-1, pendingTurn:-1, processing:false, gateStage:'idle', typed:{}, followupDone:false, hcpNotice:'' }); }
+  downloadMaterials() { this.setState({ downloaded:true }); }
+  setHcpInput(v) { this.setState({ hcpInput:v }); }
+  fillInput(t) { this.setState({ hcpInput:t }); }
+  hcpRequest(kind) {
+    const m = {
+      human:'A human representative will reach out — a follow-up task was created for your CardioNova account team.',
+      msl:'Connecting you with a Medical Science Liaison. An MSL follow-up has been routed.',
+      ae:'Thank you. This has been logged as a potential adverse event and routed to the pharmacovigilance team for follow-up.',
+    };
+    this.setState({ hcpNotice: m[kind] || '' });
+  }
+  dismissNotice() { this.setState({ hcpNotice:'' }); }
+  setFollowup(v) { this.setState({ followup:v }); }
+  submitFollowup() { this.setState({ followupDone:true }); }
+
+  askNext() {
+    if (this.state.processing) return;
+    const conv = this.getConversation();
+    const next = this.state.turnIndex + 1;
+    if (next >= conv.length) { if (this.state.mode==='hcp') this.setState({ hcpNav:'complete' }); else this.setState({ nav:'audit' }); return; }
+    const turn = conv[next];
+    const typedText = (this.state.hcpInput || '').trim();
+    const typed = { ...this.state.typed };
+    if (typedText) typed[next] = typedText;
+    this.setState({ processing:true, pendingTurn:next, gateStage:'listening', typed, hcpInput:'' });
+    this._t1 = setTimeout(()=>this.setState({ gateStage:'retrieving' }), 850);
+    this._t2 = setTimeout(()=>this.setState({ gateStage:'compliance' }), 1700);
+    this._t3 = setTimeout(()=>this.setState({ gateStage: turn.offLabel?'refused':'approved', turnIndex:next, processing:false }), 2650);
+  }
+
+  // ---------- persona ----------
+  setPersona(k, v) { this.setState({ persona: { ...this.state.persona, [k]:v } }); }
+
+  // ---------- analytics ----------
+  setAnCat(c) { this.setState({ anCat:c, anDrill:null }); }
+  openDrill(i) { this.setState({ anDrill:i }); this._scrollTop(); }
+  closeDrill() { this.setState({ anDrill:null }); }
+
+  analyticsData() {
+    const k = (color,value,label,sub) => ({ color,value,label,sub });
+    const blue='var(--dn-brand-base)', green='var(--dn-success)', fg='var(--dn-fg)', red='var(--dn-danger)';
+    return {
+      targeting:[ k(blue,'37','High-opportunity HCPs','Decile 2–4 whitespace'), k(fg,'88.4','Avg opportunity score','Density × whitespace × trend'), k(fg,'64,210','Eligible patients','Claims-derived, no PHI'), k(green,'+14%','Whitespace growth QoQ','Net new opportunity') ],
+      engagement:[ k(blue,'4,820','Outreach sent','AI rep invitations'), k(fg,'71%','Invite open rate','Opened the secure invite'), k(fg,'68%','Session start rate','Began an AI detail'), k(green,'82%','Completion rate','Reached end of detail'), k(fg,'14:32','Avg duration','Median time in session'), k(fg,'Slide 6','Top drop-off point','Where sessions end early'), k(fg,'23%','Repeat engagement','Returned for another session'), k(green,'4.5/5','Doctor usefulness','Post-session rating') ],
+      content:[ k(blue,'18','Approved assets live','Usable by the AI rep'), k(fg,'7','Detail aids in rotation','Most-used this campaign'), k(green,'100%','Answers source-grounded','Tied to an MLR source'), k(red,'3','Content gaps','Topics lacking approved answer'), k(fg,'3','Content expiry risk','Assets expiring < 30 days') ],
+      compliance:[ k(green,'100%','ISI delivery rate','Delivered when required'), k(fg,'37','Off-label refusals','Blocked, routed to MSL'), k(fg,'12','AE captures','Flagged to pharmacovigilance'), k(red,'0','Unapproved responses','Spoken without a source'), k(green,'1.2h','AE routing SLA','Avg time to PV routing'), k(green,'99.1%','Opt-out / consent','Consent on file before session') ],
+      ops:[ k(green,'99.8%','CRM export success','Delivered to connector'), k(red,'2','Failed exports','Awaiting retry'), k(fg,'1,128','Follow-ups sent','To CRM / field owners'), k(fg,'64%','Follow-up completion','Tasks acted on by field'), k(fg,'4.6h','MSL response SLA','Avg time to MSL contact'), k(fg,'128','Sessions auditable','Full evidence chain') ],
+      realtime:[ k(fg,'240ms','Perceived latency','p50 response time'), k(fg,'180ms','Response start','Time to first word'), k(green,'96%','Interruption recovery','Barge-in handled cleanly'), k(fg,'0.4%','Fallback rate','Routed to text fallback') ],
+    };
+  }
+
+  buildDrill(cat) {
+    const T = (title, rows) => ({ title, rows });
+    const hcps = this.getHcps();
+    const tableHead = 'display:grid; grid-template-columns: 2fr 1fr 1fr 1fr; padding:10px 14px; background:var(--dn-surface-2); border-bottom:1px solid var(--dn-border); font:600 10px/1 var(--dn-font-sans); letter-spacing:.04em; text-transform:uppercase; color:var(--dn-fg-muted);';
+    const rowStyle = 'display:grid; grid-template-columns: 2fr 1fr 1fr 1fr; padding:11px 14px; border-bottom:1px solid var(--dn-surface-2); font:400 12px/1.3 var(--dn-font-sans); color:var(--dn-fg);';
+    const mk = (cells) => ({ cells, style: rowStyle });
+    const data = {
+      targeting: {
+        a: T('By specialty', [{label:'Cardiology',pct:88,val:'58%'},{label:'Interventional',pct:42,val:'26%'},{label:'Electrophysiology',pct:26,val:'16%'}]),
+        b: T('By decile', [{label:'Decile 2',pct:60,val:'22%'},{label:'Decile 3',pct:92,val:'34%'},{label:'Decile 4',pct:76,val:'28%'},{label:'Decile 5+',pct:44,val:'16%'}]),
+        table: { title:'Top HCPs behind this metric', cols:['HCP','Decile','Opp','Eligible'], rows: hcps.slice(0,5).map(h=>mk([h.name,h.decile,h.score,h.patients])) },
+      },
+      engagement: {
+        a: T('Completion by specialty', [{label:'Cardiology',pct:85,val:'85%'},{label:'Interventional',pct:80,val:'80%'},{label:'Electrophysiology',pct:78,val:'78%'}]),
+        b: T('Completion by decile', [{label:'Decile 2',pct:88,val:'88%'},{label:'Decile 3',pct:84,val:'84%'},{label:'Decile 4',pct:80,val:'80%'},{label:'Decile 5+',pct:71,val:'71%'}]),
+        table: { title:'Recent sessions', cols:['HCP','Duration','Questions','Status'], rows:[ mk(['Dr. A. Sharma','07:48','4','Completed']), mk(['Dr. M. Okafor','12:10','6','Completed']), mk(['Dr. R. Nguyen','05:32','3','Completed']), mk(['Dr. P. Andersson','02:14','1','Ended early']), mk(['Dr. S. Haddad','09:05','5','Completed']) ] },
+      },
+      content: {
+        a: T('Topics discussed', [{label:'Dosing',pct:100,val:'32%'},{label:'Safety',pct:75,val:'24%'},{label:'Efficacy',pct:56,val:'18%'},{label:'Coverage',pct:44,val:'14%'},{label:'MoA',pct:38,val:'12%'}]),
+        b: T('Content shown', [{label:'ACS Detail',pct:100,val:'41%'},{label:'ISI',pct:68,val:'28%'},{label:'RWE Brief',pct:46,val:'19%'},{label:'MoA',pct:29,val:'12%'}]),
+        table: { title:'Assets & content gaps', cols:['Asset','Uses','Gap?','Status'], rows:[ mk(['ACS Detail Aid','412','No','Approved']), mk(['Important Safety Info','284','No','Approved']), mk(['RWE Brief','193','No','Approved']), mk(['Coverage & access','—','Yes','Gap']), mk(['Pediatric use','—','Off-label','Blocked']) ] },
+      },
+      compliance: {
+        a: T('Decisions', [{label:'Approved',pct:91,val:'91%'},{label:'Off-label blocked',pct:6,val:'6%'},{label:'AE flagged',pct:3,val:'3%'}]),
+        b: T('Refusals by week', [{label:'Week 5',pct:55,val:'7'},{label:'Week 6',pct:70,val:'9'},{label:'Week 7',pct:85,val:'11'},{label:'Week 8',pct:78,val:'10'}]),
+        table: { title:'Flagged turns', cols:['Time','HCP','Type','Action'], rows:[ mk(['04:38','Dr. A. Sharma','Off-label','Blocked → MSL']), mk(['03:11','Dr. M. Okafor','AE mention','Logged → PV']), mk(['06:52','Dr. P. Andersson','Off-label','Blocked → MSL']), mk(['01:20','Dr. E. Volkova','AE mention','Logged → PV']) ] },
+      },
+      ops: {
+        a: T('By status', [{label:'Sent',pct:88,val:'88%'},{label:'Queued',pct:6,val:'6%'},{label:'Ready',pct:4,val:'4%'},{label:'Failed',pct:2,val:'2%'}]),
+        b: T('By target system', [{label:'Veeva',pct:62,val:'62%'},{label:'Salesforce',pct:28,val:'28%'},{label:'IQVIA',pct:10,val:'10%'}]),
+        table: { title:'Follow-ups', cols:['HCP','Owner','Target','Status'], rows:[ mk(['Dr. A. Sharma','J. Rivera','Veeva','Ready']), mk(['Dr. M. Okafor','L. Wong','Veeva','Sent']), mk(['Dr. L. Castellano','M. Johnson','Salesforce','Ready']), mk(['Dr. P. Andersson','A. Hassan','Veeva','Failed']), mk(['Dr. R. Nguyen','Safety desk','IQVIA','Sent']) ] },
+      },
+      realtime: {
+        a: T('Response start buckets', [{label:'< 150ms',pct:62,val:'62%'},{label:'150–300ms',pct:30,val:'30%'},{label:'> 300ms',pct:8,val:'8%'}]),
+        b: T('Fallback by cause', [{label:'Network',pct:60,val:'0.24%'},{label:'ASR confidence',pct:30,val:'0.12%'},{label:'Other',pct:10,val:'0.04%'}]),
+        table: { title:'Session quality sample', cols:['Session','Latency','Interrupts','Fallback'], rows:[ mk(['SX-4471','236ms','2','No']), mk(['SX-4468','198ms','1','No']), mk(['SX-4462','271ms','0','No']), mk(['SX-4459','402ms','3','Yes']), mk(['SX-4455','215ms','1','No']) ] },
+      },
+    };
+    const d = data[cat] || data.targeting;
+    return { drillA:d.a, drillB:d.b, drillTable:{ title:d.table.title, cols:d.table.cols, rows:d.table.rows, headStyle:tableHead } };
+  }
+
+  // ---------- CRM ----------
+  getCrmEvents() {
+    const base = [
+      { id:0, hcp:'Dr. A. Sharma', reason:'MSL follow-up — requested RWE depth', owner:'J. Rivera', target:'Veeva', status:'Ready' },
+      { id:1, hcp:'Dr. M. Okafor', reason:'Rep follow-up — efficacy materials', owner:'L. Wong', target:'Veeva', status:'Sent' },
+      { id:2, hcp:'Dr. L. Castellano', reason:'Adherence program enrollment', owner:'M. Johnson', target:'Salesforce', status:'Needs mapping' },
+      { id:3, hcp:'Dr. P. Andersson', reason:'Human rep callback — re-engage', owner:'A. Hassan', target:'Veeva', status:'Failed' },
+      { id:4, hcp:'Dr. R. Nguyen', reason:'PV event — adverse event capture', owner:'Safety desk', target:'IQVIA', status:'Sent' },
+    ];
+    return base.map(e => ({ ...e, status:this.state.crmStatuses[e.id] || e.status }));
+  }
+  selectCrm(id) { this.setState({ crmSel:id }); }
+  toggleJson() { this.setState({ jsonOpen:!this.state.jsonOpen }); }
+  pushSelected() {
+    const id = this.state.crmSel;
+    this.setState({ crmStatuses:{ ...this.state.crmStatuses, [id]:'Queued' } });
+    setTimeout(()=>this.setState({ crmStatuses:{ ...this.state.crmStatuses, [id]:'Sent' } }), 1100);
+  }
+  exportAll() {
+    const map = {}; this.getCrmEvents().forEach(e=>{ if (e.status!=='Sent') map[e.id]='Queued'; });
+    this.setState({ crmStatuses:{ ...this.state.crmStatuses, ...map } });
+    setTimeout(()=>{ const done={}; this.getCrmEvents().forEach(e=>done[e.id]='Sent'); this.setState({ crmStatuses:done }); }, 1300);
+  }
+  statusBadge(s) {
+    const m = { Ready:['#e0e7ff','#3730a3'], Queued:['var(--dn-accent-yellow-bg)','#92400e'], Sent:['var(--dn-accent-green-bg)','#166534'], Failed:['#fee2e2','#991b1b'], 'Needs mapping':['var(--dn-accent-pink-bg)','#9d174d'] };
+    const [bg,c] = m[s] || m.Ready;
+    return `display:inline-block; padding:4px 10px; border-radius:6px; font:600 10.5px/1 var(--dn-font-sans); background:${bg}; color:${c};`;
+  }
+
+  // ---------- render ----------
+  renderVals() {
+    const S = this.state;
+    const conv = this.getConversation();
+    const hcps = this.getHcps();
+    const sessionHcp = S.sessionHcp || hcps[0];
+
+    // mode displays
+    const brandDisplay = S.mode === 'brand' ? 'block' : 'none';
+    const hcpDisplay = S.mode === 'hcp' ? 'block' : 'none';
+    const segOn = 'padding:6px 11px; border-radius:7px; font:600 11.5px/1 var(--dn-font-sans); cursor:pointer; background:var(--dn-brand-base); color:#fff;';
+    const segOff = 'padding:6px 11px; border-radius:7px; font:600 11.5px/1 var(--dn-font-sans); cursor:pointer; background:transparent; color:var(--dn-fg-muted);';
+    const modeBrandStyle = S.mode==='brand'?segOn:segOff;
+    const modeHcpStyle = S.mode==='hcp'?segOn:segOff;
+
+    // nav
+    const navPlan = [ this.navItem('overview','Overview'), this.navItem('setup','Campaign Setup'), this.navItem('content','Content & MLR'), this.navItem('persona','AI Rep Setup') ];
+    const navActivate = [ this.navItem('targeting','HCP Targeting'), this.navItem('outreach','Outreach / Launch') ];
+    const navGovern = [ this.navItem('sessions','Sessions'), this.navItem('analytics','Analytics'), this.navItem('audit','Audit & Compliance'), this.navItem('crm','Follow-ups / CRM') ];
+    const adminActive = S.nav==='admin';
+    const adminNavStyle = `display:flex; align-items:center; gap:9px; padding:9px 13px; border-radius:9px; font:${adminActive?'600':'500'} 12px/1.2 var(--dn-font-sans); cursor:pointer; color:${adminActive?'#fff':'rgba(255,255,255,.55)'}; background:${adminActive?'rgba(96,165,250,.16)':'transparent'};`;
+
+    const ids = ['overview','setup','content','persona','targeting','outreach','sessions','analytics','audit','crm','admin'];
+    const scr = {}; ids.forEach(id => scr[id] = (S.mode==='brand' && S.nav===id) ? 'block' : 'none');
+
+    // overview
+    const dot = (c) => `width:8px; height:8px; border-radius:50%; background:${c};`;
+    const commandKpis = [
+      { label:'Campaign', value:'Live', sub:'Day 18 of 92', dotStyle:dot('var(--dn-success)'), onClick:()=>{} },
+      { label:'Content approved', value:'17/18', sub:'1 pending MLR review', dotStyle:dot('var(--dn-warning)'), onClick:()=>this.go('content') },
+      { label:'Target HCPs', value:'342', sub:'37 high-opportunity', dotStyle:dot('var(--dn-success)'), onClick:()=>this.go('targeting') },
+      { label:'Completed AI details', value:'128', sub:'+22 this week', dotStyle:dot('var(--dn-success)'), onClick:()=>this.go('sessions') },
+      { label:'Follow-ups pending', value:'42', sub:'2 failed exports', dotStyle:dot('var(--dn-warning)'), onClick:()=>this.go('crm') },
+      { label:'Unapproved responses', value:'0', sub:'100% ISI delivery', dotStyle:dot('var(--dn-success)'), onClick:()=>this.go('audit') },
+    ];
+    const okBadge = 'font:600 10px/1 var(--dn-font-sans); padding:3px 8px; border-radius:20px; background:var(--dn-accent-green-bg); color:#166534;';
+    const warnBadge = 'font:600 10px/1 var(--dn-font-sans); padding:3px 8px; border-radius:20px; background:var(--dn-accent-yellow-bg); color:#92400e;';
+    const healthRows = [
+      { label:'ISI delivery rate', value:'100%', badge:'OK', badgeStyle:okBadge },
+      { label:'Off-label refusals', value:'37', badge:'Gated', badgeStyle:okBadge },
+      { label:'Unapproved responses', value:'0', badge:'OK', badgeStyle:okBadge },
+      { label:'CRM export success', value:'99.8%', badge:'OK', badgeStyle:okBadge },
+      { label:'Failed exports', value:'2', badge:'Retry', badgeStyle:warnBadge },
+    ];
+    const actIcon = (c) => `flex-shrink:0; width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center; font:700 12px/1 var(--dn-font-sans); background:${c==='warn'?'var(--dn-accent-yellow-bg)':'rgba(6,73,172,.08)'}; color:${c==='warn'?'#92400e':'var(--dn-brand-base)'};`;
+    const todayActions = [
+      { count:'3', label:'content assets expiring in < 30 days', iconStyle:actIcon('warn'), onClick:()=>this.go('content') },
+      { count:'2', label:'CRM exports failed — need retry', iconStyle:actIcon('warn'), onClick:()=>this.go('crm') },
+      { count:'12', label:'MSL follow-ups pending review', iconStyle:actIcon('blue'), onClick:()=>this.go('crm') },
+      { count:'8', label:'high-opportunity HCPs not yet activated', iconStyle:actIcon('blue'), onClick:()=>this.go('targeting') },
+    ];
+    const topQuestions = [
+      { label:'Dosing & administration', pct:32 }, { label:'Safety / bleeding risk', pct:24 },
+      { label:'Efficacy vs SoC', pct:18 }, { label:'Coverage & access', pct:14 }, { label:'Mechanism of action', pct:12 },
+    ];
+
+    // guardrails
+    const guardrails = [
+      { label:'On-label responses only', desc:'Block answers outside approved indication.' },
+      { label:'ISI on safety topics', desc:'Deliver Important Safety Information automatically.' },
+      { label:'Off-label → route to MSL', desc:'Refuse and offer Medical Science Liaison.' },
+      { label:'Adverse event capture', desc:'Detect and log AEs to pharmacovigilance.' },
+      { label:'Source-grounded only', desc:'No response without an approved source.' },
+    ];
+
+    // content
+    const cStatus = (s) => {
+      const m = { 'Approved':['var(--dn-accent-green-bg)','#166534'], 'Pending MLR':['var(--dn-accent-yellow-bg)','#92400e'], 'Expiring soon':['#ffedd5','#9a3412'] };
+      const [bg,c] = m[s] || m['Approved'];
+      return `display:inline-block; padding:3px 9px; border-radius:20px; font:600 10px/1 var(--dn-font-sans); background:${bg}; color:${c};`;
+    };
+    const contentLibrary = [
+      { name:'CardioNova ACS Detail Aid', type:'Detail aid (PPT)', mlrId:'MLR-2026-014', audience:'Cardiologists', version:'v4.0', status:'Approved', expiry:'Dec 31' },
+      { name:'Important Safety Information', type:'ISI (PDF)', mlrId:'MLR-2026-002', audience:'All HCPs', version:'v3.1', status:'Approved', expiry:'Oct 15' },
+      { name:'Real-World Evidence Brief', type:'FAQ / brief', mlrId:'MLR-2026-019', audience:'Specialists', version:'v1.2', status:'Approved', expiry:'Jan 31' },
+      { name:'Mechanism of Action', type:'Detail aid (PDF)', mlrId:'MLR-2026-007', audience:'Cardiologists', version:'v2.0', status:'Approved', expiry:'Nov 20' },
+      { name:'Efficacy vs Standard of Care', type:'Detail aid (PPT)', mlrId:'MLR-2026-011', audience:'Specialists', version:'v2.3', status:'Expiring soon', expiry:'Sep 28' },
+      { name:'Dosing Reference Card', type:'Detail aid (PDF)', mlrId:'MLR-2026-022', audience:'Prescribers', version:'v1.0', status:'Pending MLR', expiry:'In MLR' },
+    ].map(c => ({ ...c, statusStyle:cStatus(c.status) }));
+
+    // persona
+    const avatarDefs = [ ['clinical','Clinical','#2563eb'], ['approachable','Approachable','#16a34a'], ['concise','Concise Expert','#7c3aed'], ['ambassador','Brand Ambassador','#db2777'] ];
+    const avatarOptions = avatarDefs.map(a => {
+      const sel = S.persona.avatar === a[0];
+      return { id:a[0], label:a[1],
+        cardStyle:`display:flex; flex-direction:column; align-items:center; padding:14px 8px; border:2px solid ${sel?'var(--dn-brand-light)':'var(--dn-border)'}; border-radius:12px; cursor:pointer; background:${sel?'rgba(37,99,235,.05)':'#fff'}; transition:all 150ms;`,
+        ringStyle:`width:54px; height:54px; border-radius:50%; background:linear-gradient(160deg, ${a[2]}, #1a3258); display:flex; align-items:flex-end; justify-content:center; overflow:hidden; box-shadow:0 0 0 3px ${sel?'rgba(37,99,235,.25)':'transparent'};`,
+        onClick:()=>this.setPersona('avatar', a[0]) };
+    });
+    const voiceDefs = ['Warm','Neutral','Authoritative'];
+    const voiceOptions = voiceDefs.map(v => {
+      const sel = S.persona.voice === v;
+      return { label:v, onClick:()=>this.setPersona('voice', v),
+        style:`flex:1; text-align:center; padding:10px; border-radius:9px; font:600 12px/1 var(--dn-font-sans); cursor:pointer; border:1px solid ${sel?'var(--dn-brand-base)':'var(--dn-border)'}; background:${sel?'var(--dn-brand-base)':'#fff'}; color:${sel?'#fff':'var(--dn-fg-muted)'};` };
+    });
+    const tg = (on) => `flex-shrink:0; width:38px; height:22px; border-radius:11px; background:${on?'var(--dn-success)':'var(--dn-border-strong)'}; position:relative; cursor:pointer; transition:background 150ms;`;
+    const kb = (on) => `position:absolute; top:2px; ${on?'right:2px':'left:2px'}; width:18px; height:18px; border-radius:50%; background:#fff; transition:all 150ms;`;
+    const toneToggles = [
+      { key:'onlabel', label:'Stays strictly on-label', desc:'Locked on — cannot be disabled.', on:true, locked:true },
+      { key:'empathy', label:'Empathetic acknowledgements', desc:'Warm, brief acknowledgements.', on:S.persona.empathy },
+      { key:'concise', label:'Concise answers', desc:'Shorter responses, fewer asides.', on:S.persona.concise },
+      { key:'msl', label:'Always offer MSL for depth', desc:'Suggests MSL for medical detail.', on:S.persona.msl },
+    ].map(t => ({ ...t, toggleStyle:tg(t.on), knobStyle:kb(t.on), onClick: t.locked ? (()=>{}) : (()=>this.setPersona(t.key, !t.on)) }));
+    const avatarColor = (avatarDefs.find(a=>a[0]===S.persona.avatar) || avatarDefs[0])[2];
+    const previewRingStyle = `width:78px; height:78px; border-radius:50%; background:linear-gradient(160deg, ${avatarColor}, #1a3258); display:flex; align-items:flex-end; justify-content:center; overflow:hidden; box-shadow:0 0 0 5px rgba(96,165,250,.15), 0 0 40px rgba(37,99,235,.3);`;
+    const personaSummary = `${(avatarDefs.find(a=>a[0]===S.persona.avatar)||avatarDefs[0])[1]} · ${S.persona.voice} voice`;
+    const greetingPreview = `Hi, I'm the ${S.persona.name} — an AI representative, not a person. I can walk you through approved information about CardioNova for ACS. How can I help?`;
+    // persona type + status
+    const ptypeSeg = (sel) => `flex:1; text-align:center; padding:11px; border-radius:9px; font:600 12px/1.3 var(--dn-font-sans); cursor:pointer; border:1px solid ${sel?'var(--dn-brand-base)':'var(--dn-border)'}; background:${sel?'rgba(6,73,172,.05)':'#fff'}; color:${sel?'var(--dn-brand-base)':'var(--dn-fg-muted)'};`;
+    const personaTypes = [ {id:'brand',label:'Brand persona',desc:'Neutral branded specialist'}, {id:'clone',label:'Rep clone',desc:'Clone of a named rep (consent required)'} ].map(t => ({ ...t, style:ptypeSeg(S.persona.type===t.id), onClick:()=>this.setPersonaType(t.id) }));
+    const showConsent = S.persona.type === 'clone';
+    const consentDisplay = showConsent ? 'block' : 'none';
+    const personaStatusMap = {
+      draft: { label:'Draft — not submitted', style:'font:600 10.5px/1 var(--dn-font-sans); padding:5px 10px; border-radius:20px; background:var(--dn-surface-2); color:var(--dn-fg-muted); border:1px solid var(--dn-border);' },
+      pending: { label:'Pending approval', style:'font:600 10.5px/1 var(--dn-font-sans); padding:5px 10px; border-radius:20px; background:var(--dn-accent-yellow-bg); color:#92400e;' },
+      approved: { label:'Approved · ready to launch', style:'font:600 10.5px/1 var(--dn-font-sans); padding:5px 10px; border-radius:20px; background:var(--dn-accent-green-bg); color:#166534;' },
+    };
+    const personaStatusLabel = personaStatusMap[S.personaStatus].label;
+    const personaStatusStyle = personaStatusMap[S.personaStatus].style;
+    const personaBlocked = S.persona.type==='clone' && !S.persona.consentUploaded;
+    const submitPersonaLabel = personaBlocked ? 'Upload consent to submit' : (S.personaStatus==='pending' ? 'Submitting…' : (S.personaStatus==='approved' ? '✓ Approved' : 'Submit for approval'));
+    const submitPersonaStyle = `flex:1; padding:12px; border:none; border-radius:9px; font:600 13px/1 var(--dn-font-sans); cursor:${personaBlocked?'not-allowed':'pointer'}; background:${personaBlocked?'var(--dn-border-strong)':(S.personaStatus==='approved'?'var(--dn-success)':'var(--dn-brand-base)')}; color:#fff;`;
+    const consentUploaded = S.persona.consentUploaded;
+    const consentUploadIcon = consentUploaded ? '✓' : '↑';
+    const consentUploadLabel = consentUploaded ? 'Consent uploaded' : 'Upload signed consent';
+    const consentUploadSub = consentUploaded ? 'Verified for rep clone' : 'Required for rep clone';
+    const dropzone = 'display:flex; flex-direction:column; align-items:center; gap:6px; padding:18px; border:1.5px dashed var(--dn-border-strong); border-radius:10px; background:var(--dn-surface-2); cursor:pointer; text-align:center;';
+    const rdyIcon = (ok) => `flex-shrink:0; width:18px; height:18px; border-radius:50%; display:flex; align-items:center; justify-content:center; font:700 10px/1 var(--dn-font-sans); background:${ok?'var(--dn-accent-green-bg)':'var(--dn-accent-yellow-bg)'}; color:${ok?'#166534':'#92400e'};`;
+    const consentOk = S.persona.type !== 'clone' || S.persona.consentUploaded;
+    const personaReadiness = [
+      { label:'Avatar sample selected', ok:true },
+      { label:'Voice style selected', ok:true },
+      { label: S.persona.type!=='clone' ? 'Consent file (not required)' : (S.persona.consentUploaded ? 'Rep consent file uploaded' : 'Rep consent file required'), ok: consentOk },
+      { label:'AI disclosure added', ok:true },
+      { label:'Greeting script — pending MLR review', ok:false },
+    ].map(r => ({ ...r, icon: r.ok?'✓':'!', iconStyle: rdyIcon(r.ok) }));
+
+    // targeting
+    const targetSummary = [
+      { label:'Avg opp score', value:'88.4', color:'var(--dn-brand-base)', sub:'37 priority HCPs' },
+      { label:'Whitespace HCPs', value:'37', color:'var(--dn-fg)', sub:'High growth, low share' },
+      { label:'Eligible patient opportunity', value:'64.2K', color:'var(--dn-fg)', sub:'Aggregate, claims-derived · no PHI' },
+      { label:'Growth QoQ', value:'+14%', color:'var(--dn-success)', sub:'Net new opportunity' },
+      { label:'Priority decile', value:'D2–D4', color:'var(--dn-brand-base)', sub:'Best active segment' },
+    ];
+    const actSet = new Set(S.activation);
+    const hcpRows = hcps.map(h => {
+      const inList = actSet.has(h.id);
+      return { ...h, segStyle:this.segStyle(h.segTone), onOpen:()=>this.openHcp(h.id),
+        ctaLabel: inList ? 'Added ✓' : 'Open ›',
+        ctaStyle: `display:inline-block; padding:6px 10px; border-radius:7px; font:600 11px/1 var(--dn-font-sans); ${inList?'background:var(--dn-accent-green-bg); color:#166534;':'background:rgba(6,73,172,.08); color:var(--dn-brand-base);'}` };
+    });
+
+    // outreach
+    const activationCount = S.activation.length;
+    const activationRows = S.activation.map(id => hcps.find(h=>h.id===id)).filter(Boolean).map(h => ({
+      name:h.name, decile:h.decile, specialty:h.specialty, segment:h.segment, topic:h.topic,
+      statusLabel: S.launched ? 'Invited' : 'Ready',
+      statusStyle: S.launched ? 'display:inline-block; padding:4px 9px; border-radius:6px; font:600 10px/1 var(--dn-font-sans); background:var(--dn-accent-green-bg); color:#166534;' : 'display:inline-block; padding:4px 9px; border-radius:6px; font:600 10px/1 var(--dn-font-sans); background:#e0e7ff; color:#3730a3;',
+    }));
+    const activationEmptyDisplay = activationCount ? 'none' : 'block';
+    const rdy = (ok) => `flex-shrink:0; width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; font:700 11px/1 var(--dn-font-sans); background:${ok?'var(--dn-accent-green-bg)':'var(--dn-accent-yellow-bg)'}; color:${ok?'#166534':'#92400e'};`;
+    const readiness = [
+      { label:'Approved content pack', value:'Ready', color:'var(--dn-success)', icon:'✓', iconStyle:rdy(true) },
+      { label:'AI rep persona configured', value:'Ready', color:'var(--dn-success)', icon:'✓', iconStyle:rdy(true) },
+      { label:'Compliance guardrails on', value:'5 / 5', color:'var(--dn-success)', icon:'✓', iconStyle:rdy(true) },
+      { label:'Activation list', value:(activationCount+' HCPs'), color:activationCount?'var(--dn-success)':'var(--dn-warning)', icon:activationCount?'✓':'!', iconStyle:rdy(!!activationCount) },
+    ];
+    const launchBtnLabel = S.launched ? ('✓ '+activationCount+' invites sent') : (activationCount?('Launch '+activationCount+' invites'):'Add HCPs to launch');
+    const launchBtnStyle = `width:100%; padding:12px; border:none; border-radius:9px; font:600 13px/1 var(--dn-font-sans); cursor:${activationCount?'pointer':'not-allowed'}; background:${S.launched?'var(--dn-success)':(activationCount?'var(--dn-brand-base)':'var(--dn-border-strong)')}; color:#fff;`;
+    const launchSentDisplay = S.launched ? 'flex' : 'none';
+    const launchConfirmDisplay = S.launchConfirm ? 'flex' : 'none';
+    const launchConfirmCount = activationCount;
+
+    // sessions
+    const compBadge = (status) => {
+      const m = { 'Approved':['var(--dn-accent-green-bg)','#166534'], 'Needs review':['var(--dn-accent-yellow-bg)','#92400e'], 'Blocked + escalated':['#fee2e2','#991b1b'], 'AE routed':['var(--dn-accent-pink-bg)','#9d174d'] };
+      const [bg,c] = m[status] || m['Approved'];
+      return `display:inline-block; padding:4px 9px; border-radius:6px; font:600 10px/1 var(--dn-font-sans); background:${bg}; color:${c};`;
+    };
+    const sessionList = [
+      ['Dr. A. Sharma','Jun 14, 9:12 AM','07:48','4','Approved','MSL follow-up'],
+      ['Dr. M. Okafor','Jun 13, 2:03 PM','12:10','6','Approved','Rep follow-up'],
+      ['Dr. R. Nguyen','Jun 13, 11:20 AM','05:32','3','AE routed','Materials sent'],
+      ['Dr. P. Andersson','Jun 12, 4:40 PM','02:14','1','Needs review','Callback'],
+      ['Dr. S. Haddad','Jun 12, 10:05 AM','09:05','5','Approved','Rep follow-up'],
+      ['Dr. L. Castellano','Jun 11, 1:30 PM','08:22','4','Blocked + escalated','Adherence program'],
+    ].map(s => ({ hcp:s[0], date:s[1], duration:s[2], questions:s[3], comp:s[4], compStyle:compBadge(s[4]), followup:s[5], onOpen:()=>this.go('audit') }));
+
+    // analytics
+    const aData = this.analyticsData();
+    const analyticsKpis = (aData[S.anCat] || aData.targeting).map((k,i) => ({ ...k,
+      chev:'↗',
+      cardStyle:`background:#fff; border:1px solid ${S.anDrill===i?'var(--dn-brand-light)':'var(--dn-border)'}; border-radius:13px; padding:16px 17px; box-shadow:var(--dn-shadow-card); cursor:pointer; transition:all 150ms;`,
+      onClick:()=>this.openDrill(i) }));
+    const tabsDef = [['targeting','Targeting'],['engagement','Engagement'],['content','Content'],['compliance','Compliance'],['ops','CRM / Ops'],['realtime','Realtime quality']];
+    const analyticsTabs = tabsDef.map(t => {
+      const active = S.anCat===t[0];
+      return { label:t[1], onClick:()=>this.setAnCat(t[0]),
+        style:`padding:10px 15px; font:600 12.5px/1 var(--dn-font-sans); cursor:pointer; color:${active?'var(--dn-brand-base)':'var(--dn-fg-muted)'}; border-bottom:2.5px solid ${active?'var(--dn-brand-base)':'transparent'}; margin-bottom:-1px;` };
+    });
+    const drillOpen = S.anDrill !== null;
+    const drillDisplay = drillOpen ? 'block' : 'none';
+    const chartsDisplay = drillOpen ? 'none' : 'grid';
+    const drillBuilt = this.buildDrill(S.anCat);
+    const drillKpi = (aData[S.anCat] || aData.targeting)[S.anDrill || 0] || {};
+    const funnel = [
+      { label:'Outreach sent', count:'4,820', pct:100 }, { label:'Session started', count:'3,278', pct:68 },
+      { label:'Detail completed', count:'2,687', pct:56 }, { label:'Follow-up created', count:'1,142', pct:24 },
+    ];
+
+    // audit
+    const decisionBadge = (ok) => ok
+      ? 'display:inline-block; padding:4px 9px; border-radius:6px; font:600 10px/1 var(--dn-font-sans); background:var(--dn-accent-green-bg); color:#166534;'
+      : 'display:inline-block; padding:4px 9px; border-radius:6px; font:600 10px/1 var(--dn-font-sans); background:#fee2e2; color:#991b1b;';
+    const auditLog = conv.map((t,i) => ({
+      time:t.time, q:t.q, intent:t.intent, isi:t.isi?'✓ sent':'—', decision:t.offLabel?'Blocked':'Approved', decisionStyle:decisionBadge(!t.offLabel),
+      rowStyle:`display:grid; grid-template-columns:56px 2.1fr 1.3fr 0.7fr 86px; padding:13px 16px; border-bottom:1px solid var(--dn-surface-2); align-items:center; cursor:pointer; background:${S.auditSel===i?'var(--dn-surface-2)':'#fff'};`,
+      onSelect:()=>this.setState({ auditSel:i }),
+    }));
+    const selTurn = conv[S.auditSel] || conv[0];
+    const dVal = (color) => `font:500 12.5px/1.45 var(--dn-font-sans); color:${color||'var(--dn-fg)'};`;
+    const auditDetail = [
+      { label:'HCP question', value:selTurn.q, valueStyle:dVal() },
+      { label:'Intent classification', value:selTurn.intent, valueStyle:dVal() },
+      { label:'Retrieved source', value:selTurn.source ? (selTurn.source+' · '+selTurn.sourceTitle) : 'None — off-label, no source retrieved', valueStyle:dVal(selTurn.offLabel?'var(--dn-danger)':'var(--dn-fg)') },
+      { label:'ISI delivered', value:selTurn.isi ? 'Yes · 2026-06-14 09:14 UTC' : 'Not required this turn', valueStyle:dVal() },
+      { label:'Off-label flag', value:selTurn.offLabel ? 'DETECTED — blocked, MSL offered' : 'None detected', valueStyle:dVal(selTurn.offLabel?'var(--dn-danger)':'var(--dn-success)') },
+      { label:'Compliance decision', value:selTurn.offLabel ? 'BLOCKED before output' : 'APPROVED to speak', valueStyle:dVal(selTurn.offLabel?'var(--dn-danger)':'var(--dn-success)') },
+    ];
+    const auditSummary = [
+      { label:'Total turns', value:'4', color:'var(--dn-fg)' }, { label:'Auditable', value:'4/4', color:'var(--dn-success)' },
+      { label:'ISI delivered', value:'100%', color:'var(--dn-success)' }, { label:'Off-label blocked', value:'1', color:'var(--dn-danger)' },
+      { label:'Duration', value:'07:48', color:'var(--dn-fg)' },
+    ];
+    // trace nodes (turn-level), gate highlighted; reflect off-label outcome
+    const tagColors = { in:'var(--dn-fg-subtle)', agent:'var(--dn-brand-light)', gate:'var(--dn-danger)', out:'var(--dn-success)' };
+    const traceBox = (tone) => `display:flex; align-items:center; gap:10px; width:100%; padding:10px 12px; border-radius:9px; border:1px solid ${ {in:'var(--dn-border)',agent:'var(--dn-brand-light)',gate:'var(--dn-danger)',out:'var(--dn-success)'}[tone] }; background:${tone==='gate'?'rgba(220,38,38,.04)':(tone==='out'?'rgba(22,163,74,.04)':'#fff')};`;
+    const traceTag = (tone) => `flex-shrink:0; font:600 9px/1 var(--dn-font-sans); letter-spacing:.05em; text-transform:uppercase; padding:4px 7px; border-radius:5px; color:${tagColors[tone]}; background:${tone==='gate'?'rgba(220,38,38,.08)':(tone==='out'?'rgba(22,163,74,.08)':(tone==='in'?'var(--dn-surface-2)':'rgba(6,73,172,.08)'))};`;
+    const gateLabel = selTurn.offLabel ? 'Blocked' : 'Passed';
+    const outNode = selTurn.offLabel ? ['out','MSL hand-off','Offered to HCP'] : ['out','Avatar / TTS','Spoken to HCP'];
+    const traceDef = [
+      ['in','HCP question', selTurn.intent],
+      ['agent','Intent classifier', selTurn.offLabel?'Off-label':'On-label'],
+      ['agent','Retrieval', selTurn.source || 'No source'],
+      ['agent','Response builder', selTurn.source?'Cites source':'No draft'],
+      ['gate','Compliance gate', gateLabel],
+      outNode,
+      ['out','Audit + CRM','Event logged'],
+    ];
+    const traceNodes = traceDef.map((n,i) => ({
+      tag: n[0]==='gate'?'Gate':(n[0]==='in'?'Input':n[0]==='out'?'Output':'Agent'),
+      tagStyle:traceTag(n[0]), label:n[1], sub:n[2], boxStyle:traceBox(n[0]),
+      arrowStyle: i<traceDef.length-1 ? `text-align:center; color:var(--dn-border-strong); font:600 12px/1.5 var(--dn-font-sans);` : 'display:none;',
+    }));
+
+    // crm
+    const crmEventsRaw = this.getCrmEvents();
+    const crmEvents = crmEventsRaw.map(e => ({ ...e, statusStyle:this.statusBadge(e.status),
+      rowStyle:`display:grid; grid-template-columns:1.4fr 1.5fr 1.1fr 1fr 96px; padding:13px 16px; border-bottom:1px solid var(--dn-surface-2); align-items:center; cursor:pointer; background:${S.crmSel===e.id?'var(--dn-surface-2)':'#fff'};`,
+      onSelect:()=>this.selectCrm(e.id) }));
+    const selEvent = crmEventsRaw.find(e=>e.id===S.crmSel) || crmEventsRaw[0];
+    const crmDetail = [
+      { label:'HCP', value:selEvent.hcp }, { label:'Reason', value:selEvent.reason }, { label:'Owner', value:selEvent.owner },
+      { label:'Target CRM', value:selEvent.target }, { label:'Status', value:selEvent.status }, { label:'Retry', value:selEvent.status==='Failed'?'1 attempt — retry available':'—' },
+    ];
+    const crmPayload = JSON.stringify({ event_type:'ai_detail_followup', hcp:selEvent.hcp, brand:'CardioNova', campaign:'Q3 Whitespace Activation', session_id:'SX-4471', reason:selEvent.reason, owner:selEvent.owner, source_refs:['MLR-2026-014','MLR-2026-002'], isi_delivered:true, compliance:'approved', target_system:selEvent.target }, null, 2);
+    const pushDone = selEvent.status==='Sent';
+    const isFailed = selEvent.status==='Failed';
+    const needsMap = selEvent.status==='Needs mapping';
+    const pushBtnLabel = selEvent.status==='Queued' ? 'Sending…' : (pushDone ? '✓ Sent to '+selEvent.target : (isFailed ? 'Retry export' : (needsMap ? 'Resolve field mapping' : 'Send to CRM')));
+    const pushBtnStyle = `width:100%; margin-top:14px; padding:11px; border:none; border-radius:9px; font:600 12.5px/1 var(--dn-font-sans); cursor:pointer; background:${pushDone?'var(--dn-success)':'var(--dn-brand-base)'}; color:#fff;`;
+    const jsonDisplay = S.jsonOpen ? 'block' : 'none';
+    const jsonChevron = S.jsonOpen ? '▾' : '▸';
+
+    // admin
+    const vendorStack = [
+      { role:'Realtime conversation', vendor:'GPT Realtime' }, { role:'Speech-to-text (ASR)', vendor:'Whisper' },
+      { role:'Text-to-speech (TTS)', vendor:'ElevenLabs' }, { role:'Avatar / video', vendor:'Tavus CVI' }, { role:'Fallback runtime', vendor:'Mascot SDK' },
+    ];
+    const crmConnectors = [ { name:'Veeva CRM', on:true }, { name:'Salesforce Health Cloud', on:true }, { name:'IQVIA OCE', on:false }, { name:'CSV / JSON export', on:true } ]
+      .map(c => ({ ...c, toggleStyle:tg(c.on), knobStyle:kb(c.on) }));
+
+    // drawer
+    const drawerHcp = hcps.find(h=>h.id===S.drawerId);
+    const drawerOpen = !!drawerHcp;
+    const inList = drawerHcp && actSet.has(drawerHcp.id);
+    const addListLabel = inList ? '✓ On activation list' : 'Add to activation list';
+    const addListBtnStyle = `flex:1; padding:11px; border-radius:9px; font:600 12.5px/1 var(--dn-font-sans); cursor:pointer; border:1px solid ${inList?'var(--dn-success)':'var(--dn-brand-base)'}; background:${inList?'var(--dn-accent-green-bg)':'var(--dn-brand-base)'}; color:${inList?'#166534':'#fff'};`;
+
+    // ===== HCP EXPERIENCE =====
+    const hcpScr = { invite:S.hcpNav==='invite'?'flex':'none', convo:S.hcpNav==='convo'?'block':'none', complete:S.hcpNav==='complete'?'flex':'none' };
+    // floating demo control (outside product chrome)
+    const demoSeg = (sel) => `padding:5px 10px; border-radius:6px; font:600 11px/1 var(--dn-font-sans); cursor:pointer; background:${sel?'var(--dn-brand-base)':'transparent'}; color:${sel?'#fff':'rgba(255,255,255,.7)'};`;
+    const demoBrandStyle = demoSeg(S.mode==='brand');
+    const demoHcpStyle = demoSeg(S.mode==='hcp');
+    // hcp notice
+    const hcpNoticeDisplay = S.hcpNotice ? 'flex' : 'none';
+    const hcpNotice = S.hcpNotice;
+    const downloadLabel = S.downloaded ? '✓ Materials downloaded' : 'Download approved materials';
+
+    // hcp friendly status
+    const friendly = { idle:'', listening:'Listening…', retrieving:'Checking approved content…', compliance:'Preparing response…', approved:'', refused:'' };
+    const hcpStatusLabel = friendly[S.gateStage] || '';
+    const hcpStatusDisplay = (S.processing && hcpStatusLabel) ? 'flex' : 'none';
+
+    // hcp transcript (friendly, no source IDs)
+    const hcpItems = [];
+    for (let i=0;i<=S.turnIndex;i++){ const t=conv[i]; hcpItems.push({kind:'hcp',text:(S.typed[i]||t.q)}); hcpItems.push({kind:t.offLabel?'refusal':'ai',text:t.response}); }
+    if (S.processing && S.pendingTurn>=0){ const t=conv[S.pendingTurn]; hcpItems.push({kind:'hcp',text:(S.typed[S.pendingTurn]||t.q)}); hcpItems.push({kind:'processing',text:(friendly[S.gateStage]||'…')}); }
+    const hcpTranscript = hcpItems.map(m => {
+      const roleBase='font:600 9.5px/1 var(--dn-font-sans); letter-spacing:.06em; text-transform:uppercase; margin-bottom:4px;';
+      let wrapStyle='animation:dn-fade .25s ease;', roleStyle, bubbleStyle, role;
+      if (m.kind==='hcp'){ wrapStyle+=' align-self:flex-start; max-width:92%;'; role='You'; roleStyle=roleBase+' color:var(--dn-fg-subtle);'; bubbleStyle='background:var(--dn-surface-2); color:var(--dn-fg); padding:10px 13px; border-radius:11px 11px 11px 3px; font:400 12.5px/1.45 var(--dn-font-sans);'; }
+      else if (m.kind==='ai'){ wrapStyle+=' align-self:flex-end; max-width:92%; text-align:right;'; role='AI rep'; roleStyle=roleBase+' color:var(--dn-brand-base); text-align:right;'; bubbleStyle='background:var(--dn-brand-base); color:#fff; padding:10px 13px; border-radius:11px 11px 3px 11px; font:400 12.5px/1.45 var(--dn-font-sans); text-align:left;'; }
+      else if (m.kind==='refusal'){ wrapStyle+=' align-self:flex-end; max-width:92%; text-align:right;'; role='AI rep'; roleStyle=roleBase+' color:var(--dn-accent-orange); text-align:right;'; bubbleStyle='background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; padding:10px 13px; border-radius:11px 11px 3px 11px; font:400 12.5px/1.45 var(--dn-font-sans); text-align:left;'; }
+      else { wrapStyle+=' align-self:flex-end; max-width:92%;'; role=''; roleStyle='display:none;'; bubbleStyle='display:flex; align-items:center; gap:8px; background:var(--dn-surface-2); color:var(--dn-fg-muted); padding:10px 13px; border-radius:11px; font:500 12px/1.3 var(--dn-font-sans);'; m.text='● '+m.text; }
+      return { role, roleStyle, bubbleStyle, wrapStyle, text:m.text };
+    });
+    const hcpEmptyDisplay = hcpTranscript.length ? 'none' : 'block';
+    let lastApproved=null; for (let i=0;i<=S.turnIndex;i++){ if (!conv[i].offLabel) lastApproved=conv[i]; }
+    const hcpDetailTitle = lastApproved ? lastApproved.sourceTitle : 'CardioNova ACS Detail — Dosing & titration';
+    const hcpDetailSlide = lastApproved ? lastApproved.slide : 'Slide 4 / 12';
+    const isiDelivered = lastApproved && lastApproved.isi;
+    const hcpIsiBadge = isiDelivered ? 'Delivered ✓' : 'Available';
+    const hcpIsiBadgeStyle = isiDelivered ? 'font:600 10px/1 var(--dn-font-sans); padding:4px 9px; border-radius:20px; background:var(--dn-accent-green-bg); color:#166534;' : 'font:600 10px/1 var(--dn-font-sans); padding:4px 9px; border-radius:20px; background:var(--dn-accent-yellow-bg); color:#92400e;';
+    const hcpEnded = !S.processing && S.turnIndex>=conv.length-1;
+    const hcpAskLabel = S.processing ? '…' : (hcpEnded ? 'Finish' : 'Ask');
+    const hcpAskBtnStyle = `padding:11px 18px; border:none; border-radius:9px; font:600 12.5px/1 var(--dn-font-sans); cursor:${S.processing?'wait':'pointer'}; background:${S.processing?'var(--dn-fg-subtle)':'var(--dn-brand-base)'}; color:#fff;`;
+    const hcpCaption = S.processing ? (friendly[S.gateStage]||'…') : (S.turnIndex>=0 ? conv[S.turnIndex].response : "Hi, I'm the CardioNova AI specialist — an AI representative, not a person. Ask a question or pick a topic to begin.");
+
+    // followup options
+    const foDefs = [['msl','Connect me with a Medical Science Liaison'],['rep','Have a human representative call me'],['materials','Send me the approved materials']];
+    const followupOptions = foDefs.map(f => {
+      const sel = S.followup===f[0];
+      return { label:f[1], onClick:()=>this.setFollowup(f[0]),
+        style:`display:flex; align-items:center; gap:11px; padding:12px 14px; border:1px solid ${sel?'var(--dn-brand-base)':'var(--dn-border)'}; border-radius:10px; cursor:pointer; background:${sel?'rgba(6,73,172,.04)':'#fff'};`,
+        radioStyle:`flex-shrink:0; width:18px; height:18px; border-radius:50%; border:${sel?'6px solid var(--dn-brand-base)':'2px solid var(--dn-border-strong)'};` };
+    });
+    const followupBtnLabel = S.followupDone ? '✓ Request submitted' : 'Submit follow-up request';
+    const followupBtnStyle = `width:100%; padding:13px; border:none; border-radius:10px; font:600 13.5px/1 var(--dn-font-sans); cursor:pointer; background:${S.followupDone?'var(--dn-success)':'var(--dn-brand-base)'}; color:#fff;`;
+
+    return {
+      brandDisplay, hcpDisplay, demoBrandStyle, demoHcpStyle, demoDisplay: S.showDemo ? 'flex' : 'none',
+      adminSectionDisplay: S.showDemo ? 'block' : 'none',
+      attnDisplay: S.attnOpen ? 'block' : 'none', toggleAttn:()=>this.toggleAttn(),
+      setBrandMode:()=>this.setBrandMode(), setHcpMode:()=>this.setHcpMode(),
+      navPlan, navActivate, navGovern, adminNavStyle, scr,
+      goAdmin:()=>this.goAdmin(), goOverview:()=>this.go('overview'), goTargeting:()=>this.go('targeting'),
+      goContent:()=>this.go('content'), goAnalytics:()=>this.go('analytics'), goAudit:()=>this.go('audit'),
+      goCrm:()=>this.go('crm'), goOutreach:()=>this.go('outreach'), goPersona:()=>this.goPersona(), goSessions:()=>this.go('sessions'),
+      crmMode:S.crmMode, onCrmChange:(e)=>this.setState({ crmMode:e.target.value }),
+
+      commandKpis, healthRows, todayActions, topQuestions,
+      guardrails, contentLibrary,
+      avatarOptions, voiceOptions, toneToggles, previewRingStyle, personaSummary, greetingPreview,
+      personaTypes, consentDisplay, personaStatusLabel, personaStatusStyle, submitPersonaLabel, submitPersonaStyle, dropzone, personaReadiness,
+      consentUploadIcon, consentUploadLabel, consentUploadSub, uploadConsent:()=>this.uploadConsent(),
+      submitPersona:()=>this.submitPersona(),
+
+      openContentDrawer:()=>this.openContentDrawer(),
+      contentDrawerOverlayDisplay: S.contentDrawer?'block':'none', contentDrawerTransform: S.contentDrawer?'translateX(0)':'translateX(100%)',
+      closeContentDrawer:()=>this.closeContentDrawer(), submitContent:()=>this.submitContent(),
+      contentSubmittedDisplay: S.contentSubmitted?'flex':'none', contentFormDisplay: S.contentSubmitted?'none':'block',
+
+      targetSummary, hcps:hcpRows, activationCount,
+      activationRows, activationEmptyDisplay, readiness, launchBtnLabel, launchBtnStyle,
+      askLaunch:()=>this.askLaunch(), previewHcp:()=>this.previewHcp(),
+      launchSentDisplay, launchConfirmDisplay, launchConfirmCount,
+      cancelLaunch:()=>this.cancelLaunch(), confirmLaunch:()=>this.confirmLaunch(),
+      sessionList,
+
+      analyticsTabs, analyticsKpis, drillDisplay, chartsDisplay, funnel,
+      drillTitle:drillKpi.label||'', drillValue:drillKpi.value||'', closeDrill:()=>this.closeDrill(),
+      drillA:drillBuilt.drillA, drillB:drillBuilt.drillB, drillTable:drillBuilt.drillTable,
+
+      sessionHcpName:sessionHcp.name, sessionClock:'07:48',
+      auditSummary, auditLog, auditDetail, traceNodes,
+
+      crmEvents, crmDetail, crmSelHcp:selEvent.hcp, crmPayload, pushBtnLabel, pushBtnStyle,
+      pushSelected:()=>this.pushSelected(), exportAll:()=>this.exportAll(), toggleJson:()=>this.toggleJson(), jsonDisplay, jsonChevron,
+
+      vendorStack, crmConnectors,
+
+      drawerOverlayDisplay:drawerOpen?'block':'none', drawerTransform:drawerOpen?'translateX(0)':'translateX(100%)',
+      drawerName:drawerHcp?drawerHcp.name:'', drawerSpecialty:drawerHcp?drawerHcp.specialty:'', drawerInstitution:drawerHcp?drawerHcp.institution:'',
+      drawerScore:drawerHcp?drawerHcp.score:'', drawerDecile:drawerHcp?drawerHcp.decile:'', drawerPatients:drawerHcp?drawerHcp.patients:'',
+      drawerTopic:drawerHcp?drawerHcp.topic:'', drawerRationale:drawerHcp?drawerHcp.rationale:[], drawerAffinity:drawerHcp?drawerHcp.affinity:[],
+      closeDrawer:()=>this.closeDrawer(), toggleActivation:()=>this.toggleActivation(), addListLabel, addListBtnStyle,
+      launchInviteFromDrawer:()=>this.launchInviteFromDrawer(),
+
+      hcpScr, hcpStatusLabel, hcpStatusDisplay, hcpTranscript, hcpEmptyDisplay, hcpCaption,
+      hcpDetailTitle, hcpDetailSlide, hcpIsiBadge, hcpIsiBadgeStyle,
+      hcpAskLabel, hcpAskBtnStyle, askNext:()=>this.askNext(),
+      hcpInput:S.hcpInput, onHcpInput:(e)=>this.setHcpInput(e.target.value),
+      fillDosing:()=>this.fillInput('What is the approved dose for ACS?'), fillSafety:()=>this.fillInput('What about major bleeding risk?'), fillOfflabel:()=>this.fillInput('Can I use it off-label in pediatrics?'), fillRwe:()=>this.fillInput('Is there real-world adherence evidence?'),
+      reqHuman:()=>this.hcpRequest('human'), reqMsl:()=>this.hcpRequest('msl'), reqSideEffect:()=>this.hcpRequest('ae'),
+      hcpNotice, hcpNoticeDisplay, dismissNotice:()=>this.dismissNotice(),
+      closeHcpSession:()=>this.closeHcpSession(), downloadMaterials:()=>this.downloadMaterials(), downloadLabel,
+      demoBrandStyle, demoHcpStyle,
+      startConversation:()=>this.startConversation(), finishSession:()=>this.finishSession(),
+      followupOptions, followupBtnLabel, followupBtnStyle, submitFollowup:()=>this.submitFollowup(),
+    };
+  }
+}
+
+</script>
+</body>
+</html>

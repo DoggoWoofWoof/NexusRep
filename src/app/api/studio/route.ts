@@ -1,0 +1,148 @@
+/**
+ * Thin controller for the Studio Build/Train lifecycle. GET returns a UI-ready
+ * snapshot (rep, readiness, setup sections, rules). POST applies one action and
+ * returns the fresh snapshot. All logic lives in StudioService; this only shapes
+ * canonical TrainingRules into the display shape the screen renders.
+ */
+
+import { NextResponse } from "next/server";
+import { getContainer } from "@lib/container";
+import { hcpNameOf } from "@lib/demo-seed";
+import { compactCoaching } from "@modules/content";
+import type { StudioSnapshot } from "@modules/aiRepStudio";
+import { partitionCoaching, type RuleScope, type RuleStatus, type TrainingRule } from "@modules/rules";
+import type { SectionKey, SectionStatus } from "@modules/setupAssistant";
+import type { RepState } from "@modules/aiRepStudio";
+
+export const dynamic = "force-dynamic";
+
+const TYPE_LABEL: Record<TrainingRule["type"], string> = {
+  persona_style: "Style rule",
+  blocked_topic: "Blocked topic",
+  conversation_ordering: "Conversation ordering",
+  comparative_claim: "Comparative claim",
+  hcp_pointer: "HCP pointer",
+};
+const STATUS_LABEL: Record<RuleStatus, string> = {
+  active: "Active",
+  draft: "Draft",
+  needs_source: "Needs source",
+  needs_mlr: "Needs review",
+  rejected: "Rejected",
+  blocked_by_compliance: "Blocked",
+};
+const TIER_OF: Record<RuleScope, string> = {
+  global: "Global",
+  campaign: "Global",
+  persona: "Persona",
+  hcp_segment: "HCP",
+  hcp_specific: "HCP",
+};
+
+function toUiRule(r: TrainingRule, personaName: string) {
+  const tier = TIER_OF[r.scope];
+  const hcp = r.appliesToHcpId ? hcpNameOf(r.appliesToHcpId) : undefined;
+  return {
+    id: r.id as string,
+    type: TYPE_LABEL[r.type],
+    status: STATUS_LABEL[r.status],
+    tier,
+    text: r.instruction,
+    note: r.origin === "coaching" && r.sourceFeedback ? `From coaching: “${r.sourceFeedback}”` : "",
+    scope: tier === "Global" ? "All AI reps" : tier === "HCP" ? (hcp ?? "HCP") : personaName,
+    source: r.origin === "guardrail" ? "guardrail" : "feedback",
+    ...(hcp ? { hcp } : {}),
+    ...(r.origin === "coaching" ? { from: "rehearsal" } : {}),
+    ...(r.sourceMessage ? { sourceMessage: r.sourceMessage } : {}),
+  };
+}
+
+function shape(snap: StudioSnapshot) {
+  const personaName = snap.rep.persona.displayName;
+  return {
+    rep: { displayName: personaName, state: snap.rep.state },
+    readiness: snap.readiness,
+    sections: snap.draft.sections,
+    rules: snap.rules.map((r) => toUiRule(r, personaName)),
+  };
+}
+
+export async function GET(): Promise<NextResponse> {
+  const c = await getContainer();
+  const snap = await c.studio.get(c.demo.aiRepId);
+  return NextResponse.json(snap ? shape(snap) : null);
+}
+
+const UI_SCOPE: Record<string, RuleScope> = { persona: "persona", global: "global", hcp: "hcp_specific" };
+
+export async function POST(req: Request): Promise<NextResponse> {
+  const body = (await req.json().catch(() => ({}))) as {
+    action?: string;
+    questionKey?: string;
+    value?: string;
+    section?: SectionKey;
+    status?: string;
+    feedback?: string;
+    scope?: string; // "persona" | "global" | "hcp"
+    appliesToHcpId?: string;
+    topic?: string;
+    sourceMessage?: string;
+    ruleId?: string;
+    repState?: RepState;
+    // acceptCoaching: the whole coaching thread for one answer.
+    coachings?: unknown;
+    question?: string;
+    answer?: string;
+  };
+  const c = await getContainer();
+  const id = c.demo.aiRepId;
+  const done = (snap: StudioSnapshot | null) => NextResponse.json(snap ? shape(snap) : null);
+
+  switch (body.action) {
+    case "answer":
+      if (!body.questionKey || typeof body.value !== "string") return bad("questionKey and value required");
+      return done(await c.studio.answer(id, body.questionKey, body.value));
+    case "section":
+      if (!body.section || !body.status) return bad("section and status required");
+      return done(await c.studio.setSectionStatus(id, body.section, body.status as SectionStatus));
+    case "rule": {
+      if (!body.feedback) return bad("feedback required");
+      const scope = body.scope ? UI_SCOPE[body.scope] : undefined;
+      const appliesToHcpId = scope === "hcp_specific" ? body.appliesToHcpId ?? c.demo.hcpId : body.appliesToHcpId;
+      return done(await c.studio.addRule(id, { feedback: body.feedback, scope, appliesToHcpId, topic: body.topic, sourceMessage: body.sourceMessage }));
+    }
+    case "acceptCoaching": {
+      // Persist a whole accepted coaching thread: compliance-sensitive notes → individual gated
+      // rules; style notes → ONE compacted rule (LLM-summarized, with the accepted answer as an
+      // example). Nothing here bypasses the compliance-aware rule status.
+      const coachings = Array.isArray(body.coachings)
+        ? body.coachings.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim())
+        : [];
+      if (coachings.length === 0) return done(await c.studio.get(id)); // nothing to persist
+      const scope = body.scope ? UI_SCOPE[body.scope] : undefined;
+      const appliesToHcpId = scope === "hcp_specific" ? body.appliesToHcpId ?? c.demo.hcpId : body.appliesToHcpId;
+      const { sensitive, style } = partitionCoaching(coachings);
+      const compacted = style.length ? (await compactCoaching(style, { question: body.question ?? "", answer: body.answer ?? "" })).instruction : undefined;
+      return done(await c.studio.acceptCoaching(id, { sensitive, style, compactedInstruction: compacted, scope, appliesToHcpId, sourceMessage: body.question }));
+    }
+    case "greeting": {
+      // Accepting a coached OPENING LINE persists it as the rep's greeting + disclosure, so the
+      // change is real everywhere the greeting is read (HCP view, Tavus persona) — not just local.
+      if (typeof body.value !== "string" || !body.value.trim()) return bad("value required");
+      await c.studio.answer(id, "greeting", body.value.trim());
+      return done(await c.studio.answer(id, "disclosure", body.value.trim()));
+    }
+    case "ruleStatus":
+      if (!body.ruleId || !body.status) return bad("ruleId and status required");
+      return done(await c.studio.setRuleStatus(id, body.ruleId, body.status as RuleStatus));
+    case "repState":
+      if (!body.repState) return bad("repState required");
+      return done(await c.studio.setRepState(id, body.repState));
+    default:
+      return bad("unknown action");
+  }
+}
+
+function bad(msg: string): NextResponse {
+  return NextResponse.json({ error: msg }, { status: 400 });
+}

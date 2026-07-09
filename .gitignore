@@ -1,0 +1,50 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+
+# testing
+/coverage
+/playwright-report/
+/test-results/
+/blob-report/
+/playwright/.cache/
+
+# env
+.env
+.env*.local
+.docnexus-id-token.json
+.docnexus-auth-state/
+
+# local durable/demo state
+/.nexusrep-data/
+/.nexusrep-data.*/
+/uploads/
+
+# local tools and generated run artifacts
+/.tools/
+*.log
+*.pid
+/tavus.txt
+
+# recordings are generated demo artifacts; keep the folder, not the videos
+/public/recordings/*
+!/public/recordings/.gitkeep
+
+# misc
+.DS_Store
+*.pem
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.idea/
+.vscode/
