@@ -97,7 +97,6 @@ async function main() {
       console.log(`Prompt: ${step.text}`);
       await assertTavusLive(page);
       await runAskStep(page, step.text);
-      await waitForReplicaStop(page, 65_000);
       await assertTavusLive(page);
       await sleep(900);
     }
@@ -165,10 +164,18 @@ function recordingSteps(brand) {
 
 async function runAskStep(page, text) {
   await waitForAskReady(page, 240_000);
+  const startedBefore = await startedCount(page);
+  const stoppedBefore = await stoppedCount(page);
   const input = page.getByPlaceholder(/Type|Listening|Ask a question/i).first();
   await input.fill(text);
   await page.getByRole("button", { name: /^Ask$/i }).click({ timeout: 60_000 });
+  await waitForReplicaStart(page, startedBefore, 45_000);
   await waitForAskReady(page, 240_000);
+  if ((await stoppedCount(page)) <= stoppedBefore) {
+    await waitForReplicaStopAfter(page, stoppedBefore, 8_000).catch(() => {
+      console.log("Replica stop event was not emitted for this echo; continuing after the UI-held speech window.");
+    });
+  }
 }
 
 async function waitForAskReady(page, timeoutMs = 60_000) {
@@ -196,6 +203,18 @@ async function waitForRecorder(page) {
 
 async function waitForReplicaStop(page, timeoutMs) {
   const before = await stoppedCount(page);
+  await waitForReplicaStopAfter(page, before, timeoutMs);
+}
+
+async function waitForReplicaStart(page, before, timeoutMs) {
+  await page.waitForFunction(
+    (count) => (window.__nexusrepEvents || []).filter((e) => /replica\.started_speaking/i.test(e.type)).length > count,
+    before,
+    { timeout: timeoutMs },
+  );
+}
+
+async function waitForReplicaStopAfter(page, before, timeoutMs) {
   await page.waitForFunction(
     (count) => (window.__nexusrepEvents || []).filter((e) => /replica\.stopped_speaking/i.test(e.type)).length > count,
     before,
@@ -205,6 +224,10 @@ async function waitForReplicaStop(page, timeoutMs) {
 
 async function stoppedCount(page) {
   return page.evaluate(() => (window.__nexusrepEvents || []).filter((e) => /replica\.stopped_speaking/i.test(e.type)).length);
+}
+
+async function startedCount(page) {
+  return page.evaluate(() => (window.__nexusrepEvents || []).filter((e) => /replica\.started_speaking/i.test(e.type)).length);
 }
 
 async function assertTavusLive(page) {

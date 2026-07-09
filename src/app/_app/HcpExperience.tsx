@@ -158,7 +158,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
       cueSlide(data.detailAidSlideId);
       if (data.followUp) setNotice(followUpNotice(data.followUp));
       // Voice: the live replica speaks it (echo) when on video; otherwise browser/3D TTS.
-      if (videoOn) tavusRef.current?.speak(data.response);
+      if (videoOn) await playRepSegment(data.response);
       else void speak(data.response);
     } finally { setPending(false); }
   }
@@ -185,7 +185,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
         if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current);
         slideTimerRef.current = window.setTimeout(() => setDeckFocus(id), SLIDE_CUE_DELAY_MS);
       }
-      if (videoOn) tavusRef.current?.speak(data.response);
+      if (videoOn) await playRepSegment(data.response);
       else void speak(data.response);
     } finally {
       setPending(false);

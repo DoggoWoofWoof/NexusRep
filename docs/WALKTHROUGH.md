@@ -48,9 +48,11 @@ Fixed the "Session review" replay and recording trust issues:
   pretending the video and transcript are synced.
 - **Overview narration no longer logs six slides at one instant.** The presentation overview endpoint
   spaces rep turns by estimated speaking time, matching the video echo playback cadence.
-- **Recorder now fails closed.** `scripts/record-full-tavus-session.mjs` stops producing a "clean"
-  output if the Tavus replica leaves live state or does not emit a real `stopped_speaking` event for a
-  prompted answer. It should not attach a longer transcript to a shorter/dead video anymore.
+- **Recorder now fails closed on missing speech.** `scripts/record-full-tavus-session.mjs` stops
+  producing a "clean" output if the Tavus replica leaves live state or never starts speaking for a
+  prompted answer. Because Tavus does not reliably emit `stopped_speaking` for every echo, the HCP UI
+  now keeps typed/video turns pending for the estimated speech window; the recorder treats a missing
+  stop event as a warning, not proof of failure.
 - Verified saved session `session_mrdcoo0zn963lj`: persisted duration was `0`, derived transcript span
   is `721s`, turns `22`, questions `8`, gated outputs `13/13`, audit events `59`, sources cited `6`
   (`ans_title`, `ans_moa`, `ans_program`, `ans_status`, `ans_isi`, `ans_contact`).
