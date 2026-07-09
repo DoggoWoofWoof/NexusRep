@@ -56,9 +56,11 @@ export async function POST(req: Request): Promise<Response> {
       const fresh = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId, seed: sessionId === c.demo.sessionId ? "demo" : undefined });
       sessionId = fresh.id;
     }
+    // The call's session carries the invited doctor's identity (set at conversation create).
+    const hcpId = (await c.sessions.get(sessionId))?.hcpId ?? c.demo.hcpId;
     const { output } = await c.conversation.turn({
       sessionId,
-      hcpId: c.demo.hcpId,
+      hcpId,
       audience: c.demo.audience,
       indication: c.demo.indication,
       market: c.demo.market,

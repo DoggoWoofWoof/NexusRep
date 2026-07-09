@@ -22,7 +22,7 @@ export interface TavusStageHandle {
 
 type RepTurnNotice = { text: string; detailAidSlideId?: string | null; sourceIds?: string[] };
 
-export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void }>(function TavusStage({ onClose, bare = false, onRepTurn }, ref) {
+export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; hcpId?: string }>(function TavusStage({ onClose, bare = false, onRepTurn, hcpId }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const callRef = useRef<CallObj | null>(null);
@@ -108,7 +108,12 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
       startedRef.current = true;
       void (async () => {
       try {
-        const res = await fetch("/api/tavus/conversation", { method: "POST" });
+        const res = await fetch("/api/tavus/conversation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // Invite-link identity — server honors it only for a real cohort member.
+          body: JSON.stringify(hcpId ? { hcpId } : {}),
+        });
         const d = (await res.json()) as ConvResp;
         if (!d.configured || !d.conversationUrl) {
           setNote(d.note);

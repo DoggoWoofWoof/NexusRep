@@ -11,6 +11,11 @@
 let activeTavusSessionId: string | null = null;
 
 export function setActiveTavusSession(id: string): void {
+  if (activeTavusSessionId && activeTavusSessionId !== id) {
+    // Known single-slot limitation: a second concurrent call supersedes the first —
+    // its subsequent replies would log to the NEW session. Loudly visible on purpose.
+    console.warn(`[tavus] active call superseded: ${activeTavusSessionId} → ${id} (one concurrent Tavus call per process)`);
+  }
   activeTavusSessionId = id;
 }
 

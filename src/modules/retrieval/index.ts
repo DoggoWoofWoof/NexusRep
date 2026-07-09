@@ -77,18 +77,33 @@ function hasAny(hay: Set<string>, terms: string[]): boolean {
   return terms.some((t) => hay.has(t));
 }
 
+// Brand lexicon: topic → extra query words that should pull that topic forward (e.g. the
+// program's trial name, the target pathway). Configured by the container from the
+// BrandProfile so this engine file stays brand-free.
+let TOPIC_SYNONYMS: Record<string, string[]> = {};
+export function configureRetrievalLexicon(topicSynonyms: Record<string, string[]>): void {
+  TOPIC_SYNONYMS = Object.fromEntries(
+    Object.entries(topicSynonyms).map(([topic, words]) => [topic.toLowerCase(), words.map((w) => w.toLowerCase().trim()).filter(Boolean)]),
+  );
+}
+
 function topicBonus(queryWords: Set<string>, answer: ApprovedAnswer): number {
   const topic = answer.topic.toLowerCase();
   let bonus = 0;
 
-  if (hasAny(queryWords, ["mechanism", "work", "works", "working", "factor", "xia", "fxia", "pathway", "thrombosis", "fit"])) {
-    if (/mechanism|action|fxia|factor xia/i.test(topic)) bonus += 10;
+  // GENERIC clinical groupings only — brand vocabulary comes from TOPIC_SYNONYMS below.
+  if (hasAny(queryWords, ["mechanism", "work", "works", "working", "pathway", "fit"])) {
+    if (/mechanism|action/i.test(topic)) bonus += 10;
   }
-  if (hasAny(queryWords, ["librexia", "program", "trial", "trials", "study", "studying", "phase", "acs", "af", "stroke"])) {
-    if (/program|study|trial|librexia/i.test(topic)) bonus += 10;
+  if (hasAny(queryWords, ["program", "trial", "trials", "study", "studying", "phase"])) {
+    if (/program|study|trial/i.test(topic)) bonus += 10;
   }
   if (hasAny(queryWords, ["fda", "status", "approved", "approval", "fast", "track", "investigational", "development"])) {
     if (/status|development|approved|approval/i.test(topic)) bonus += 10;
+  }
+  // Brand lexicon synonyms: query words specific to this brand's world pull their topic forward.
+  for (const [topicKey, words] of Object.entries(TOPIC_SYNONYMS)) {
+    if (hasAny(queryWords, words) && topic.includes(topicKey)) bonus += 10;
   }
   if (hasAny(queryWords, ["isi", "safety", "disclosure", "warning", "warnings"])) {
     if (/safety|isi|important safety/i.test(topic)) bonus += 10;

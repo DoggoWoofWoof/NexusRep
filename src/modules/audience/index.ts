@@ -29,6 +29,9 @@ export interface HCPFeatures {
   seesReps: boolean;
   /** Field rep touches this quarter (0 = no current coverage). */
   repTouchesQtr: number;
+  /** NPI when the claims source provides one — used for CRM identity resolution.
+   *  Absent → CRM outbox surfaces "needs_mapping" (the real unresolved-identity state). */
+  npi?: string;
 }
 
 export interface HCPOpportunityScore {
@@ -181,6 +184,16 @@ export class TargetingService {
 
   cohortSize(): number {
     return this.features.length;
+  }
+
+  /** Look up one cohort member by id — the identity check conversation routes use so a
+   *  client-supplied hcpId can only ever resolve to a real targeted HCP (never invent one). */
+  get(hcpId: string): HCPFeatures | undefined {
+    return this.features.find((f) => String(f.id) === hcpId);
+  }
+
+  has(hcpId: string): boolean {
+    return this.get(hcpId) !== undefined;
   }
 
   /** Count of HCPs in each whitespace segment. */

@@ -13,8 +13,8 @@
 import { NextResponse } from "next/server";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
-import { complianceGate, type PolicyRoute, type RiskClassification } from "@modules/compliance";
-import { composeGreeting, getComposer, type GroundedComposer } from "@modules/content";
+import { complianceGate, isiAlreadyDelivered, type PolicyRoute, type RiskClassification } from "@modules/compliance";
+import { composeGreeting, firstAvailableComposer, PresentationSkill } from "@modules/content";
 import { isOverviewPrompt } from "@modules/content/overviewPrompt";
 import { presentationGuidance, rehearsalStyleGuidance } from "@modules/rules";
 
@@ -37,15 +37,6 @@ const PREVIEW_PRESENTATION_CLASSIFICATION: RiskClassification = {
   isiRequired: false,
 };
 
-/** The first configured LLM composer (needed to actually restyle wording from coaching). */
-function firstAvailableComposer(): GroundedComposer | null {
-  for (const name of ["claude", "openai", "thinking-machines"]) {
-    const c = getComposer(name);
-    if (c?.available()) return c;
-  }
-  return null;
-}
-
 /** A coached greeting is only usable if it KEEPS the mandatory disclosures (fail safe otherwise). */
 function greetingHasDisclosures(text: string, investigational: boolean): boolean {
   const t = text.toLowerCase();
@@ -67,8 +58,13 @@ function previewSessionId(v: unknown) {
 
 export async function POST(req: Request): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as { text?: unknown; coaching?: unknown; kind?: unknown; current?: unknown; previewSessionId?: unknown };
+  // Cap note count + length: coaching is guidance text folded into an LLM prompt, so it is
+  // bounded to keep the prompt sane (and shrink the injection surface).
   const coaching = Array.isArray(body.coaching)
-    ? body.coaching.filter((g): g is string => typeof g === "string" && g.trim().length > 0).map((g) => g.trim())
+    ? body.coaching
+        .filter((g): g is string => typeof g === "string" && g.trim().length > 0)
+        .slice(0, 12)
+        .map((g) => g.trim().slice(0, 300))
     : [];
 
   const c = await getContainer();
@@ -94,20 +90,26 @@ export async function POST(req: Request): Promise<NextResponse> {
   const text = typeof body.text === "string" ? body.text.trim() : "";
   if (!text) return NextResponse.json({ error: "text is required" }, { status: 400 });
   const sessionId = previewSessionId(body.previewSessionId);
-  const rules = (await c.studio.get(c.demo.aiRepId))?.rules ?? [];
+  const studioSnap = await c.studio.get(c.demo.aiRepId);
+  const rules = studioSnap?.rules ?? [];
 
-  if (body.kind === "overview" || isOverviewPrompt(text)) {
+  if (body.kind === "overview" || isOverviewPrompt(text, c.brand.lexicon)) {
     const savedDeckGuidance = presentationGuidance(rules, { hcpId: c.demo.hcpId, rehearsal: true });
     const guidance = Array.from(new Set([...savedDeckGuidance, ...coaching].map((g) => g.trim()).filter(Boolean)));
-    const steps = await c.presentation.overview({
+    const presentation = new PresentationSkill(c.content);
+    const steps = await presentation.overview({
       context: { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market },
       guidance,
+      ...(studioSnap?.guidedOverview?.steps?.length ? { plan: studioSnap.guidedOverview } : {}),
     });
     const isi = await c.content.latestActiveSafetyStatement();
     const priorAudit = isi ? await c.audit.forSession(sessionId) : [];
-    let isiDelivered = Boolean(isi && priorAudit.some((event) => event.type === "response_output" && typeof event.payload.text === "string" && event.payload.text.includes(`Important Safety Information: ${isi.text}`)));
+    let isiDelivered = Boolean(isi && isiAlreadyDelivered(priorAudit, isi.text));
     const route: PolicyRoute = steps.length ? "approved_answer" : "fallback";
     const responses: string[] = [];
+    // Per-step segments so the Train rehearsal can render the overview paragraph-by-paragraph with
+    // each step's own slide — matching the doctor-facing delivery — instead of one joined block.
+    const segments: { response: string; detailAidSlideId: string | null; slideTitle: string | null }[] = [];
     let firstSlide: string | null = null;
     let attachedThisRun = false;
 
@@ -142,11 +144,17 @@ export async function POST(req: Request): Promise<NextResponse> {
         segment: index + 1,
       });
       responses.push(responseText);
+      segments.push({
+        response: responseText,
+        detailAidSlideId: decision.decision === "approved" ? detailAidSlideId ?? null : null,
+        slideTitle: step.slideTitle ?? null,
+      });
     }
 
     const response = responses.length ? responses.join("\n\n") : SAFE_FALLBACK;
     return NextResponse.json({
       response,
+      segments,
       route,
       isiDelivered: attachedThisRun,
       detailAid: null,

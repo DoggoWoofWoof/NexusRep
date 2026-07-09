@@ -10,9 +10,11 @@
 import { NextResponse } from "next/server";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
+import { setupAnswersOf } from "@modules/brand";
+import { llmComplete } from "@modules/content";
+import { inferSetupAnswersFromDocument } from "@modules/setupAssistant";
 import { extractSourceText, ingestSource, type RawSource } from "@modules/content";
 import type { ContentAsset, MlrMetadata } from "@modules/content";
-import { resolveBrandProfile, setupAnswersOf } from "@modules/brand";
 
 export const dynamic = "force-dynamic";
 
@@ -35,10 +37,17 @@ export async function POST(req: Request): Promise<NextResponse> {
     contentBase64?: unknown;
     kind?: unknown;
     title?: unknown;
+    /** Default true: infer setup answers (brand, indication, …) from the document. */
+    autofillSetup?: unknown;
   };
   const filename = typeof body.filename === "string" ? body.filename : "";
   const b64 = typeof body.contentBase64 === "string" ? body.contentBase64 : "";
   if (!filename || !b64) return NextResponse.json({ error: "filename and contentBase64 are required" }, { status: 400 });
+  // Cap the upload BEFORE decoding: ~10MB binary ≈ 14M base64 chars. An unbounded payload
+  // could exhaust memory during Buffer.from().
+  if (b64.length > 14_000_000) {
+    return NextResponse.json({ error: "file too large (max ~10MB)" }, { status: 413 });
+  }
 
   let text: string;
   try {
@@ -57,14 +66,16 @@ export async function POST(req: Request): Promise<NextResponse> {
     : inferredKind;
   const title = typeof body.title === "string" && body.title ? body.title : filename;
 
-  // Scope the parsed content to the active brand's clinical context (audience / indication /
-  // market) — resolved from the Setup Assistant's answers — so MLR filtering + retrieval match
-  // whatever the brand user set by chatting, not a hardcoded value.
+  // Scope the parsed content to the brand's STABLE clinical context (audience / indication /
+  // market). Deliberately NOT the chat-resolved values: the setup "target audience" answer is a
+  // TARGETING preference (who to invite — e.g. "decile 2–4 whitespace cohort"), not an MLR
+  // compliance label. Stamping free-text chat phrases here made uploads unretrievable the moment
+  // the query context (stable clinical audience) no longer string-matched them.
   const c = await getContainer();
-  const draft = (await c.studio.get(c.demo.aiRepId))?.draft;
-  const clinical = resolveBrandProfile(c.brand, setupAnswersOf(draft)).clinical;
+  const clinical = c.brand.clinical;
   const raw: RawSource = { kind, title, tenantId: c.demo.tenantId, brandId: c.demo.brandId, campaignId: c.demo.campaignId, text, mlr: draftMlr(filename, clinical) };
-  const result = ingestSource(raw, `upload_${Date.now().toString(36)}`);
+  // Brand lexicon improves topic inference for THIS brand's vocabulary (engine stays generic).
+  const result = ingestSource(raw, `upload_${Date.now().toString(36)}`, { topicHints: c.brand.lexicon.topicSynonyms });
 
   // Store the parsed blocks as in-MLR content so they appear in the MLR review
   // queue (POST /api/mlr → approve). They are NOT indexed for retrieval yet, so
@@ -73,6 +84,28 @@ export async function POST(req: Request): Promise<NextResponse> {
   for (const slide of result.slides) await c.content.addSlide(slide);
   for (const ans of result.answers) await c.content.addAnswer(ans);
   for (const safety of result.safety) await c.content.addSafetyStatement(safety);
+
+  // Setup autofill: the document also ANSWERS setup questions (brand, indication, talking
+  // points, hotwords…) — infer them so the brand user uploads once instead of typing each
+  // answer. Fills BLANK fields only; anything the user already answered is untouched.
+  let setupAutofill: { filled: string[]; values: Record<string, string> } | undefined;
+  if (body.autofillSetup !== false && kind !== "isi") {
+    try {
+      const existing = setupAnswersOf((await c.studio.get(c.demo.aiRepId))?.draft);
+      const inferred = await inferSetupAnswersFromDocument(text, existing, llmComplete);
+      for (const [k, v] of Object.entries(inferred.filled)) {
+        await c.studio.answer(c.demo.aiRepId, k, v);
+      }
+      if (Object.keys(inferred.filled).length) {
+        setupAutofill = { filled: Object.keys(inferred.filled), values: inferred.filled };
+      } else {
+        console.warn("[ingest] setup autofill found nothing to fill (open keys already answered or extraction empty)", inferred.skipped);
+      }
+    } catch (e) {
+      // Best-effort — the upload itself already succeeded — but say so, don't swallow.
+      console.error("[ingest] setup autofill failed:", e instanceof Error ? e.message : e);
+    }
+  }
 
   // Return a review-ready summary. Nothing here is live until MLR sign-off.
   return NextResponse.json({
@@ -84,6 +117,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     },
     status: "in_mlr",
     note: "Parsed content is pending MLR review and is not usable by the AI rep until approved.",
+    ...(setupAutofill ? { setupAutofill } : {}),
     candidates: result.answers.map((a, i) => ({
       id: a.id,
       topic: a.topic,

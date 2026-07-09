@@ -7,6 +7,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { env } from "@lib/env";
 import { getRealtimeProvider } from "@modules/vendors";
@@ -15,7 +16,8 @@ import { setActiveTavusSession } from "@lib/tavus-session";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(): Promise<NextResponse> {
+export async function POST(req: Request): Promise<NextResponse> {
+  const body = (await req.json().catch(() => ({}))) as { hcpId?: unknown };
   const c = await getContainer();
   const provider = getRealtimeProvider();
   // Persona is brand config resolved from the Setup Assistant's answers — so what the brand
@@ -23,10 +25,12 @@ export async function POST(): Promise<NextResponse> {
   const draft = (await c.studio.get(c.demo.aiRepId))?.draft;
   const persona = resolveBrandProfile(c.brand, setupAnswersOf(draft)).persona;
 
+  // Identity: honor the invite link's hcpId only when it resolves to a real cohort member.
+  const hcpId = typeof body.hcpId === "string" && c.targeting.has(body.hcpId) ? asId<"hcp_id">(body.hcpId) : c.demo.hcpId;
   // Each video call is its own reviewable session, so its transcript is exactly
   // that call (not pooled into the shared demo session). The recording attaches
   // to it via the recording_ready webhook (keyed by the Tavus conversation id).
-  const hist = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
+  const hist = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId });
   // Mark this as the active call so /api/tavus/llm logs the authoritative transcript here (with
   // slideIds), and log the opening greeting once server-side (Tavus speaks it directly, not via
   // the LLM endpoint, so the endpoint never sees it).
@@ -39,6 +43,7 @@ export async function POST(): Promise<NextResponse> {
       record: true,
       callbackUrl: `${env.publicBaseUrl}/api/tavus/webhook`,
       sessionId: hist.id,
+      personaCacheKey: c.brand.brandId, // one Tavus persona per brand, reused across sessions
       systemPrompt: persona.systemPrompt,
       customGreeting: persona.customGreeting,
       context: persona.context,
@@ -74,10 +79,19 @@ export async function POST(): Promise<NextResponse> {
     await c.sessions.setTavusConversation(hist.id, session.id);
   }
 
-  // Tavus's servers call our custom-LLM endpoint to get each reply. If our public
-  // URL is localhost they can't reach it, so the replica will greet but stay silent
-  // on HCP turns until NEXUSREP_PUBLIC_URL points at a public tunnel/deploy.
-  const reachableLlm = !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl);
+  // Tavus's servers call our custom-LLM endpoint to get each reply. Actively PROBE the
+  // public URL instead of guessing from its shape — a dead tunnel (trycloudflare URLs die
+  // with their process) previously reported reachable and the replica greeted then went
+  // silent with no explanation.
+  let reachableLlm = !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl);
+  if (reachableLlm) {
+    try {
+      const probe = await fetch(`${env.publicBaseUrl.replace(/\/$/, "")}/api/models`, { signal: AbortSignal.timeout(5000) });
+      reachableLlm = probe.ok;
+    } catch {
+      reachableLlm = false;
+    }
+  }
   return NextResponse.json({
     provider: provider.name,
     configured: Boolean(session.transportUrl),
@@ -91,6 +105,6 @@ export async function POST(): Promise<NextResponse> {
       ? "Set TAVUS_API_KEY (and TAVUS_REPLICA_ID) to enable the live Tavus avatar; using the built-in 3D avatar meanwhile."
       : reachableLlm
         ? "Live Tavus replica — replies produced by our compliance endpoint."
-        : "Replica renders and greets, but replies need a public NEXUSREP_PUBLIC_URL so Tavus can reach our compliance endpoint.",
+        : "Replica renders and greets, but replies won't flow: the public URL isn't reachable (dead tunnel?). Restart the tunnel and update NEXUSREP_PUBLIC_URL.",
   });
 }

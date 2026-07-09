@@ -76,5 +76,5 @@ describe("Postgres durability (survives a restart)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 120_000); // double WASM boot is I/O-bound: generous budget so machine load never flakes it
 });

@@ -1,0 +1,54 @@
+# Render Blueprint — deploy NexusRep as a single Node web service.
+# https://render.com/docs/blueprint-spec
+#
+# One-time setup after "New → Blueprint" points at this repo:
+#   1. Fill the sync:false env vars in the Render dashboard (they are secrets —
+#      never committed). Leave blank what you don't use: every vendor is mocked
+#      by default and the app still runs.
+#   2. NEXUSREP_PUBLIC_URL must be the service's own public URL — Tavus calls
+#      back into /api/tavus/llm through it for the compliance-gated replies.
+#   3. Storage: the free tier's disk is EPHEMERAL — a deploy/restart wipes
+#      .nexusrep-data. Attach a paid persistent disk (below, commented) and set
+#      PGLITE_DATA_DIR to the mount path to keep sessions/uploads durable, or
+#      run NEXUSREP_DATA_DRIVER=memory and treat every boot as a fresh demo.
+
+services:
+  - type: web
+    name: nexusrep
+    runtime: node
+    plan: starter # bump if the embedded model (Transformers.js) needs more memory
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/brand
+    # --- persistent PGlite storage (paid plans only; uncomment to enable) ---
+    # disk:
+    #   name: nexusrep-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+      # Durable embedded Postgres. With no disk attached this still works but
+      # resets on every deploy; switch to "memory" if that churn is confusing.
+      - key: NEXUSREP_DATA_DRIVER
+        value: postgres
+      - key: PGLITE_DATA_DIR
+        value: .nexusrep-data # set to /var/data/nexusrep when the disk is enabled
+      # Flip to "tavus" once TAVUS_* secrets are set to enable the live video rep.
+      - key: NEXUSREP_REALTIME_PROVIDER
+        value: mock
+      # ---- secrets: set values in the Render dashboard (sync: false) ----
+      - key: ANTHROPIC_API_KEY # grounded answer composition + classifier (optional)
+        sync: false
+      - key: OPENAI_API_KEY # alternate composer/classifier (optional)
+        sync: false
+      - key: TAVUS_API_KEY # video rep (optional — mock avatar without it)
+        sync: false
+      - key: TAVUS_LLM_KEY # bearer Tavus uses to call back into /api/tavus/llm
+        sync: false
+      - key: NEXUSREP_PUBLIC_URL # https://<this-service>.onrender.com
+        sync: false
+      - key: DOCNEXUS_ADVANCED_SEARCH_URL # live HCP cohort (optional — modeled without it)
+        sync: false
+      - key: DOCNEXUS_ID_TOKEN
+        sync: false

@@ -30,6 +30,12 @@ export class CrmOutbox {
     this.entries = repos.create<OutboxEntry>("crm_outbox");
   }
 
+  /** The configured adapter's name — surfaced in the UI so a mock is labeled as one,
+   *  never masquerading as a specific vendor ("Veeva") that isn't actually connected. */
+  get adapterName(): string {
+    return this.adapter.name;
+  }
+
   /** Enqueue a CRM-ready event. Always starts as "created". */
   async enqueue(
     sessionId: SessionId,

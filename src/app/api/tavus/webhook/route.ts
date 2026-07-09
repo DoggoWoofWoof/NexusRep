@@ -50,8 +50,16 @@ export async function POST(req: Request): Promise<NextResponse> {
     if (url) {
       const c = await getContainer();
       const attached = await c.sessions.attachRecording(convId, url);
-      console.log("[tavus webhook] recording attached:", attached ? attached.id : "no matching session");
+      if (!attached) {
+        // Session lookup failed (e.g. store reset since the call) — say so instead of
+        // claiming success. 200 keeps Tavus from retry-storming; the status is honest.
+        console.error("[tavus webhook] recording_ready for unknown conversation:", convId);
+        return NextResponse.json({ ok: false, attached: false, error: "no matching session for conversation_id" });
+      }
+      return NextResponse.json({ ok: true, attached: true, sessionId: attached.id });
     }
+    console.error("[tavus webhook] recording_ready without a recognizable recording URL");
+    return NextResponse.json({ ok: false, attached: false, error: "no recording url in payload" });
   }
   return NextResponse.json({ ok: true });
 }

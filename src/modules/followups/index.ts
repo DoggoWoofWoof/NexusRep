@@ -30,8 +30,14 @@ export interface FollowUpTask {
 
 export class FollowUpService {
   private readonly tasks: Repository<FollowUpTask>;
-  constructor(repos: RepositoryFactory = new MemoryRepositoryFactory()) {
+  /** Optional per-type owner resolution — wired by the container to the brand user's
+   *  Setup Assistant answers (msl_contact / ae_routing), so the configured contacts
+   *  actually OWN the follow-ups instead of generic labels. */
+  private readonly ownerFor?: (type: FollowUpType) => Promise<string | undefined>;
+
+  constructor(repos: RepositoryFactory = new MemoryRepositoryFactory(), ownerFor?: (type: FollowUpType) => Promise<string | undefined>) {
     this.tasks = repos.create<FollowUpTask>("followups");
+    this.ownerFor = ownerFor;
   }
 
   async create(input: {
@@ -42,11 +48,12 @@ export class FollowUpService {
     dueAt?: string | null;
     seed?: string;
   }): Promise<FollowUpTask> {
+    const configured = input.owner ?? (await this.ownerFor?.(input.type).catch(() => undefined));
     return this.tasks.insert({
       id: newId<"follow_up_task_id">("fu", input.seed) as FollowUpTaskId,
       hcpId: input.hcpId,
       type: input.type,
-      owner: input.owner ?? defaultOwner(input.type),
+      owner: configured ?? defaultOwner(input.type),
       status: "created",
       dueAt: input.dueAt ?? null,
       sourceSessionId: input.sourceSessionId,

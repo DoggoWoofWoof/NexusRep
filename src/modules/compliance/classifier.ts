@@ -30,12 +30,21 @@ const INTENT_TERMS: Record<Exclude<Intent, "off_label" | "adverse_event" | "comp
   trial_data: ["trial", "study", "efficacy", "endpoint", "clinical data", "results"],
   access: ["coverage", "cost", "access", "insurance", "copay", "reimburs"],
   // Publicly-disclosable product facts (mechanism, program, status) — the ONLY
-  // topics an investigational rep answers directly.
+  // topics an investigational rep answers directly. GENERIC terms only; product/
+  // program names come from the brand lexicon (configureClassifierLexicon).
   product_info: [
-    "what is", "mechanism", "how does", "moa", "factor xia", "fxia", "librexia",
+    "what is", "mechanism", "how does", "moa",
     "program", "indication", "investigational", "fast track", "development", "class of drug",
   ],
 };
+
+// Brand lexicon: product/program names contribute to product_info intent WITHOUT living
+// in this generic engine file. The container configures this once from the BrandProfile,
+// so onboarding a new brand never edits the classifier.
+let PRODUCT_TERMS: string[] = [];
+export function configureClassifierLexicon(productTerms: string[]): void {
+  PRODUCT_TERMS = productTerms.map((t) => t.toLowerCase().trim()).filter(Boolean);
+}
 
 function hits(text: string, terms: string[]): number {
   return terms.reduce((n, t) => (text.includes(t) ? n + 1 : n), 0);
@@ -68,7 +77,8 @@ export function classify(input: string): RiskClassification {
   } else {
     let best = 0;
     for (const [name, terms] of Object.entries(INTENT_TERMS)) {
-      const score = hits(text, terms);
+      // Mentioning the product/program by name is a public-info signal (brand lexicon).
+      const score = hits(text, terms) + (name === "product_info" ? hits(text, PRODUCT_TERMS) : 0);
       if (score > best) {
         best = score;
         intent = name as Intent;

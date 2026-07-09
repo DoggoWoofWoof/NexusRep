@@ -6,7 +6,7 @@ import { btnGhost, btnPrimary } from "./NexusRepApp";
 import { SlideView } from "../_components/SlideView";
 import {
   ANALYTICS_KPIS, ANALYTICS_TABS, CRM_CONNECTORS,
-  HCPS, TONE_COLORS, VENDOR_STACK, compStyle, segStyle, type Hcp, type SegTone,
+  HCPS, TONE_COLORS, TRAIN_SEED_KEY, VENDOR_STACK, compStyle, segStyle, type Hcp, type SegTone,
 } from "./data";
 
 const eyebrow: React.CSSProperties = { font: "600 11px/1.2 var(--dn-font-sans)", letterSpacing: ".08em", textTransform: "uppercase", color: "var(--dn-brand-light)", marginBottom: 6 };
@@ -81,9 +81,12 @@ function mapHcp(r: HCPOpportunityScore, i: number): Hcp {
   };
 }
 
-function useAudience(): { rows: Hcp[]; summary: AudienceSummary | null } {
+function useAudience(): { rows: Hcp[]; summary: AudienceSummary | null; live: boolean } {
   const [rows, setRows] = useState<Hcp[]>(HCPS);
   const [summary, setSummary] = useState<AudienceSummary | null>(null);
+  // false → the fixture list is showing (API failed / not yet loaded). Screens surface this
+  // as a "sample data" banner so canned doctors are never mistaken for the real cohort.
+  const [live, setLive] = useState(false);
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -92,19 +95,22 @@ function useAudience(): { rows: Hcp[]; summary: AudienceSummary | null } {
         if (!res.ok) return;
         const json = (await res.json()) as AudienceResponse;
         if (!alive) return;
-        if (json.rows && json.rows.length) setRows(json.rows.map(mapHcp));
+        if (json.rows && json.rows.length) {
+          setRows(json.rows.map(mapHcp));
+          setLive(true);
+        }
         if (json.summary) setSummary(json.summary);
       } catch {
-        /* keep static fallback */
+        /* keep static fallback — labeled as sample data by the caller */
       }
     })();
     return () => { alive = false; };
   }, []);
-  return { rows, summary };
+  return { rows, summary, live };
 }
 
 function Audience({ app }: { app: AppState }) {
-  const { rows: hcps, summary: apiSummary } = useAudience();
+  const { rows: hcps, summary: apiSummary, live } = useAudience();
   const [showAll, setShowAll] = useState(false);
   const visibleHcps = showAll ? hcps : hcps.slice(0, 12);
   // Top-decile = high-volume prescribers for the target indications (D1–D2); a real,
@@ -129,6 +135,11 @@ function Audience({ app }: { app: AppState }) {
         </div>
       </div>
       <p style={{ font: "400 13px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "8px 0 18px", maxWidth: 820 }}>Ranked by opportunity score from HCP-level aggregate claims signals. The table stays concise; click a row for the full rationale, then add selected HCPs to launch.</p>
+      {!live && (
+        <div style={{ display: "flex", alignItems: "center", gap: 9, margin: "0 0 14px", padding: "9px 13px", background: "var(--dn-accent-yellow-bg)", border: "1px solid #fcd34d", borderRadius: 9, font: "500 12px/1.4 var(--dn-font-sans)", color: "#92400e" }}>
+          ⚠ Showing sample doctors — the live claims cohort hasn&apos;t loaded. These rows are illustrative, not your targeting data.
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 18 }}>
         {summary.map((t) => (
           <div key={t.label} style={{ ...card, padding: "14px 15px" }}>
@@ -145,7 +156,7 @@ function Audience({ app }: { app: AppState }) {
         {visibleHcps.map((h) => {
           const added = app.activation.includes(h.id);
           return (
-            <div key={h.id} onClick={() => app.setDrawerId(h.id)} style={{ display: "grid", gridTemplateColumns: "36px 1.6fr 1.2fr 0.6fr 1.1fr 0.9fr 1.4fr 92px", padding: "13px 18px", borderBottom: "1px solid var(--dn-surface-2)", alignItems: "center", ...cell, cursor: "pointer" }}>
+            <div key={h.id} data-testid="audience-row" onClick={() => app.setDrawerId(h.id)} style={{ display: "grid", gridTemplateColumns: "36px 1.6fr 1.2fr 0.6fr 1.1fr 0.9fr 1.4fr 92px", padding: "13px 18px", borderBottom: "1px solid var(--dn-surface-2)", alignItems: "center", ...cell, cursor: "pointer" }}>
               <span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{h.rank}</span>
               <span style={{ fontWeight: 600 }}>{h.name}</span>
               <span style={{ color: "var(--dn-fg-muted)" }}>{h.specialty}</span>
@@ -175,11 +186,11 @@ function HcpDrawer({ app, hcp }: { app: AppState; hcp: Hcp }) {
   return (
     <>
       <div onClick={() => app.setDrawerId(null)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 40 }} />
-      <aside style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 444, maxWidth: "92vw", background: "#fff", zIndex: 41, boxShadow: "-12px 0 40px rgba(15,23,42,.18)", display: "flex", flexDirection: "column" }}>
+      <aside data-testid="hcp-drawer" style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 444, maxWidth: "92vw", background: "#fff", zIndex: 41, boxShadow: "-12px 0 40px rgba(15,23,42,.18)", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px 22px", borderBottom: "1px solid var(--dn-border)", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
           <div>
             <div style={{ font: "600 10.5px/1 var(--dn-font-sans)", letterSpacing: ".06em", textTransform: "uppercase", color: "var(--dn-brand-light)", marginBottom: 7 }}>HCP Profile</div>
-            <div style={{ font: "600 19px/1.2 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{hcp.name}</div>
+            <div data-testid="hcp-drawer-name" style={{ font: "600 19px/1.2 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{hcp.name}</div>
             <div style={{ font: "400 12.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginTop: 3 }}>{hcp.specialty} · {hcp.institution}</div>
           </div>
           <button onClick={() => app.setDrawerId(null)} style={{ background: "var(--dn-surface-2)", border: "1px solid var(--dn-border)", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16, color: "var(--dn-fg-muted)", lineHeight: 1 }}>×</button>
@@ -226,16 +237,38 @@ function HcpDrawer({ app, hcp }: { app: AppState; hcp: Hcp }) {
 /* ===================== LAUNCH ===================== */
 function Launch({ app }: { app: AppState }) {
   const [confirm, setConfirm] = useState(false);
-  const [launched, setLaunched] = useState(false);
+  // Launch state is PERSISTED server-side (survives navigation + restarts) — not local UI state.
+  const [activation, setActivation] = useState<{ hcpIds: string[]; launchedAt: string | null } | null>(null);
+  const [launchErr, setLaunchErr] = useState("");
+  const launched = Boolean(activation?.launchedAt);
   const { rows: hcps } = useAudience();
-  const rows = hcps.filter((h) => app.activation.includes(h.id));
+  const listIds = launched && activation ? activation.hcpIds : app.activation;
+  const rows = hcps.filter((h) => listIds.includes(h.id));
   // Real readiness from the Studio (not hardcoded): whether the rep is trained + approved.
   const [repReady, setRepReady] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
-    fetch("/api/studio").then((r) => (r.ok ? r.json() : null)).then((d: { readiness?: { canLaunch?: boolean } } | null) => { if (alive) setRepReady(d?.readiness?.canLaunch ?? null); }).catch(() => {});
+    fetch("/api/studio").then((r) => (r.ok ? r.json() : null)).then((d: { readiness?: { canLaunch?: boolean }; activation?: { hcpIds: string[]; launchedAt: string | null } | null } | null) => {
+      if (!alive) return;
+      setRepReady(d?.readiness?.canLaunch ?? null);
+      if (d?.activation) setActivation(d.activation);
+    }).catch(() => {});
     return () => { alive = false; };
   }, []);
+  // The actual per-doctor invite: the shareable doctor link carrying the HCP's identity.
+  const inviteLink = (id: string) => `${typeof window !== "undefined" ? window.location.origin : ""}/hcp?hcp=${encodeURIComponent(id)}`;
+  const sendInvites = async () => {
+    setConfirm(false);
+    setLaunchErr("");
+    try {
+      const res = await fetch("/api/studio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "launch", hcpIds: app.activation }) });
+      const d = (await res.json().catch(() => null)) as { activation?: { hcpIds: string[]; launchedAt: string | null } | null; error?: string } | null;
+      if (res.ok && d?.activation?.launchedAt) setActivation(d.activation);
+      else setLaunchErr(d?.error ?? "Launch failed — check the rep is approved and the HCPs are in the cohort.");
+    } catch {
+      setLaunchErr("Launch failed — server unreachable.");
+    }
+  };
   const hasAudience = app.activation.length > 0;
   const readiness = [
     { label: "Approved knowledge", value: "Ready", color: "var(--dn-success)", ok: true },
@@ -258,7 +291,11 @@ function Launch({ app }: { app: AppState }) {
           </div>
           {rows.map((a) => (
             <div key={a.id} style={{ display: "grid", gridTemplateColumns: "1.5fr 1.3fr 1.5fr 84px", padding: "13px 18px", borderBottom: "1px solid var(--dn-surface-2)", alignItems: "center", ...cell }}>
-              <span style={{ fontWeight: 600 }}>{a.name}</span>
+              <span style={{ fontWeight: 600 }}>{a.name}
+                {launched && (
+                  <span onClick={() => { void navigator.clipboard?.writeText(inviteLink(a.id)).catch(() => {}); }} title={inviteLink(a.id)} style={{ display: "block", font: "500 10px/1.4 var(--dn-font-mono)", color: "var(--dn-brand-light)", cursor: "pointer", marginTop: 3 }}>⧉ copy invite link</span>
+                )}
+              </span>
               <span style={{ color: "var(--dn-fg-muted)" }}>{a.decile} · {a.segment}</span>
               <span style={{ color: "var(--dn-fg-muted)" }}>{a.topic}</span>
               <span><span style={segStyle(launched ? "green" : "yellow")}>{launched ? "Invited" : "Ready"}</span></span>
@@ -279,9 +316,10 @@ function Launch({ app }: { app: AppState }) {
           </div>
           <div style={{ ...card, padding: "18px 20px" }}>
             <div style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)", marginBottom: 13 }}>Send</div>
-            <button onClick={() => app.activation.length && setConfirm(true)} style={{ ...btnPrimary, width: "100%", padding: 12, opacity: app.activation.length ? 1 : 0.5 }}>{launched ? "Invites sent ✓" : `Launch ${app.activation.length} invitations`}</button>
-            <button onClick={() => app.setMode("hcp")} style={{ width: "100%", marginTop: 9, padding: 11, background: "#fff", color: "var(--dn-brand-base)", border: "1px solid var(--dn-border)", borderRadius: 9, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Preview HCP experience ↗</button>
-            {launched && <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 13, padding: "11px 13px", background: "var(--dn-accent-green-bg)", borderRadius: 9 }}><span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: "50%", background: "#166534", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>✓</span><span style={{ font: "500 11.5px/1.4 var(--dn-font-sans)", color: "#166534" }}>Invites sent. Track responses in <strong style={{ cursor: "pointer" }} onClick={() => app.setNav("sessions")}>Sessions</strong>.</span></div>}
+            <button onClick={() => !launched && app.activation.length && setConfirm(true)} disabled={launched} style={{ ...btnPrimary, width: "100%", padding: 12, opacity: launched || app.activation.length ? 1 : 0.5, background: launched ? "var(--dn-success)" : "var(--dn-brand-base)", cursor: launched ? "default" : "pointer" }}>{launched ? `Launched ✓ · ${activation?.hcpIds.length} invite links live` : `Launch ${app.activation.length} invitations`}</button>
+            <button onClick={() => app.setMode("hcp")} style={{ width: "100%", marginTop: 9, padding: 11, background: "#fff", color: "var(--dn-brand-base)", border: "1px solid var(--dn-border)", borderRadius: 9, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Preview doctor view ↗</button>
+            {launchErr && <div style={{ marginTop: 11, padding: "9px 12px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, font: "500 11.5px/1.4 var(--dn-font-sans)", color: "#991b1b" }}>{launchErr}</div>}
+            {launched && <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 13, padding: "11px 13px", background: "var(--dn-accent-green-bg)", borderRadius: 9 }}><span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: "50%", background: "#166534", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>✓</span><span style={{ font: "500 11.5px/1.4 var(--dn-font-sans)", color: "#166534" }}>Each doctor&apos;s personal link is live — copy it from the list. Track responses in <strong style={{ cursor: "pointer" }} onClick={() => app.setNav("sessions")}>Sessions</strong>.</span></div>}
           </div>
         </div>
       </div>
@@ -289,9 +327,9 @@ function Launch({ app }: { app: AppState }) {
         <div onClick={() => setConfirm(false)} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.5)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400, width: "100%", background: "#fff", borderRadius: 16, boxShadow: "var(--dn-shadow-dark)", padding: "26px 26px 22px" }}>
             <div style={{ font: "600 17px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", marginBottom: 8 }}>Launch {app.activation.length} invitations?</div>
-            <div style={{ font: "400 12.5px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginBottom: 20 }}>Secure portal invites will be sent to the {app.activation.length} HCPs on your activation list. Each invite opens the disclosed AI rep session.</div>
+            <div style={{ font: "400 12.5px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginBottom: 20 }}>This activates a personal, shareable AI-rep link for each of the {app.activation.length} HCPs on your activation list (sessions attribute to that doctor). Email delivery isn&apos;t connected yet — copy each link from the list to send it.</div>
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => { setLaunched(true); setConfirm(false); }} style={{ ...btnPrimary, flex: 1, padding: 11 }}>Send invites</button>
+              <button onClick={() => void sendInvites()} style={{ ...btnPrimary, flex: 1, padding: 11 }}>Activate invite links</button>
               <button onClick={() => setConfirm(false)} style={{ ...btnGhost, padding: "11px 18px" }}>Cancel</button>
             </div>
           </div>
@@ -453,7 +491,6 @@ type SessionDetailData = {
   audit: { seq: number; type: string; payload: Record<string, unknown> }[];
   hasTurnDetail: boolean;
 };
-const COMP_TONE: Record<string, SegTone | "red"> = { approved: "green", needs_review: "yellow", ae_routed: "pink", blocked_escalated: "red" };
 const COMP_LABEL: Record<string, string> = { approved: "Approved", needs_review: "Needs review", ae_routed: "AE routed", blocked_escalated: "Blocked + escalated" };
 const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 const TRACE = ["Input (text / ASR)", "Intent + risk classifier", "Policy router", "Approved retrieval + source validation", "Response builder / grounding", "Final compliance gate", "Output + audit + follow-up"];
@@ -630,7 +667,33 @@ function SessionDetail({ app }: { app: AppState }) {
           </div>
           {/* 3 · turn evidence for the playing / selected line */}
           <div style={{ ...card, padding: "14px 16px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginBottom: 2 }}>Turn evidence</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 2 }}>
+              <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)" }}>Turn evidence</span>
+              {(() => {
+                // "Coach this exchange": jump to Training with the doctor's question from THIS
+                // exchange pre-asked, so the reviewer coaches the exact line that needed work.
+                // Before the first HCP line (e.g. the greeting), fall back to the session's
+                // first doctor question — still a real line from this conversation.
+                const idx = turns.indexOf(activeTurn);
+                let q = "";
+                for (let j = idx; j >= 0; j--) if (turns[j]!.speaker === "hcp") { q = turns[j]!.text; break; }
+                if (!q) q = turns.find((t) => t.speaker === "hcp")?.text ?? "";
+                if (!q) return null;
+                return (
+                  <span
+                    data-testid="coach-exchange"
+                    onClick={() => {
+                      try { window.localStorage.setItem(TRAIN_SEED_KEY, JSON.stringify({ q, from: app.selectedSessionId })); } catch { /* storage disabled — Train still opens */ }
+                      app.setStudioMode("train");
+                      app.setNav("studio");
+                    }}
+                    style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer", whiteSpace: "nowrap" }}
+                  >
+                    ✎ Coach this exchange →
+                  </span>
+                );
+              })()}
+            </div>
             <div style={{ font: "400 11px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 10 }}>{activeTurn.speaker === "hcp" ? "HCP" : "AI rep"} line at {mmss(Math.round(offsetOf(activeTurn)))}.</div>
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
               {([["Speaker", activeTurn.speaker === "hcp" ? "HCP" : "AI rep"], ["Said", activeTurn.text], ["Approved sources", activeTurn.sourceIds.length ? activeTurn.sourceIds.join(", ") : "None — routed / refused"], ["Compliance", COMP_LABEL[s.complianceStatus] ?? s.complianceStatus]] as [string, string][]).map(([l, v]) => (
@@ -777,7 +840,30 @@ function statusBadge(s: string): React.CSSProperties {
 }
 
 /* ===================== ADMIN ===================== */
+interface IntegrationsSnap {
+  seats: { role: string; vendor: string; status: "connected" | "simulated" | "not_configured"; detail?: string }[];
+  classifiers: { name: string; available: boolean }[];
+  crm: { name: string; status: "connected" | "simulated" | "not_configured"; active: boolean; detail?: string }[];
+}
+
+const INTEGRATION_BADGE: Record<string, { label: string; bg: string; color: string }> = {
+  connected: { label: "Connected", bg: "var(--dn-accent-green-bg)", color: "#166534" },
+  simulated: { label: "Simulated", bg: "var(--dn-accent-yellow-bg)", color: "#92400e" },
+  not_configured: { label: "Not connected", bg: "var(--dn-surface-2)", color: "var(--dn-fg-muted)" },
+};
+
 function Admin() {
+  // REAL integration status from the container (mock → "Simulated", missing key →
+  // "Not connected") — never hardcoded "Connected" badges.
+  const [integrations, setIntegrations] = useState<IntegrationsSnap | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/integrations")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: IntegrationsSnap | null) => { if (alive && d) setIntegrations(d); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
   return (
     <div style={{ padding: "24px 30px 40px", maxWidth: 1100 }}>
       <div style={{ display: "inline-flex", alignItems: "center", gap: 8, font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".08em", textTransform: "uppercase", color: "#fff", background: "#475569", padding: "5px 10px", borderRadius: 6, marginBottom: 12 }}>Internal · Platform Admin</div>
@@ -789,33 +875,36 @@ function Admin() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div style={{ ...card, padding: "20px 22px" }}>
-          <div style={{ font: "600 13px/1 var(--dn-font-sans)", color: "var(--dn-fg)", marginBottom: 16, paddingBottom: 12, borderBottom: "1px solid var(--dn-border)" }}>AI vendor stack</div>
-          {VENDOR_STACK.map((v) => (
-            <div key={v.role} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: "1px solid var(--dn-surface-2)" }}>
-              <div><div style={{ font: "600 12.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{v.role}</div><div style={{ font: "400 11px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 2 }}>{v.vendor}</div></div>
-              <span style={{ font: "600 10.5px/1 var(--dn-font-sans)", padding: "5px 10px", borderRadius: 20, background: "var(--dn-accent-green-bg)", color: "#166534" }}>Connected</span>
+          <div style={{ font: "600 13px/1 var(--dn-font-sans)", color: "var(--dn-fg)", marginBottom: 16, paddingBottom: 12, borderBottom: "1px solid var(--dn-border)" }}>AI vendor stack · live status</div>
+          {(integrations?.seats ?? VENDOR_STACK.map((v) => ({ ...v, status: "not_configured" as const, detail: "Loading status…" }))).map((v) => {
+            const b = INTEGRATION_BADGE[v.status] ?? INTEGRATION_BADGE.not_configured!;
+            return (
+              <div key={v.role} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: "1px solid var(--dn-surface-2)" }}>
+                <div><div style={{ font: "600 12.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{v.role}</div><div style={{ font: "400 11px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 2 }}>{v.vendor}{"detail" in v && v.detail ? ` — ${v.detail}` : ""}</div></div>
+                <span style={{ font: "600 10.5px/1 var(--dn-font-sans)", padding: "5px 10px", borderRadius: 20, background: b.bg, color: b.color, whiteSpace: "nowrap" }}>{b.label}</span>
+              </div>
+            );
+          })}
+          {integrations && (
+            <div style={{ marginTop: 12, font: "400 11px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
+              LLM classifiers: {integrations.classifiers.map((cl) => `${cl.name}${cl.available ? " ✓" : " (no key)"}`).join(" · ")}
             </div>
-          ))}
+          )}
         </div>
         <div style={{ ...card, padding: "20px 22px" }}>
-          <div style={{ font: "600 13px/1 var(--dn-font-sans)", color: "var(--dn-fg)", marginBottom: 16, paddingBottom: 12, borderBottom: "1px solid var(--dn-border)" }}>CRM &amp; export connectors</div>
-          {CRM_CONNECTORS.map((c, i) => (
-            <div key={c} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: "1px solid var(--dn-surface-2)" }}>
-              <div style={{ font: "600 12.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{c}</div>
-              <Toggle on={i === 0} />
-            </div>
-          ))}
+          <div style={{ font: "600 13px/1 var(--dn-font-sans)", color: "var(--dn-fg)", marginBottom: 16, paddingBottom: 12, borderBottom: "1px solid var(--dn-border)" }}>CRM &amp; export connectors · live status</div>
+          {(integrations?.crm ?? CRM_CONNECTORS.map((c) => ({ name: c, status: "not_configured" as const, active: false }))).map((c) => {
+            const b = INTEGRATION_BADGE[c.status] ?? INTEGRATION_BADGE.not_configured!;
+            return (
+              <div key={c.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: "1px solid var(--dn-surface-2)" }}>
+                <div><div style={{ font: "600 12.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{c.name}</div>{"detail" in c && c.detail ? <div style={{ font: "400 11px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 2 }}>{c.detail}</div> : null}</div>
+                <span style={{ font: "600 10.5px/1 var(--dn-font-sans)", padding: "5px 10px", borderRadius: 20, background: b.bg, color: b.color, whiteSpace: "nowrap" }}>{b.label}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
   );
 }
 
-function Toggle({ on }: { on: boolean }) {
-  const [v, setV] = useState(on);
-  return (
-    <span onClick={() => setV((x) => !x)} style={{ width: 38, height: 22, borderRadius: 11, background: v ? "var(--dn-brand-base)" : "var(--dn-border-strong)", position: "relative", cursor: "pointer", transition: "background .2s", flexShrink: 0 }}>
-      <span style={{ position: "absolute", top: 2, left: v ? 18 : 2, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left .2s" }} />
-    </span>
-  );
-}

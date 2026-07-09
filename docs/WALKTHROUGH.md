@@ -26,10 +26,134 @@ behind them. Implemented stage-by-stage with review gates.
 | 9 — Analytics console | ✅ done | Live aggregation across sessions/follow-ups/content/targeting |
 | 10 — Integration + hardening, demo + handover | ✅ done | Brand generalization (any brand = a `BrandProfile`, no code edits) + self-serve setup/upload, humanlike conversation, clean demo recording, full E2E (functional + visual) green end-to-end |
 
-**Test status:** `typecheck` clean · **176 unit/integration tests** pass (1 guarded live test skipped) ·
-**17 Playwright E2E pass** (14 functional lifecycle + 3 visual) with the deterministic Playwright server.
+**Test status:** `typecheck` clean · **189 unit/integration tests** pass (1 guarded live test skipped) ·
+**20 Playwright E2E pass** (17 functional incl. the blank-slate self-serve journey + 3 visual).
 
-### Latest — Guided overview training + ISI cadence (2026-07-09)
+### Latest — Upload-driven setup + Brand-pitch training UX + session→coach handoff (2026-07-10)
+
+- **Upload a document → setup fills itself.** `POST /api/content/ingest` now also infers setup
+  answers from the uploaded text (`inferSetupAnswersFromDocument` in `setupAssistant`): brand,
+  indication, therapeutic area, sponsor, tagline, talking points, hotwords, try-questions. LLM
+  extraction (strict JSON, sanitized, 300-char caps) with a deterministic offline fallback for the
+  brand name; **fills blank fields only — never overwrites a user's answer**. The Build chat footer
+  gained a **“📎 Autofill from a document”** chip, and the upload result names exactly which fields
+  were filled. Unit-tested (`tests/setup-autofill.test.ts`, 6 tests) + live-verified.
+- **“Guided overview” is now the “Brand pitch”, and it's explained.** The Train sidebar card says
+  what it is (drafted by DocNexus from your approved deck; the rep opens doctor conversations with
+  it slide-by-slide), shows the sections as a readable list (title + anchored slide) instead of
+  anonymous numbered squares, autosaves edits (no redundant Save button), and has **▶ Rehearse**
+  right on the card — running the pitch in the coaching thread. All status copy renamed to match.
+- **Session review → “✎ Coach this exchange”.** The Turn-evidence panel in a session review can now
+  send the exact doctor question to Training (one-shot localStorage seed), which auto-asks it so you
+  coach the very line that needed work. E2E-covered in `nexusrep.spec.ts`.
+- **Bug fixed: text/voice sessions were invisible in Sessions.** The list API filtered to
+  `recordingUrl` only; it now lists any session with real turns OR a recording (same rule as the
+  detail view) — restoring the “improve from sessions” loop for non-video conversations.
+- ESLint autofill instrumentation: setup-autofill failures now log a server-side warn/error instead
+  of failing silently.
+
+### Perfection pass: honest Admin, wired preview-identity, hardened e2e (2026-07-10)
+
+- **Platform Admin shows LIVE integration status** via new `GET /api/integrations` — every vendor
+  seat reports what the container actually resolved (Tavus **Connected**; voice/retrieval/composer/
+  audience/CRM honestly **Simulated**; per-classifier key availability). The hardcoded "Connected"
+  badges and the fake CRM toggles are gone.
+- **Audience → "Preview AI rep" now runs the doctor view AS that doctor** — `sessionHcpId` existed
+  but nothing consumed it (identity silently defaulted); it now feeds the same validated invite-
+  identity mechanism, so preview sessions/follow-ups attribute to the previewed doctor (e2e-proven
+  via follow-up attribution).
+- **`reachableLlm` is now an active probe** of the public URL (a dead trycloudflare tunnel
+  previously reported reachable → replica greeted then went silent with no explanation; the note
+  now says exactly what to fix).
+- **Train rehearsal failure is honest**: no more canned fixture answer when the preview service is
+  unreachable (it was themed to the seeded brand — wrong after a re-brand).
+- **E2E hardened**: state-MUTATING tests (re-brand by chat) moved to a dependent `mutating`
+  Playwright project that runs AFTER the parallel suite (a rename window mid-run corrupted the /hcp
+  visual snapshot); attribution test added; stable testids for audience rows/drawer/review queue.
+- DEPLOY.md env-name fix (`NEXUSREP_REALTIME_PROVIDER`); dead-code cleanup (unused Toggle/fixtures).
+- **Final state: 189 unit/integration + 21 e2e green** (1 guarded live test + 1 GPU test skipped).
+
+### Live Tavus verification (real key) + first-call timeout fix (2026-07-10)
+
+Verified the Tavus path against the REAL Tavus API (one conversation, ended immediately):
+
+- **Conversation create works** with the invite identity (`hcpId` honored → session attributed to the
+  real cohort doctor); the per-call session logs the greeting server-side.
+- **The reply flow Tavus performs** (same OpenAI request shape + `TAVUS_LLM_KEY` Bearer against
+  `/api/tavus/llm`) returns the gated approved answer AND logs both turns authoritatively — the rep
+  turn carries its `detailAidSlideId` (`slide_moa`), so the replay slide-sync works for spoken calls.
+- **Persona reuse confirmed**: stable per-brand personas, zero per-session "pal" spam being created.
+- **Bug found live + fixed**: the adapter's 8s API timeout made the FIRST video call of a session
+  fail (`configured:false`; persona create/patch + conversation create exceed 8s cold) and succeed
+  only on retry → default timeout now 15s (`vendors/tavus.ts`).
+- Only untested piece: Tavus's servers reaching the tunnel (the `.env.local` trycloudflare URL is
+  dead; opening a new public tunnel needs the operator — start `cloudflared`, update
+  `NEXUSREP_PUBLIC_URL`, restart, then join a call from `/hcp`).
+
+### Blank-slate self-serve journey closed + e2e-proven (2026-07-10)
+
+Everything is now doable from the chat + UI alone, and it's covered by `e2e/self-serve.spec.ts`:
+
+- **Uploads can be APPROVED in the UI.** The Approved-knowledge section gained an MLR review queue
+  (Approve/Reject per parsed passage → `/api/mlr`) — previously the pending count displayed but the
+  only way to activate an upload was the raw API. Upload → review → live knowledge is self-serve.
+- **Approved uploads render as REAL slides.** `/api/brand` now merges the authored profile deck with
+  LIVE approved content (`mergeLiveDeck`; bullets from the approved text) — so a brand configured
+  purely by chat + upload gets the same rich on-screen deck the seeded demo has, and the rep's slide
+  cues focus the uploaded slide in the doctor view. (Previously SlideView could only ever show the
+  static profile deck — uploaded slides were undisplayable.)
+- **Setup chat de-cluttered:** eight essentials first, then five optional polish questions
+  (sponsor, tagline, voice tone, sample questions, hotwords) labeled `optional` with a **Skip →**
+  chip; "Decide for me" still fast-forwards everything.
+- **Real bug found by the new e2e and fixed:** ingest was stamping the chat's *target-audience
+  phrase* ("decile 2–4 whitespace cohort") as the upload's MLR **audience** label, so retrieval
+  (querying with the stable clinical audience) rejected every upload as `audience_mismatch` the
+  moment someone answered the audience question. Ingest now stamps the brand's stable clinical
+  context — targeting preferences can never break content retrieval. Also: bare "approved" no longer
+  over-matches the `status` topic at ingest.
+- **E2E (`self-serve.spec.ts`):** re-brand by chat → doctor view re-themes (then restores); optional
+  questions labeled + skippable; upload a .txt through the real file input → approve both passages in
+  the review queue → doctor asks about the new content → rep answers from it verbatim + the uploaded
+  slide appears in the deck. Note the suite also confirmed fail-safe classification: an
+  unrecognized-intent question correctly falls back instead of answering.
+
+A three-agent audit (UI / modules / API) found ~40 issues; all fixed in six batches (all live-verified):
+
+- **Real HCP identity end-to-end.** Launch now activates a personal `/hcp?hcp=<cohort id>` link per
+  doctor (persisted server-side via `StudioService.launch` + `action:"launch"`); every conversation
+  route resolves identity through ONE shared helper (`src/lib/resolve-session.ts`) that validates the
+  id against the claims cohort — sessions/follow-ups now show the real doctor (verified: Dr. HANI
+  DOUEDI from the DocNexus cohort), never always "Dr. A. Sharma". Sessions keep the identity they
+  started with (no re-attribution).
+- **Live CRM delivery.** Escalations now enqueue AND attempt delivery through the outbox
+  (`ConversationService` + `npiFor` from the cohort). Statuses are truthful ("Sent"/"Needs mapping",
+  not stuck "Created"), and the Follow-ups target label reflects the ACTUAL adapter ("CRM
+  (simulated)" for the mock — never "Veeva" when Veeva isn't connected).
+- **Engine fully de-branded.** New `BrandProfile.lexicon` (productTerms + topicSynonyms); classifier,
+  retrieval re-rank, overview detection, and ingest topic inference consume it via
+  `configureClassifierLexicon`/`configureRetrievalLexicon`/params. Zero brand tokens remain in engine
+  code (grep-verified). Demo HCP id + MLR expiry are env-driven (`NEXUSREP_DEMO_HCP_ID`,
+  `NEXUSREP_MLR_EXPIRES_AT`, default +18mo). Compliance tunables are env-configurable
+  (`NEXUSREP_RISK_THRESHOLD`, `NEXUSREP_GROUNDING_MIN_COVERAGE`, `NEXUSREP_COMPOSER_MAX_TOKENS`).
+- **Setup answers now DRIVE behavior.** `blocked_topics` → active, enforceable guardrails (verified:
+  "pricing" question reroutes to Medical Information); `msl_contact`/`ae_routing` → follow-up owners;
+  `voice_style` → persona; new chatable keys consumed by `resolveBrandProfile`: sponsor, tagline,
+  try_questions, hotwords (hotwords also extend the lexicon). All added to the Setup chat script.
+- **Concurrency + dedup bugs.** `appendTurn`/`recordOutcome` serialized per session (parallel turns
+  can't drop); `sameRule` scoped by HCP (two doctors' identical coaching = two rules); Tavus persona
+  cache is per-brand; active-call supersede is logged; `newId("")` no longer collides; Train
+  localStorage is brand-keyed (v2) so a brand switch can't rehydrate a stale thread.
+- **Honest UI.** "Needs attention" is computed (readiness gaps + pending rules + CRM mapping);
+  Overview KPIs + audience fixtures carry a "sample data" banner when the API didn't load;
+  "Sessions needing coaching" lists REAL flagged sessions; the Source library renders the live
+  content module; specialty options come from the live cohort and persist; selects show "Saved ✓";
+  Launch copy says exactly what happens (links activate; email delivery not connected).
+- **Validation + unification.** One shared `isiAlreadyDelivered` detector (3 routes);
+  overview-plan feedback warns when a named slide can't be matched (never silently keeps the old
+  anchor without telling you); upload capped ~10MB pre-decode; turn text capped 2000 chars; coaching
+  notes capped 12×300; utterance dedup uses a 6-turn window; webhook reports attach failures;
+  presentation metrics record real latency (was 0).
+- **+11 regression tests** (`tests/audit-fixes.test.ts`) covering all of the above · 189 total green.
 
 Fixed the robotic ISI repetition in rehearsal and made guided deck walkthroughs trainable:
 

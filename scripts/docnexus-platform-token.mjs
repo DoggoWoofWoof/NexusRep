@@ -227,7 +227,7 @@ async function printDebugState(page, requests) {
   console.error("Recent relevant requests:", JSON.stringify(requests, null, 2));
 }
 
-async function hasLoginField(page) {
+async function _hasLoginField(page) {
   return Boolean(await firstVisible(page, ["input[type='email']", "input[name='email']", "input[name='username']"], 1000));
 }
 

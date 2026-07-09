@@ -30,10 +30,11 @@ export async function POST(req: Request): Promise<NextResponse> {
   const session = await c.sessions.get(sessionId);
   if (!session) return NextResponse.json({ error: "unknown session" }, { status: 404 });
 
-  // Idempotency: skip an exact repeat of the last turn by the same speaker — Tavus
-  // can re-emit an utterance, and we never want a doubled transcript line.
-  const last = session.turns[session.turns.length - 1];
-  if (last && last.speaker === speaker && last.text.trim() === text) {
+  // Idempotency: skip an exact repeat by the same speaker within the RECENT window — Tavus
+  // can re-emit an utterance even after an interleaved turn (a last-turn-only check missed
+  // that), and we never want a doubled transcript line.
+  const recent = session.turns.slice(-6);
+  if (recent.some((t) => t.speaker === speaker && t.text.trim() === text)) {
     return NextResponse.json({ ok: true, deduped: true });
   }
 

@@ -49,10 +49,14 @@ export interface IngestResult {
   safety: SafetyStatement[];
 }
 
+// GENERIC clinical topic terms only. Brand vocabulary (trial names, target pathway…)
+// arrives via `topicHints` from the BrandProfile lexicon — this engine file stays brand-free.
 const TOPIC_TERMS: { topic: string; terms: RegExp }[] = [
-  { topic: "mechanism", terms: /mechanism|mode of action|\bmoa\b|factor\s*xia|\bfxia\b|inhibitor|target/i },
-  { topic: "program", terms: /program|phase\s*[123]|librexia|pipeline|under study|indications? under/i },
-  { topic: "status", terms: /fda|approved|not approved|investigational|fast track|regulatory|designation/i },
+  { topic: "mechanism", terms: /mechanism|mode of action|\bmoa\b|inhibitor|target/i },
+  { topic: "program", terms: /program|phase\s*[123]|pipeline|under study|indications? under/i },
+  // "approved" alone would match nearly every compliant sentence ("per the approved
+  // guidance") — require the regulatory phrasing, not the bare word.
+  { topic: "status", terms: /fda|fda[- ]approved|not approved|investigational|fast track|regulatory|designation/i },
   { topic: "indication", terms: /indication|atrial fibrillation|acute coronary|acs|ischemic stroke|secondary prevention/i },
   { topic: "dosing", terms: /dos|titrat|mg|once daily|maintenance/i },
   { topic: "safety", terms: /safety|bleed|contraindicat|warning|hypersensitiv|adverse|risk|isi|important safety/i },
@@ -61,7 +65,15 @@ const TOPIC_TERMS: { topic: string; terms: RegExp }[] = [
   { topic: "access", terms: /coverage|access|cost|prior auth|reimburs/i },
 ];
 
-function inferTopic(text: string): string {
+/** Brand topic hints (BrandProfile.lexicon.topicSynonyms): topic → words that mark it. */
+export type TopicHints = Record<string, string[]>;
+
+function inferTopic(text: string, hints?: TopicHints): string {
+  // Brand hints win first — the brand knows its own vocabulary better than the generic list.
+  const lower = text.toLowerCase();
+  for (const [topic, words] of Object.entries(hints ?? {})) {
+    if (words.some((w) => w && lower.includes(w.toLowerCase()))) return topic;
+  }
   return TOPIC_TERMS.find((t) => t.terms.test(text))?.topic ?? "other";
 }
 
@@ -141,7 +153,7 @@ export function parseBlocks(text: string): string[] {
  * deterministic for tests/seeding. ISI sources become verbatim SafetyStatements;
  * all other kinds become ApprovedAnswers with a detail-aid slide each.
  */
-export function ingestSource(raw: RawSource, idPrefix: string): IngestResult {
+export function ingestSource(raw: RawSource, idPrefix: string, opts?: { topicHints?: TopicHints }): IngestResult {
   const assetId = asId<"content_asset_id">(`${idPrefix}_asset`) as ContentAssetId;
   const asset: ContentAsset = {
     id: assetId,
@@ -171,7 +183,7 @@ export function ingestSource(raw: RawSource, idPrefix: string): IngestResult {
       return;
     }
     const slideId = asId<"detail_aid_slide_id">(`${idPrefix}_slide_${i}`) as DetailAidSlideId;
-    const topic = inferTopic(text);
+    const topic = inferTopic(text, opts?.topicHints);
     const slideTitle = inferSlideTitle(text, raw.title, i);
     slides.push({ id: slideId, contentAssetId: assetId, title: slideTitle, label: `${titleCase(topic.replace(/_/g, " "))} · Slide ${i + 1} / ${blocks.length}`, position: i + 1 });
     answers.push({

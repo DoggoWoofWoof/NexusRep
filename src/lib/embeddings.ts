@@ -116,3 +116,13 @@ export function getEmbeddingProvider(): EmbeddingProvider {
   if (mode === "neural") return neuralProvider;
   return autoProvider;
 }
+
+/** What the auto provider actually resolved to at runtime ("unknown" until the first embed).
+ *  Surfaced on the integrations screen so retrieval is labeled by what it truly runs on. */
+export function getEmbeddingMode(): "neural" | "lexical" | "unknown" {
+  if (process.env.VITEST || process.env.NODE_ENV === "test") return "lexical";
+  const mode = process.env.NEXUSREP_EMBEDDINGS;
+  if (mode === "lexical") return "lexical";
+  if (mode === "neural") return "neural";
+  return autoMode;
+}

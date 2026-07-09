@@ -13,6 +13,7 @@ import { MemoryRepositoryFactory, type Entity, type Repository, type RepositoryF
 import type { AiRepId, BrandId, CampaignId, PersonaId, RuleId } from "@lib/ids";
 import { asId, newId } from "@lib/ids";
 import { applyAnswer, emptyDraft, type SectionKey, type SectionStatus, type SetupDraft } from "@modules/setupAssistant";
+import type { PresentationPlan } from "@modules/content";
 import { generateRule, type GenerateRuleInput, type RuleScope, type RuleStatus, type RuleType, type TrainingRule } from "@modules/rules";
 import { readiness, type AIRep, type AIRepPersona, type ReadinessItem, type RepState } from "./index";
 
@@ -22,6 +23,10 @@ export interface StudioState extends Entity {
   rep: AIRep;
   draft: SetupDraft;
   rules: TrainingRule[];
+  /** Launch state: which HCPs were invited + when (undefined until first launch). */
+  activation?: { hcpIds: string[]; launchedAt: string | null };
+  /** Trainable guided-overview script: section order + approved slide references. */
+  guidedOverview: PresentationPlan;
 }
 
 export interface StudioSnapshot extends StudioState {
@@ -42,7 +47,27 @@ function readinessItems(state: StudioState): ReadinessItem[] {
 
 function snapshot(state: StudioState): StudioSnapshot {
   const items = readinessItems(state);
-  return { ...state, readiness: { ...readiness(items), items } };
+  return { ...state, guidedOverview: state.guidedOverview ?? { steps: [], updatedAt: new Date().toISOString() }, readiness: { ...readiness(items), items } };
+}
+
+function cleanPlan(plan: PresentationPlan): PresentationPlan {
+  const seen = new Set<string>();
+  const steps = plan.steps
+    .slice(0, 12)
+    .map((step, index) => {
+      const fallbackId = `overview_step_${index + 1}`;
+      const id = /^[a-z0-9_-]{3,80}$/i.test(step.id) ? step.id : fallbackId;
+      const safeId = seen.has(id) ? `${id}_${index + 1}` : id;
+      seen.add(safeId);
+      return {
+        id: safeId,
+        title: step.title.trim().slice(0, 90) || `Section ${index + 1}`,
+        ...(step.slideId?.trim() ? { slideId: step.slideId.trim().slice(0, 120) } : {}),
+        instruction: step.instruction.trim().slice(0, 500),
+      };
+    })
+    .filter((step) => step.title || step.slideId || step.instruction);
+  return { steps, updatedAt: new Date().toISOString() };
 }
 
 /** Two coaching rules carry the same intent (dedup key) — same type, topic, and feedback. */
@@ -51,6 +76,10 @@ function sameRule(a: TrainingRule, b: TrainingRule): boolean {
   return (
     a.origin === "coaching" && b.origin === "coaching" &&
     a.type === b.type &&
+    // Same wording for DIFFERENT doctors (or scopes) is two distinct rules — the dedup
+    // previously collapsed them, silently dropping the second doctor's coaching.
+    a.scope === b.scope &&
+    norm(a.appliesToHcpId) === norm(b.appliesToHcpId) &&
     norm(a.topic) === norm(b.topic) &&
     norm(a.sourceFeedback) === norm(b.sourceFeedback)
   );
@@ -80,6 +109,7 @@ export class StudioService {
       rep: { id: input.aiRepId, brandId: input.brandId, campaignId: input.campaignId, persona, state: "draft" },
       draft: emptyDraft(input.aiRepId),
       rules: [],
+      guidedOverview: { steps: [], updatedAt: new Date().toISOString() },
     };
     await this.states.insert(state);
     return snapshot(state);
@@ -90,11 +120,53 @@ export class StudioService {
     return s ? snapshot(s) : null;
   }
 
-  /** Apply a setup answer and persist. */
+  async setGuidedOverviewPlan(aiRepId: AiRepId, plan: PresentationPlan): Promise<StudioSnapshot | null> {
+    const s = await this.states.get(aiRepId);
+    if (!s) return null;
+    const updated = await this.states.update(aiRepId, { guidedOverview: cleanPlan(plan) });
+    return updated ? snapshot(updated) : null;
+  }
+
+  /**
+   * Persist the Launch activation: which HCPs were invited and when. This is REAL,
+   * durable state (survives navigation/restart) — the Launch screen derives each
+   * doctor's shareable /hcp?hcp=<id> link from it. Fails safe: cannot launch unready.
+   */
+  async launch(aiRepId: AiRepId, hcpIds: string[]): Promise<StudioSnapshot | null> {
+    const s = await this.states.get(aiRepId);
+    if (!s) return null;
+    if (!snapshot(s).readiness.canLaunch) return snapshot(s);
+    const unique = Array.from(new Set(hcpIds.map((h) => h.trim()).filter(Boolean))).slice(0, 500);
+    if (!unique.length) return snapshot(s);
+    const updated = await this.states.update(aiRepId, { activation: { hcpIds: unique, launchedAt: new Date().toISOString() } });
+    return updated ? snapshot(updated) : null;
+  }
+
+  /** Apply a setup answer and persist. Some keys also drive BEHAVIOR (not just the draft). */
   async answer(aiRepId: AiRepId, questionKey: string, value: string): Promise<StudioSnapshot | null> {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
-    const updated = await this.states.update(aiRepId, { draft: applyAnswer(s.draft, questionKey, value) });
+    // voice_style is persona config, not just a draft field.
+    const styles = ["professional", "warm", "clinical"] as const;
+    const style = questionKey === "voice_style" ? styles.find((v) => value.toLowerCase().includes(v)) : undefined;
+    const rep = style ? { ...s.rep, persona: { ...s.rep.persona, voiceStyle: style } } : s.rep;
+    const updated = await this.states.update(aiRepId, { draft: applyAnswer(s.draft, questionKey, value), rep });
+    // blocked_topics from setup become ACTIVE brand guardrails (enforced by steering at
+    // runtime) — previously the answer was stored but nothing ever consumed it.
+    if (questionKey === "blocked_topics" && updated) {
+      let snap: StudioSnapshot | null = snapshot(updated);
+      for (const topic of value.split(/[,;\n]+/).map((t) => t.trim()).filter(Boolean).slice(0, 20)) {
+        snap =
+          (await this.addGuardrail(aiRepId, {
+            type: "blocked_topic",
+            scope: "campaign",
+            topic,
+            instruction: `Do not raise "${topic}" — blocked in brand setup; route to Medical Information.`,
+            seed: `grd_setup_blocked_${topic.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
+          })) ?? snap;
+      }
+      return snap;
+    }
     return updated ? snapshot(updated) : null;
   }
 
@@ -191,7 +263,7 @@ export class StudioService {
   /** Seed a locked compliance guardrail (active, not coaching-derived). */
   async addGuardrail(
     aiRepId: AiRepId,
-    input: { type: RuleType; scope: RuleScope; instruction: string; appliesToHcpId?: string; seed?: string },
+    input: { type: RuleType; scope: RuleScope; instruction: string; appliesToHcpId?: string; topic?: string; seed?: string },
   ): Promise<StudioSnapshot | null> {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
@@ -203,6 +275,9 @@ export class StudioService {
       instruction: input.instruction,
       sourceFeedback: "",
       appliesToHcpId: input.appliesToHcpId,
+      // A concrete topic makes the guardrail ENFORCEABLE by runtime steering
+      // (blocked_topic reroutes to Medical Information), not just advisory text.
+      ...(input.topic ? { topic: input.topic } : {}),
       origin: "guardrail",
     };
     // Idempotent for seeded guardrails (deterministic ids): no duplicates on restart.

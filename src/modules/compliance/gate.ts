@@ -6,9 +6,12 @@
  *   response. It fails safe: any uncertainty → block/escalate, never speak.
  */
 
+import { env } from "@lib/env";
 import type { ComplianceDecision, PolicyRoute, RiskClassification } from "./types";
 
-const HIGH = 0.6;
+// Risk threshold is deployment-configurable (NEXUSREP_RISK_THRESHOLD, default 0.6) —
+// a stricter compliance policy can lower it without a code change.
+const HIGH = env.riskThreshold;
 
 /** Deterministic policy routing. Safety-critical paths take precedence. */
 export function route(c: RiskClassification): PolicyRoute {

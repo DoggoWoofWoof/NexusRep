@@ -186,7 +186,6 @@ export class TurnOrchestrator {
       // so the ISI is appended verbatim below.
       const deterministic = () => buildApprovedResponse(result.answers, { includeIsi: false, slideTitle })?.text ?? top.text;
       let body: string;
-      let composedByLlm = false;
       if (composeFn) {
         try {
           const composed = (await composeFn(ctx.text, result.answers)).trim();
@@ -200,7 +199,6 @@ export class TurnOrchestrator {
             const grounding = validateGrounding({ answer: composed, blocks: groundBlocks });
             if (grounding.grounded) {
               body = composed; // the composer may weave the slide reference; approved ISI is appended below.
-              composedByLlm = true;
             } else {
               await this.audit.record(ctx.sessionId, "response_validation", {
                 grounded: false,

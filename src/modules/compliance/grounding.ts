@@ -15,6 +15,8 @@
  *      must clear a threshold, catching wholesale fabrication / topic drift.
  */
 
+import { env } from "@lib/env";
+
 const STOP = new Set([
   "the", "is", "a", "an", "of", "to", "in", "and", "or", "at", "as", "with", "for", "on", "by",
   "be", "are", "was", "it", "this", "that", "from", "per", "not", "no", "if", "when", "you", "your",
@@ -51,7 +53,8 @@ export interface GroundingInput {
 
 /** Validate that a composed answer is grounded in the approved blocks. */
 export function validateGrounding(input: GroundingInput): GroundingResult {
-  const minCoverage = input.minCoverage ?? 0.5;
+  // Coverage floor is deployment-configurable (NEXUSREP_GROUNDING_MIN_COVERAGE, default 0.5).
+  const minCoverage = input.minCoverage ?? env.groundingMinCoverage;
   const blockToks = new Set<string>();
   const blockNums = new Set<string>();
   for (const b of input.blocks) {

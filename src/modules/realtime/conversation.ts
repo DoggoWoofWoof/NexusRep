@@ -15,7 +15,7 @@ import type { AiRepId, BrandId, CampaignId } from "@lib/ids";
 import type { AuditService } from "@modules/audit";
 import type { CrmOutbox } from "@modules/crm";
 import type { CrmEventPayload } from "@modules/vendors";
-import type { ApprovedAnswer, GroundedComposer } from "@modules/content";
+import type { GroundedComposer } from "@modules/content";
 import type { RiskClassification } from "@modules/compliance";
 import type { ConversationSession, SessionService } from "@modules/sessions";
 import type { RuleSteering } from "@modules/rules";
@@ -30,11 +30,15 @@ export interface ConversationDeps {
   context: { brandId: BrandId; campaignId: CampaignId };
   /** Optional: the rep's ACTIVE-rule steering for an HCP (coaching → live behavior). */
   steeringFor?: (hcpId: string) => Promise<RuleSteering>;
+  /** Optional: resolve an HCP's NPI (from the claims cohort) for CRM identity resolution.
+   *  Unresolvable → the outbox surfaces "needs_mapping", the true unresolved-identity state. */
+  npiFor?: (hcpId: string) => string | undefined;
 }
 
 export type TurnOpts = {
   classify?: (text: string) => Promise<RiskClassification>;
-  compose?: (question: string, blocks: ApprovedAnswer[]) => Promise<string>;
+  /** Per-turn composer override (the in-chat "Test models" selector); null forces deterministic. */
+  composer?: GroundedComposer | null;
 };
 
 export class ConversationService {
@@ -65,17 +69,22 @@ export class ConversationService {
     await this.deps.sessions.recordOutcome(ctx.sessionId, { route: output.route, decision: output.decision });
 
     if (output.followUpType) {
+      // Resolve CRM identity from the claims cohort when available. No NPI → the outbox
+      // truthfully reports "needs_mapping" instead of pretending delivery succeeded.
+      const hcpNpi = this.deps.npiFor?.(ctx.hcpId);
       const payload: CrmEventPayload = {
         eventType: `followup_${output.followUpType}`,
         brandId: this.deps.context.brandId,
         campaignId: this.deps.context.campaignId,
         sessionId: ctx.sessionId,
-        // hcpNpi intentionally omitted here → outbox surfaces needs_mapping,
-        // which is the real behaviour when CRM identity resolution is pending.
         followUpType: output.followUpType,
+        ...(hcpNpi ? { hcpNpi } : {}),
       };
       const entry = await this.deps.crm.enqueue(ctx.sessionId, payload, `${ctx.sessionId}_${output.route}`);
-      await this.deps.audit.record(ctx.sessionId, "crm_event", { crmEventId: entry.id, status: entry.status });
+      // Attempt delivery immediately (the outbox worker for live events). Best-effort:
+      // a delivery failure keeps the entry retryable via flush(), never breaks the turn.
+      const delivered = await this.deps.crm.deliver(entry.id).catch(() => null);
+      await this.deps.audit.record(ctx.sessionId, "crm_event", { crmEventId: entry.id, status: delivered?.status ?? entry.status });
     }
 
     const session = await this.deps.sessions.get(ctx.sessionId);

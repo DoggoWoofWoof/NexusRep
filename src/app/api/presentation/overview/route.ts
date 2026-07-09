@@ -7,9 +7,10 @@
  */
 
 import { NextResponse } from "next/server";
-import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
-import { complianceGate, type PolicyRoute, type RiskClassification } from "@modules/compliance";
+import { resolveSessionAndHcp } from "@lib/resolve-session";
+import { complianceGate, isiAlreadyDelivered, type PolicyRoute, type RiskClassification } from "@modules/compliance";
+import { PresentationSkill } from "@modules/content";
 import { presentationGuidance } from "@modules/rules";
 
 export const dynamic = "force-dynamic";
@@ -43,42 +44,38 @@ export async function POST(req: Request): Promise<NextResponse> {
     sessionId?: unknown;
     newSession?: unknown;
     greeting?: unknown;
+    hcpId?: unknown;
   };
   const text =
     typeof body.text === "string" && body.text.trim()
       ? body.text.trim().slice(0, 500)
       : "Can you give me a high-level overview?";
-  const greeting = typeof body.greeting === "string" ? body.greeting.trim() : "";
 
   const c = await getContainer();
-  const requested = typeof body.sessionId === "string" ? asId<"session_id">(body.sessionId) : undefined;
-  let sessionId = c.demo.sessionId;
-  if (requested && (await c.sessions.get(requested))) {
-    sessionId = requested;
-  } else if (body.newSession === true) {
-    const fresh = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
-    sessionId = fresh.id;
-    if (greeting) await c.sessions.appendTurn(sessionId, { speaker: "rep", text: greeting });
-  } else if (!(await c.sessions.get(sessionId))) {
-    await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId, seed: "demo" });
-  }
+  // Shared session + invite-link identity resolution (same logic as conversation/turn).
+  const { sessionId, hcpId } = await resolveSessionAndHcp(c, body);
 
   await c.sessions.appendTurn(sessionId, { speaker: "hcp", text });
   let nextRepAt = Date.now() + 350;
 
-  const rules = (await c.studio.get(c.demo.aiRepId))?.rules ?? [];
-  const guidance = presentationGuidance(rules, { hcpId: c.demo.hcpId });
-  const steps = await c.presentation.overview({
+  const snap = await c.studio.get(c.demo.aiRepId);
+  const rules = snap?.rules ?? [];
+  const guidedPlan = snap?.guidedOverview;
+  const guidance = presentationGuidance(rules, { hcpId });
+  const presentation = new PresentationSkill(c.content);
+  const steps = await presentation.overview({
     context: { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market },
     guidance,
+    ...(guidedPlan?.steps?.length ? { plan: guidedPlan } : {}),
   });
   const isi = await c.content.latestActiveSafetyStatement();
   const route: PolicyRoute = steps.length ? "approved_answer" : "fallback";
   const segments = [];
   const priorAudit = isi ? await c.audit.forSession(sessionId) : [];
-  let overviewIsiDelivered = Boolean(isi && priorAudit.some((event) => event.type === "response_output" && typeof event.payload.text === "string" && event.payload.text.includes(`Important Safety Information: ${isi.text}`)));
+  let overviewIsiDelivered = Boolean(isi && isiAlreadyDelivered(priorAudit, isi.text));
 
   for (const [index, step] of steps.entries()) {
+    const segStart = Date.now();
     const finalSegment = index === steps.length - 1;
     const includesSafetyText = Boolean(isi && normalized(step.text).includes(normalized(isi.text)));
     const shouldAppendSafety = Boolean(isi && !overviewIsiDelivered && !includesSafetyText && finalSegment);
@@ -138,7 +135,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       skill: "presentation_overview",
       segment: index + 1,
     });
-    c.metrics.record({ latencyMs: 0, route });
+    c.metrics.record({ latencyMs: Date.now() - segStart, route }); // real per-segment latency, not 0
 
     segments.push({
       route,

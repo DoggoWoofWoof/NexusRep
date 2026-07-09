@@ -47,7 +47,7 @@ async function endConversation(id) {
     console.log(`  ended conversation ${id} → HTTP ${r.status}`);
   } catch (e) { console.log(`  end failed: ${e.message}`); }
 }
-const convIdFromUrl = (url) => { try { return new URL(url).pathname.split("/").filter(Boolean).pop() || ""; } catch { return ""; } };
+const _convIdFromUrl = (url) => { try { return new URL(url).pathname.split("/").filter(Boolean).pop() || ""; } catch { return ""; } };
 
 async function main() {
   let browser, sessionId = null, convId = "", b64 = "";

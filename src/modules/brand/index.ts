@@ -100,6 +100,16 @@ export interface BrandProfile {
   /** Short talking-point labels the Setup Assistant offers (the rep's key topics). */
   talkingPoints: string[];
   recommendedTopics: BrandRecommendedTopics;
+  /**
+   * Brand-specific language layered onto the engine's GENERIC clinical heuristics:
+   * `productTerms` bias intent + overview detection and upload topic inference;
+   * `topicSynonyms` improve retrieval re-rank + ingest topic matching. A new brand
+   * ships its own lexicon in its profile — the engine files stay brand-free.
+   */
+  lexicon: {
+    productTerms: string[];
+    topicSynonyms: Record<string, string[]>;
+  };
 }
 
 /** Client-safe projection sent to the browser via /api/brand (no seed answers/persona). */
@@ -116,6 +126,8 @@ export interface PublicBrand {
   talkingPoints: string[];
   indication: string;
   investigational: boolean;
+  /** Brand product/program names — client-side overview detection + copy. */
+  productTerms: string[];
 }
 
 export function toPublicBrand(p: BrandProfile): PublicBrand {
@@ -132,6 +144,7 @@ export function toPublicBrand(p: BrandProfile): PublicBrand {
     talkingPoints: p.talkingPoints,
     indication: p.clinical.indication,
     investigational: p.clinical.investigational,
+    productTerms: p.lexicon.productTerms,
   };
 }
 
@@ -236,6 +249,15 @@ export const MILVEXIAN_PROFILE: BrandProfile = {
     lowShare: "Milvexian mechanism (FXIa)",
     default: "LIBREXIA program overview",
   },
+  // The engine's classifiers/retrieval/ingest are brand-free; this lexicon is where
+  // Milvexian-specific vocabulary lives (moved out of the engine code files).
+  lexicon: {
+    productTerms: ["milvexian", "librexia", "factor xia", "fxia", "apixaban"],
+    topicSynonyms: {
+      mechanism: ["factor", "xia", "fxia", "pathway", "thrombosis", "anticoagulant"],
+      program: ["librexia", "acs", "af", "stroke", "atrial", "fibrillation"],
+    },
+  },
 };
 
 /**
@@ -248,28 +270,79 @@ export const MILVEXIAN_PROFILE: BrandProfile = {
  */
 export function resolveBrandProfile(base: BrandProfile, answers: Record<string, string | null | undefined>): BrandProfile {
   const get = (k: string) => { const v = answers[k]; return typeof v === "string" && v.trim() ? v.trim() : undefined; };
+  const list = (k: string) => get(k)?.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
   const displayName = get("brand") ?? base.displayName;
   const indication = get("indication") ?? base.clinical.indication;
   const audience = get("target_audience") ?? base.clinical.audience;
   const greeting = get("greeting") ?? get("disclosure") ?? base.greeting;
-  const tp = get("talking_points");
-  const talkingPoints = tp ? tp.split(/[,;]+/).map((s) => s.trim()).filter(Boolean) : base.talkingPoints;
+  const talkingPoints = list("talking_points") ?? base.talkingPoints;
+  const sponsor = get("sponsor") ?? base.sponsor;
+  const tagline = get("tagline") ?? base.tagline;
+  const tryQuestions = list("try_questions") ?? base.tryQuestions;
+  const extraHotwords = list("hotwords") ?? [];
   const investigational = base.clinical.investigational;
   return {
     ...base,
     displayName,
+    sponsor,
+    tagline,
     greeting,
     talkingPoints,
+    tryQuestions,
     clinical: { ...base.clinical, indication, audience },
+    // Chat-supplied hotwords also become product terms so intent/overview detection
+    // and ingestion topic hints track whatever the brand user typed — no code edits.
+    lexicon: {
+      ...base.lexicon,
+      productTerms: Array.from(new Set([...base.lexicon.productTerms, displayName.toLowerCase(), ...extraHotwords.map((h) => h.toLowerCase())])),
+    },
     persona: {
       ...base.persona,
       // Re-derived from the resolved identity (not user prose) — keeps the verbatim contract.
       systemPrompt: `You are an AI representative for ${displayName}${investigational ? ", an investigational compound" : ""}. You share only publicly-disclosed information and route any clinical question to Medical Information. Your replies are produced by an external compliance system; speak them verbatim.`,
       customGreeting: greeting,
       context: `Product: ${displayName}. Audience: ${audience}. No patient-level data.`,
-      hotwords: Array.from(new Set([displayName, ...base.persona.hotwords])),
+      hotwords: Array.from(new Set([displayName, ...extraHotwords, ...base.persona.hotwords])),
     },
   };
+}
+
+/** A live approved-content slide (from upload → MLR approval) to surface in the deck. */
+export interface LiveDeckInput {
+  id: string;
+  title: string;
+  label: string;
+  position?: number;
+  /** The approved answer text backing this slide — rendered as the slide bullets. */
+  text: string;
+}
+
+/**
+ * Merge the profile's authored deck with LIVE approved content (uploads that cleared MLR),
+ * so a brand configured purely by chat + upload gets a real on-screen deck — the same rich
+ * experience the seeded demo brand has, with zero code. Profile slides win on id collision
+ * (they carry richer, hand-authored bullets); live slides append in deck order.
+ */
+export function mergeLiveDeck(profileDeck: DeckSlide[], live: LiveDeckInput[]): DeckSlide[] {
+  const known = new Set(profileDeck.map((s) => s.id));
+  const footnote = profileDeck[0]?.footnote;
+  const extras: DeckSlide[] = live
+    .filter((s) => !known.has(s.id))
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .map((s) => ({
+      id: s.id,
+      kind: "content" as const,
+      label: s.label,
+      title: s.title,
+      // Bullets from the approved text (sentence split, capped) — never generated copy.
+      bullets: s.text
+        .split(/(?<=[.!?])\s+/)
+        .map((b) => b.trim())
+        .filter(Boolean)
+        .slice(0, 5),
+      ...(footnote ? { footnote } : {}),
+    }));
+  return [...profileDeck, ...extras];
 }
 
 /** Flatten a Setup Assistant draft's fields into a {questionKey: value} map for resolveBrandProfile. */

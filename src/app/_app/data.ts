@@ -104,6 +104,8 @@ export interface SetupTopic {
   section: string;
   q: string;
   chips: [string, string][];
+  /** Optional polish (asked AFTER the essentials; skippable without hurting readiness). */
+  optional?: boolean;
 }
 
 /**
@@ -112,20 +114,33 @@ export interface SetupTopic {
  * (falls back to generic labels while the brand loads or when none is set). The questions
  * themselves are brand-agnostic — the assistant is asking the user to confirm each field.
  */
-export function setupTopicsFor(brand: { displayName: string; indication: string; talkingPoints: string[] } | null): SetupTopic[] {
+export function setupTopicsFor(
+  brand: { displayName: string; indication: string; talkingPoints: string[]; sponsor?: string; tagline?: string; tryQuestions?: string[]; productTerms?: string[] } | null,
+): SetupTopic[] {
   const product = brand?.displayName || "your product";
   const indication = brand?.indication || "the primary indication";
   const points = brand?.talkingPoints?.length ? brand.talkingPoints.join(", ") : "your key approved topics";
+  const sponsor = brand?.sponsor || "your company";
+  const tagline = brand?.tagline || "a one-line product descriptor";
+  const tryQs = brand?.tryQuestions?.length ? brand.tryQuestions.join("; ") : "suggested questions for doctors";
+  const terms = brand?.productTerms?.length ? brand.productTerms.join(", ") : product;
+  // ESSENTIALS first (everything readiness needs), then optional polish — so the chat
+  // never feels long: a brand user can stop after the first eight and confirm sections,
+  // or tap "Decide for me" at any point.
   return [
     { key: "brand", section: "profile", q: "First — which brand and product is this rep representing?", chips: [[product, product], ["Choose another…", "another brand"]] },
     { key: "indication", section: "profile", q: "Got it. Which indication is in scope for this rep?", chips: [[titleCase(indication), indication], ["Add another indication", "more indications"]] },
     { key: "persona", section: "profile", q: "Should the rep use a brand persona, or clone a real rep's likeness?", chips: [["Brand persona", "a brand persona"], ["Clone a rep (needs consent)", "a cloned rep persona"]] },
-    { key: "voice", section: "profile", q: "What voice and style fits these HCPs best?", chips: [["Warm & concise", "a warm, concise voice"], ["Formal & precise", "a formal, precise voice"]] },
     { key: "audience", section: "audience", q: "Who should this rep prioritize? I can pull your whitespace cohort.", chips: [["Whitespace cohort", "the decile 2–4 whitespace cohort"], ["All targeted HCPs", "all targeted HCPs"]] },
     { key: "knowledge", section: "knowledge", q: "Use the approved public-information assets in your Vault as the rep's knowledge?", chips: [["Use all approved", "all approved assets"], ["Pick specific assets", "a selected set of assets"]] },
     { key: "escalation", section: "escalation", q: "Who handles medical escalations, and should a human rep be offered?", chips: [["Medical Info + human handoff", "the Medical Information desk with human handoff enabled"], ["Medical Info only", "the Medical Information desk only"]] },
     { key: "talking", section: "rules", q: "Which talking points matter most?", chips: [[titleCase(points), points], ["Let DocNexus prioritize", "DocNexus-prioritized talking points"]] },
     { key: "forbidden", section: "rules", q: "Anything the rep must avoid?", chips: [["Dosing, efficacy, comparative, off-label", "dosing, efficacy, comparative and off-label claims"], ["Standard guardrails only", "the standard guardrails"]] },
+    { key: "sponsor", section: "profile", optional: true, q: "Nice — the essentials are set. A few optional polish questions: which sponsor / company name should doctors see?", chips: [[titleCase(sponsor).slice(0, 44), sponsor]] },
+    { key: "tagline", section: "profile", optional: true, q: "How should the doctor invite describe the product in one line?", chips: [[titleCase(tagline).slice(0, 44), tagline]] },
+    { key: "voice_style", section: "profile", optional: true, q: "What voice tone should the rep use?", chips: [["Warm", "warm"], ["Professional", "professional"], ["Clinical", "clinical"]] },
+    { key: "try_questions", section: "rules", optional: true, q: "Which sample questions should we suggest to doctors?", chips: [["Keep current suggestions", tryQs]] },
+    { key: "hotwords", section: "rules", optional: true, q: "Last one — product & competitor names to bias speech recognition?", chips: [["Use the brand terms", terms]] },
   ];
 }
 
@@ -270,3 +285,6 @@ export function compStyle(tone: SegTone | "red"): React.CSSProperties {
   if (tone === "red") return { display: "inline-block", padding: "4px 9px", borderRadius: 20, font: "600 10.5px/1 var(--dn-font-sans)", background: "#fee2e2", color: "#991b1b" };
   return segStyle(tone);
 }
+
+/** One-shot handoff: Session review "Coach this exchange" → Train mode auto-asks the question. */
+export const TRAIN_SEED_KEY = "nexusrep:train:seed";

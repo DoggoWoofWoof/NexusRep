@@ -97,4 +97,18 @@ describe("StudioService persistence", () => {
     expect(rule?.sourceFeedback).toBe("Keep it concise. / Use a warmer tone.");
     expect((await studio.get(aiRepId))?.rules.find((r) => r.id === rule?.id)?.instruction).toContain("Example:");
   });
+
+  it("persists the guided overview plan used by deck walkthrough rehearsal", async () => {
+    const studio = await fresh();
+    const snap = await studio.setGuidedOverviewPlan(aiRepId, {
+      steps: [
+        { id: "step_1", title: "Program first", slideId: "slide_program", instruction: "Start with slide 3 for this section." },
+        { id: "step_2", title: "Mechanism second", slideId: "slide_moa", instruction: "Then explain the mechanism slide." },
+      ],
+    });
+
+    expect(snap?.guidedOverview.steps[0]?.slideId).toBe("slide_program");
+    expect(snap?.guidedOverview.steps[0]?.instruction).toContain("slide 3");
+    expect((await studio.get(aiRepId))?.guidedOverview.steps[1]?.slideId).toBe("slide_moa");
+  });
 });

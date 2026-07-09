@@ -11,10 +11,10 @@
 import { asId, type AiRepId, type BrandId, type CampaignId, type ContentAssetId, type DetailAidSlideId, type HcpId, type MlrApprovalId, type SessionId, type TenantId } from "@lib/ids";
 import { InMemoryVectorIndex } from "@lib/vector-index";
 import { getRepositoryFactory } from "@lib/db";
-import { ContentService, PresentationSkill, resolveComposer, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
-import { resolveClassifier } from "@modules/compliance";
+import { ContentService, PresentationSkill, firstAvailableComposer, resolveComposer, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
+import { configureClassifierLexicon, resolveClassifier } from "@modules/compliance";
 import { env } from "@lib/env";
-import { RetrievalService } from "@modules/retrieval";
+import { configureRetrievalLexicon, RetrievalService } from "@modules/retrieval";
 import { AuditService } from "@modules/audit";
 import { FollowUpService } from "@modules/followups";
 import { CrmOutbox } from "@modules/crm";
@@ -26,7 +26,7 @@ import { AnalyticsService, RuntimeMetrics } from "@modules/analytics";
 import { StudioService } from "@modules/aiRepStudio";
 import { activeSteering } from "@modules/rules";
 import { MlrService } from "@modules/mlr";
-import { getBrandProfile, type BrandProfile } from "@modules/brand";
+import { getBrandProfile, setupAnswersOf, type BrandProfile } from "@modules/brand";
 import { seedDemoHistory, seedDemoStudio } from "@lib/demo-seed";
 
 export interface AppContainer {
@@ -70,11 +70,21 @@ const tenantId = asId<"tenant_id">(brand.tenantId) as TenantId;
 const brandId = asId<"brand_id">(brand.brandId) as BrandId;
 const campaignId = asId<"campaign_id">(brand.campaignId) as CampaignId;
 const aiRepId = asId<"ai_rep_id">(brand.aiRepId) as AiRepId;
-const hcpId = asId<"hcp_id">("hcp_sharma") as HcpId;
+// Demo identity + session are env-configurable (NEXUSREP_DEMO_HCP_ID) — not code constants.
+const hcpId = asId<"hcp_id">(env.demoHcpId) as HcpId;
 const sessionId = asId<"session_id">("session_demo") as SessionId;
+// Configure the brand lexicon into the generic engine layers (classifier / retrieval):
+// onboarding a new brand supplies vocabulary via its profile, never engine edits.
+configureClassifierLexicon([...brand.lexicon.productTerms, ...brand.persona.hotwords]);
+configureRetrievalLexicon(brand.lexicon.topicSynonyms);
 const audience = brand.clinical.audience;
 const indication = brand.clinical.indication;
 const market = brand.clinical.market;
+
+// MLR expiry for demo-seeded content: env-configurable, defaulting to 18 months out
+// (never a frozen calendar date that silently goes stale).
+const mlrExpiry =
+  env.mlrExpiresAt || new Date(Date.now() + 548 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
 function activeMlr(seed: string): MlrMetadata {
   return {
@@ -84,7 +94,7 @@ function activeMlr(seed: string): MlrMetadata {
     audience,
     indication,
     market,
-    expiresAt: "2027-01-01",
+    expiresAt: mlrExpiry,
     sourceFile: `${brand.displayName}_MedicalInfo_v1.pptx`,
   };
 }
@@ -103,15 +113,31 @@ export async function createContainer(opts?: { seedHistory?: boolean }): Promise
   const presentation = new PresentationSkill(content);
   const retrieval = new RetrievalService(getRetrievalProvider(index), content);
   const audit = new AuditService(repos);
-  const followups = new FollowUpService(repos);
+  const studio = new StudioService(repos);
+  // Setup answers drive follow-up OWNERSHIP: the MSL / pharmacovigilance contacts the brand
+  // user configured (by chat or in the escalation section) own the created tasks — the
+  // generic labels are only the fallback when nothing is configured.
+  const followups = new FollowUpService(repos, async (type) => {
+    const answers = setupAnswersOf((await studio.get(aiRepId))?.draft);
+    if (type === "pharmacovigilance") return answers["ae_routing"];
+    if (type === "msl" || type === "medical_information") {
+      return answers["msl_contact"]?.replace(/ · (human handoff enabled|no human handoff)$/, "");
+    }
+    return undefined;
+  });
   const crm = new CrmOutbox(getCrmAdapter(), repos);
   // Default answer composition is deterministic (verbatim approved blocks) — the
   // compliance-safe default. Set NEXUSREP_COMPOSE=llm to let a grounded composer
   // rephrase (still grounding-validated + gated).
-  const defaultComposer = env.composeMode === "llm" ? resolveComposer(env.classifierProvider) : null;
+  // "llm" compose mode: use the classifier provider's composer when it has one, else the
+  // first composer with a key. (Previously classifier=keyword silently stayed deterministic
+  // even with ANTHROPIC/OPENAI keys configured.)
+  const defaultComposer = env.composeMode === "llm" ? resolveComposer(env.classifierProvider) ?? firstAvailableComposer() : null;
   const orchestrator = new TurnOrchestrator(content, retrieval, audit, followups, resolveClassifier(), defaultComposer);
   const sessions = new SessionService(repos);
-  const studio = new StudioService(repos);
+  // Load the targeting cohort from the DocNexus claims backend when configured;
+  // otherwise the modeled cardiology cohort. Never throws — falls back safely.
+  const { cohort, source: audienceSource } = await loadCohort();
   // Coaching → behavior: each turn folds the rep's ACTIVE, compliance-cleared rules into
   // runtime steering (blocked topics reroute; lead topics re-rank). Draft/gated rules never
   // steer, so the compliance gate stays authoritative.
@@ -119,10 +145,9 @@ export async function createContainer(opts?: { seedHistory?: boolean }): Promise
     orchestrator, sessions, crm, audit,
     context: { brandId, campaignId },
     steeringFor: async (hcpId) => activeSteering((await studio.get(aiRepId))?.rules ?? [], { hcpId }),
+    // CRM identity from the claims cohort (no NPI → truthful "needs_mapping" in the outbox).
+    npiFor: (hcpId) => cohort.find((f) => String(f.id) === hcpId)?.npi,
   });
-  // Load the targeting cohort from the DocNexus claims backend when configured;
-  // otherwise the modeled cardiology cohort. Never throws — falls back safely.
-  const { cohort, source: audienceSource } = await loadCohort();
   // Score density relative to the cohort's top provider. For a pre-launch drug the
   // absolute claims counts for the target indications are small, so an absolute
   // reference makes every HCP flat-line at the whitespace baseline; ranking within

@@ -17,9 +17,12 @@ export default function HcpRoute() {
   // Render the doctor view immediately (no blank flash); only the recorder's rare
   // ?bare=1 flips to the full-bleed replica clip view.
   const [bare, setBare] = useState(false);
+  const [hcp, setHcp] = useState("");
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("bare") === "1") setBare(true);
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("bare") === "1") setBare(true);
+    setHcp(params.get("hcp") ?? ""); // per-doctor invite identity (validated server-side)
   }, []);
-  if (bare) return <TavusStage bare onClose={() => setBare(false)} />;
+  if (bare) return <TavusStage bare onClose={() => setBare(false)} hcpId={hcp || undefined} />;
   return <HcpExperience />;
 }

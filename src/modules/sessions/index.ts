@@ -92,8 +92,29 @@ export function deriveSessionDurationSeconds(session: ConversationSession): numb
 
 export class SessionService {
   private readonly sessions: Repository<ConversationSession>;
+  /** Per-session write chains. appendTurn/recordOutcome are read-modify-write, so two
+   *  concurrent turns (e.g. a Tavus HCP utterance + the rep reply) could read the same
+   *  state and silently drop one. Serializing per session id makes writes atomic
+   *  within this process. */
+  private readonly writeChains = new Map<string, Promise<unknown>>();
+
   constructor(repos: RepositoryFactory = new MemoryRepositoryFactory()) {
     this.sessions = repos.create<ConversationSession>("sessions");
+  }
+
+  private serialize<T>(sessionId: SessionId, op: () => Promise<T>): Promise<T> {
+    const key = String(sessionId);
+    const prev = this.writeChains.get(key) ?? Promise.resolve();
+    const next = prev.then(op, op); // run even if the prior op failed
+    const tail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.writeChains.set(key, tail);
+    void tail.then(() => {
+      if (this.writeChains.get(key) === tail) this.writeChains.delete(key);
+    });
+    return next;
   }
 
   /** Open a session. `startedAt`/`seed` are injectable so tests stay deterministic. */
@@ -114,20 +135,22 @@ export class SessionService {
     sessionId: SessionId,
     input: { speaker: "hcp" | "rep"; text: string; sourceIds?: string[]; detailAidSlideId?: string; seed?: string; at?: string },
   ): Promise<ConversationSession | null> {
-    const s = await this.sessions.get(sessionId);
-    if (!s) return null;
-    const turn: ConversationTurn = {
-      id: newId<"turn_id">("turn", input.seed) as TurnId,
-      sessionId,
-      speaker: input.speaker,
-      text: input.text,
-      sourceIds: input.sourceIds ?? [],
-      ...(input.detailAidSlideId ? { detailAidSlideId: input.detailAidSlideId } : {}),
-      at: input.at ?? new Date().toISOString(),
-    };
-    const turns = [...s.turns, turn];
-    const questionCount = turns.filter((t) => t.speaker === "hcp").length;
-    return this.sessions.update(sessionId, { turns, questionCount });
+    return this.serialize(sessionId, async () => {
+      const s = await this.sessions.get(sessionId);
+      if (!s) return null;
+      const turn: ConversationTurn = {
+        id: newId<"turn_id">("turn", input.seed) as TurnId,
+        sessionId,
+        speaker: input.speaker,
+        text: input.text,
+        sourceIds: input.sourceIds ?? [],
+        ...(input.detailAidSlideId ? { detailAidSlideId: input.detailAidSlideId } : {}),
+        at: input.at ?? new Date().toISOString(),
+      };
+      const turns = [...s.turns, turn];
+      const questionCount = turns.filter((t) => t.speaker === "hcp").length;
+      return this.sessions.update(sessionId, { turns, questionCount });
+    });
   }
 
   /** Fold a turn's routing/gate result into the session's running compliance status. */
@@ -135,10 +158,12 @@ export class SessionService {
     sessionId: SessionId,
     outcome: { route: PolicyRoute; decision: "approved" | "blocked" },
   ): Promise<ConversationSession | null> {
-    const s = await this.sessions.get(sessionId);
-    if (!s) return null;
-    return this.sessions.update(sessionId, {
-      complianceStatus: worse(s.complianceStatus, outcomeToStatus(outcome)),
+    return this.serialize(sessionId, async () => {
+      const s = await this.sessions.get(sessionId);
+      if (!s) return null;
+      return this.sessions.update(sessionId, {
+        complianceStatus: worse(s.complianceStatus, outcomeToStatus(outcome)),
+      });
     });
   }
 

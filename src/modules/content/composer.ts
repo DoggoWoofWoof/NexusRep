@@ -9,6 +9,7 @@
  * when a key is configured. OpenAI-compatible endpoints go through fetch.
  */
 
+import { env } from "@lib/env";
 import type { ApprovedAnswer } from "./types";
 
 export const COMPOSER_SYSTEM = `You are an AI pharmaceutical representative answering a healthcare professional (HCP).
@@ -89,7 +90,7 @@ const claudeComposer: GroundedComposer = {
     const t0 = Date.now();
     const res = await client.messages.create({
       model: anthropicModel(),
-      max_tokens: 400,
+      max_tokens: env.composerMaxTokens,
       system: systemFor(blocks, guidance, safety),
       messages: [{ role: "user", content: question }],
     });
@@ -114,7 +115,7 @@ function makeOpenAiCompatibleComposer(cfg: CompatCfg): GroundedComposer {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
           model: cfg.model(),
-          max_tokens: 400,
+          max_tokens: env.composerMaxTokens,
           messages: [
             { role: "system", content: systemFor(blocks, guidance, safety) },
             { role: "user", content: question },
@@ -153,11 +154,18 @@ export function getComposer(name: string): GroundedComposer | undefined {
  * else null (no key). Used for the coaching helpers below (greeting rewrite + rule compaction),
  * which are NOT grounded answers, so they don't go through the block-based composer.
  */
+/** Generic one-shot LLM text call (Claude → OpenAI-compatible → null when no key). Exported
+ *  for NON-grounded helpers only (setup inference, rule compaction) — grounded rep answers
+ *  always go through the block-based composers above. */
+export async function llmComplete(system: string, user: string): Promise<string | null> {
+  return llmText(system, user);
+}
+
 async function llmText(system: string, user: string): Promise<string | null> {
   if (process.env.ANTHROPIC_API_KEY) {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic();
-    const res = await client.messages.create({ model: anthropicModel(), max_tokens: 400, system, messages: [{ role: "user", content: user }] });
+    const res = await client.messages.create({ model: anthropicModel(), max_tokens: env.composerMaxTokens, system, messages: [{ role: "user", content: user }] });
     return res.content.find((b) => b.type === "text")?.text ?? "";
   }
   const apiKey = process.env.OPENAI_API_KEY;
@@ -166,7 +174,7 @@ async function llmText(system: string, user: string): Promise<string | null> {
     const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4o-mini", max_tokens: 400, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+      body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4o-mini", max_tokens: env.composerMaxTokens, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
@@ -230,4 +238,12 @@ export async function compactCoaching(notes: string[], ctx: { question: string; 
 export function resolveComposer(providerName: string): GroundedComposer | null {
   const c = getComposer(providerName);
   return c && c.available() ? c : null;
+}
+
+/** First composer with a configured key (claude → openai → thinking-machines), else null.
+ *  Needed when compose mode is "llm" but the classifier is the keyword engine, which has
+ *  no composer of its own — previously that combination silently stayed deterministic. */
+export function firstAvailableComposer(): GroundedComposer | null {
+  for (const c of COMPOSERS) if (c.available()) return c;
+  return null;
 }

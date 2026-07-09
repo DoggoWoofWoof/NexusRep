@@ -46,6 +46,7 @@ export const SETUP_QUESTIONS: { key: string; section: SectionKey; prompt: string
   { key: "indication", section: "profile", prompt: "Which indication should the rep focus on?" },
   { key: "persona_type", section: "profile", prompt: "Brand persona or rep clone?" },
   { key: "target_audience", section: "audience", prompt: "Who is the target audience (specialty, decile/whitespace)?" },
+  { key: "specialty", section: "audience", prompt: "Which specialty is in scope?" },
   { key: "approved_content", section: "approved_knowledge", prompt: "What approved content do you have (PPT, PI, ISI, FAQ, script)?" },
   { key: "disclosure", section: "conversation_rules", prompt: "What AI-disclosure text should the rep open with?" },
   { key: "greeting", section: "conversation_rules", prompt: "What is the approved greeting?" },
@@ -53,7 +54,74 @@ export const SETUP_QUESTIONS: { key: string; section: SectionKey; prompt: string
   { key: "ae_routing", section: "escalation", prompt: "Where should adverse-event reports route?" },
   { key: "blocked_topics", section: "conversation_rules", prompt: "Any blocked topics?" },
   { key: "talking_points", section: "conversation_rules", prompt: "Required talking points?" },
+  // Everything below is optional polish — chatable so no brand copy lives in code.
+  { key: "sponsor", section: "profile", prompt: "Sponsor / company name shown to doctors?" },
+  { key: "tagline", section: "profile", prompt: "One-line product descriptor for HCP outreach?" },
+  { key: "voice_style", section: "profile", prompt: "Rep voice tone (professional / warm / clinical)?" },
+  { key: "try_questions", section: "conversation_rules", prompt: "Suggested sample questions to offer doctors (comma-separated)?" },
+  { key: "hotwords", section: "conversation_rules", prompt: "Product & competitor names to bias speech recognition (comma-separated)?" },
 ];
+
+/** Result of document-driven setup inference: what got filled, what stayed untouched. */
+export interface InferredSetup {
+  filled: Record<string, string>;
+  skipped: string[];
+}
+
+const INFERABLE_KEYS = ["brand", "indication", "therapeutic_area", "sponsor", "tagline", "talking_points", "hotwords", "try_questions"] as const;
+
+/**
+ * Infer setup answers from an uploaded document (deck/PI/FAQ text) so the brand user
+ * doesn't answer every question by hand — upload once, review the drafted sections.
+ * An LLM extracts structured fields when available (strict JSON, sanitized); a light
+ * deterministic fallback still fills the obvious ones offline. NEVER overwrites an
+ * answer the user already gave — inference only fills blanks.
+ */
+export async function inferSetupAnswersFromDocument(
+  docText: string,
+  existing: Record<string, string | null | undefined>,
+  llm?: (system: string, user: string) => Promise<string | null>,
+): Promise<InferredSetup> {
+  const open = INFERABLE_KEYS.filter((k) => !(existing[k] ?? "").toString().trim());
+  if (!open.length || !docText.trim()) return { filled: {}, skipped: [...INFERABLE_KEYS] };
+
+  const doc = docText.slice(0, 6000);
+  let candidates: Record<string, string> = {};
+
+  if (llm) {
+    const system = `You extract pharma-brand setup fields from an approved document. Reply with STRICT JSON only (no prose, no markdown fences) with these keys — use "" when the document doesn't say:
+{"brand": "product name", "indication": "primary indication", "therapeutic_area": "e.g. cardiology", "sponsor": "company name(s)", "tagline": "one neutral line describing the product (non-promotional)", "talking_points": "3-5 comma-separated topic labels covered by the document", "hotwords": "comma-separated product/program/competitor proper nouns", "try_questions": "2-4 semicolon-separated questions a doctor might ask that this document answers"}`;
+    const raw = await llm(system, `Document:\n"""${doc}"""`).catch(() => null);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw.replace(/^```(?:json)?/m, "").replace(/```\s*$/m, "").trim()) as Record<string, unknown>;
+        for (const k of INFERABLE_KEYS) {
+          const v = parsed[k];
+          if (typeof v === "string" && v.trim()) candidates[k] = v.trim().slice(0, 300);
+        }
+      } catch {
+        candidates = {};
+      }
+    }
+  }
+
+  // Deterministic fallback for the basics (offline / LLM unavailable): the most repeated
+  // capitalized token is almost always the product name in a product document.
+  if (!candidates.brand) {
+    const counts = new Map<string, number>();
+    for (const m of doc.matchAll(/\b[A-Z][a-z]{4,}\b/g)) {
+      const w = m[0];
+      if (/^(The|This|These|Those|Please|Important|Safety|Information|Medical|Phase|Program|About)$/.test(w)) continue;
+      counts.set(w, (counts.get(w) ?? 0) + 1);
+    }
+    const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (top && top[1] >= 3) candidates.brand = top[0];
+  }
+
+  const filled: Record<string, string> = {};
+  for (const k of open) if (candidates[k]) filled[k] = candidates[k];
+  return { filled, skipped: INFERABLE_KEYS.filter((k) => !(k in filled)) };
+}
 
 /** Create an empty draft with all sections pending input. Build mode fills it in. */
 export function emptyDraft(seed?: string): SetupDraft {

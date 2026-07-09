@@ -9,37 +9,20 @@
 import { NextResponse } from "next/server";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
+import { resolveSessionAndHcp } from "@lib/resolve-session";
 import { classifyWith } from "@modules/compliance";
 import { getComposer } from "@modules/content";
 
 export async function POST(req: Request): Promise<NextResponse> {
-  const body = (await req.json().catch(() => ({}))) as { text?: unknown; classifier?: unknown; sessionId?: unknown; newSession?: unknown; greeting?: unknown };
-  const text = typeof body.text === "string" ? body.text.trim() : "";
+  const body = (await req.json().catch(() => ({}))) as { text?: unknown; classifier?: unknown; sessionId?: unknown; newSession?: unknown; greeting?: unknown; hcpId?: unknown };
+  const text = typeof body.text === "string" ? body.text.trim().slice(0, 2000) : "";
   const classifier = typeof body.classifier === "string" ? body.classifier : undefined;
-  const greeting = typeof body.greeting === "string" ? body.greeting.trim() : "";
   if (!text) return NextResponse.json({ error: "text is required" }, { status: 400 });
 
   const c = await getContainer();
-  // Session selection: (1) an existing session the client named; (2) a fresh
-  // per-conversation session when the client asks (newSession — the /hcp chat does
-  // this on its first message so each chat is its own reviewable transcript); else
-  // (3) the shared demo session, opened lazily.
-  const requested = typeof body.sessionId === "string" ? asId<"session_id">(body.sessionId) : undefined;
-  let sessionId: typeof c.demo.sessionId;
-  if (requested && (await c.sessions.get(requested))) {
-    sessionId = requested;
-  } else if (body.newSession === true) {
-    const fresh = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
-    sessionId = fresh.id;
-    // Log the rep's opening greeting as turn 0 so it's in the transcript (not just
-    // the live caption). Video sessions get it from the replica utterance instead.
-    if (greeting) await c.sessions.appendTurn(sessionId, { speaker: "rep", text: greeting });
-  } else {
-    sessionId = c.demo.sessionId;
-    if (!(await c.sessions.get(sessionId))) {
-      await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId, seed: "demo" });
-    }
-  }
+  // Session + identity resolution shared with every conversation-shaped route
+  // (invite-link hcpId validated against the cohort; sessions keep their identity).
+  const { sessionId, hcpId } = await resolveSessionAndHcp(c, body);
   // Per-request model override (from the in-chat selector): route classification
   // AND answer composition through the chosen provider; fall back to defaults.
   const composer = classifier ? getComposer(classifier) : undefined;
@@ -55,7 +38,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   const { output } = await c.conversation.turn(
     {
       sessionId,
-      hcpId: c.demo.hcpId,
+      hcpId,
       audience: c.demo.audience,
       indication: c.demo.indication,
       market: c.demo.market,

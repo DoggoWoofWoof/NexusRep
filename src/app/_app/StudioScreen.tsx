@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AppState } from "./NexusRepApp";
 import { btnGhost, btnPrimary } from "./NexusRepApp";
-import { CONVERSATION, DEFAULT_RULES, KNOWLEDGE_ASSETS, setupTopicsFor, type Rule } from "./data";
+import { DEFAULT_RULES, KNOWLEDGE_ASSETS, TRAIN_SEED_KEY, setupTopicsFor } from "./data";
 import { isOverviewPrompt } from "./overviewPrompt";
+import { SlideView } from "../_components/SlideView";
 import { TavusStage } from "../_components/TavusStage";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 
@@ -75,6 +76,25 @@ interface KnowledgeSnap {
     chunks: { id: string; topic: string; status: string; preview: string }[];
   }[];
 }
+interface OverviewSlideOption {
+  id: string;
+  title: string;
+  label: string;
+  position: number;
+  sourceId: string;
+  topic: string;
+  preview: string;
+}
+interface OverviewPlanStep {
+  id: string;
+  title: string;
+  slideId?: string;
+  instruction: string;
+}
+interface OverviewPlanSnap {
+  slides: OverviewSlideOption[];
+  plan: { steps: OverviewPlanStep[]; updatedAt?: string };
+}
 
 /** Map the DEFAULT_RULES fallback (numeric ids) into the UiRule shape. */
 function fallbackRules(): UiRule[] {
@@ -103,6 +123,12 @@ const ANSWER_KEY: Record<string, string> = {
   talking: "talking_points",
   forbidden: "blocked_topics",
   voice: "greeting",
+  // Chatable brand polish — all consumed by resolveBrandProfile / the studio persona.
+  sponsor: "sponsor",
+  tagline: "tagline",
+  voice_style: "voice_style",
+  try_questions: "try_questions",
+  hotwords: "hotwords",
 };
 /* UI SECTIONS key → server section key */
 const SECTION_KEY: Record<string, string> = {
@@ -188,11 +214,11 @@ export function StudioScreen({ app }: { app: AppState }) {
           ))}
         </div>
         <span style={{ font: "500 12px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", flex: 1, minWidth: 220 }}>
-          {mode === "setup" ? "Answer DocNexus's questions on the left — it drafts each section on the right." : mode === "train" ? "Rehearse with the rep and coach any line. Your feedback becomes a scoped rule." : mode === "rules" ? "Guardrails are locked. Drafts from coaching need review before they go live." : "Resolve the checklist, then submit for approval."}
+          {mode === "setup" ? "Answer DocNexus's questions on the left — it drafts each section on the right." : mode === "train" ? "Rehearse the pitch DocNexus drafted from your approved deck — or ask anything. Coach a line and the rep tries again." : mode === "rules" ? "Guardrails are locked. Drafts from coaching need review before they go live." : "Resolve the checklist, then submit for approval."}
         </span>
       </div>
 
-      {mode === "setup" && <BuildMode repName={repName} snap={snap} post={post} app={app} />}
+      {mode === "setup" && <BuildMode repName={repName} snap={snap} post={post} app={app} refresh={refresh} />}
       {mode === "train" && <TrainMode rules={rules} post={post} repName={repName} app={app} />}
       {mode === "rules" && <RulesMode rules={rules} post={post} />}
       {mode === "readiness" && <ReadinessMode snap={snap} submitState={submitState} onSubmit={submit} />}
@@ -201,7 +227,7 @@ export function StudioScreen({ app }: { app: AppState }) {
 }
 
 /* ---------- BUILD MODE ---------- */
-function BuildMode({ repName, snap, post, app }: { repName: string; snap: StudioSnap | null; post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; app: AppState }) {
+function BuildMode({ repName, snap, post, app, refresh }: { repName: string; snap: StudioSnap | null; post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; app: AppState; refresh: () => Promise<void> }) {
   const brand = useBrand();
   const [step, setStep] = useState(0);
   const [confirmed, setConfirmed] = useState<Record<string, string>>({});
@@ -228,6 +254,33 @@ function BuildMode({ repName, snap, post, app }: { repName: string; snap: Studio
     if (v) setMsl(v.replace(/ · (human handoff enabled|no human handoff)$/, ""));
   }, [snap]);
 
+  // The REAL source library (uploaded + seeded assets with MLR status); null while loading.
+  const [sourceDocs, setSourceDocs] = useState<{ id: string; title: string; kind: string; status: string }[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/content/knowledge")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { documents?: { id: string; title: string; kind: string; status: string }[] } | null) => {
+        if (alive && d?.documents) setSourceDocs(d.documents.map(({ id, title, kind, status }) => ({ id, title, kind, status })));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  // Specialty options come from the LIVE cohort's actual specialties — never a hardcoded list.
+  const [cohortSpecialties, setCohortSpecialties] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/audience")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { rows?: { specialty?: string }[] } | null) => {
+        if (!alive || !d?.rows) return;
+        setCohortSpecialties(Array.from(new Set(d.rows.map((r) => r.specialty).filter((s): s is string => Boolean(s)))).slice(0, 12));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   // Persist the escalation config (MSL contact + the two toggles) via the real setup answers,
   // so these controls actually save — not cosmetic. Human-handoff is folded into the contact
   // answer (no separate field); AE routing maps to its own answer.
@@ -250,12 +303,16 @@ function BuildMode({ repName, snap, post, app }: { repName: string; snap: Studio
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename: file.name, contentBase64: btoa(bin), kind }),
       });
-      const d = (await res.json()) as { parsed?: { blocks: number; slides: number; safetyStatements?: number }; error?: string };
+      const d = (await res.json()) as { parsed?: { blocks: number; slides: number; safetyStatements?: number }; setupAutofill?: { filled: string[] }; error?: string };
       if (res.ok && d.parsed) {
         const safetyCount = d.parsed.safetyStatements ?? 0;
-        setUploadMsg(`Parsed ${d.parsed.blocks} block(s)${safetyCount ? ` and ${safetyCount} ISI statement(s)` : ""} from "${file.name}" — pending MLR review.`);
+        const filled = d.setupAutofill?.filled ?? [];
+        const filledNote = filled.length ? ` Auto-filled setup from the document: ${filled.map((f) => f.replace(/_/g, " ")).join(", ")} — review the sections on the right.` : "";
+        setUploadMsg(`Parsed ${d.parsed.blocks} block(s)${safetyCount ? ` and ${safetyCount} ISI statement(s)` : ""} from "${file.name}" — review and approve below.${filledNote}`);
         if (safetyCount) void loadSafety();
         void loadKnowledge();
+        void loadPendingBlocks(); // the new passages appear in the review queue immediately
+        if (filled.length) void refresh(); // drafted sections update from the inferred answers
       } else {
         setUploadMsg(`Couldn't parse: ${d.error ?? res.status}`);
       }
@@ -286,9 +343,34 @@ function BuildMode({ repName, snap, post, app }: { repName: string; snap: Studio
     }
   };
 
+  // Uploaded passages awaiting MLR review — with in-UI Approve/Reject, so the full
+  // upload → review → live-knowledge loop is self-serve (previously the pending count
+  // displayed but there was no way to act on it without the API).
+  const [pendingBlocks, setPendingBlocks] = useState<{ id: string; topic: string; preview: string; sourceFile: string }[]>([]);
+  const loadPendingBlocks = async () => {
+    try {
+      const res = await fetch("/api/mlr");
+      if (!res.ok) return;
+      const d = (await res.json()) as { pending?: { id: string; topic: string; preview: string; sourceFile: string }[] };
+      setPendingBlocks(d.pending ?? []);
+    } catch {
+      /* review queue is progressive */
+    }
+  };
+  const reviewBlock = async (answerId: string, action: "approve" | "reject") => {
+    try {
+      await fetch("/api/mlr", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, answerId }) });
+    } catch {
+      /* refresh below shows the true state either way */
+    }
+    await Promise.all([loadPendingBlocks(), loadKnowledge()]);
+    setUploadMsg(action === "approve" ? "Passage approved — it's now live rep knowledge (and its slide joins the deck)." : "Passage rejected — it will never be spoken.");
+  };
+
   useEffect(() => {
     void loadSafety();
     void loadKnowledge();
+    void loadPendingBlocks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -422,19 +504,36 @@ function BuildMode({ repName, snap, post, app }: { repName: string; snap: Studio
             </div>
           ))}
           {step < topics.length && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 7, paddingLeft: 31, marginTop: 2 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7, paddingLeft: 31, marginTop: 2, alignItems: "center" }}>
+              {topics[step]!.optional && <span data-testid="setup-optional" style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", background: "var(--dn-surface-2)", padding: "4px 7px", borderRadius: 5 }}>optional</span>}
               {topics[step]!.chips.map((c) => (
-                <span key={c[0]} onClick={() => answer(c[1])} style={{ padding: "8px 12px", background: "#fff", border: "1px solid var(--dn-brand-light)", borderRadius: 9, font: "600 11.5px/1.2 var(--dn-font-sans)", color: "var(--dn-brand-base)", cursor: "pointer" }}>{c[0]}</span>
+                <span key={c[0]} data-testid="setup-chip" onClick={() => answer(c[1])} style={{ padding: "8px 12px", background: "#fff", border: "1px solid var(--dn-brand-light)", borderRadius: 9, font: "600 11.5px/1.2 var(--dn-font-sans)", color: "var(--dn-brand-base)", cursor: "pointer" }}>{c[0]}</span>
               ))}
+              {topics[step]!.optional && (
+                <span data-testid="setup-skip" onClick={() => { setStep(step + 1); setOpen(topics[step + 1]?.section ?? null); }} style={{ padding: "8px 12px", border: "1px dashed var(--dn-border)", borderRadius: 9, font: "600 11.5px/1.2 var(--dn-font-sans)", color: "var(--dn-fg-muted)", cursor: "pointer" }}>Skip →</span>
+              )}
             </div>
           )}
           {step >= topics.length && <div style={{ paddingLeft: 31, font: "500 11.5px/1.4 var(--dn-font-sans)", color: "var(--dn-success)" }}>All set — review and confirm each section on the right.</div>}
         </div>
         <div style={{ padding: "12px 14px", borderTop: "1px solid var(--dn-border)" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 9, flexWrap: "wrap" }}>
             <span style={{ font: "500 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{Math.min(step, topics.length)} of {topics.length} answered</span>
-            {step < topics.length && <span onClick={autoFill} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>Decide for me →</span>}
+            <span style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              {/* Upload once instead of answering one-by-one: the document fills the blanks. */}
+              <label style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }} title="Upload a deck / PI / FAQ — I'll fill the setup answers from it">
+                📎 Autofill from a document
+                <input data-testid="upload-autofill" type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => void onUpload(e.target.files?.[0])} style={{ display: "none" }} />
+              </label>
+              {step < topics.length && <span onClick={autoFill} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>Decide for me →</span>}
+            </span>
           </div>
+          {/* Footer shows only what matters HERE: the autofill outcome (or a failure) — the full
+              parse/approve message lives in the Approved-knowledge section, not duplicated. */}
+          {(() => {
+            const note = uploadMsg.match(/Auto-filled[^]*$/)?.[0] ?? (/^(Couldn't parse|Upload failed|Parsing)/.test(uploadMsg) ? uploadMsg : null);
+            return note ? <div style={{ font: "500 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginBottom: 9 }}>{note}</div> : null;
+          })()}
           <div style={{ height: 5, borderRadius: 3, background: "var(--dn-surface-2)", overflow: "hidden", marginBottom: 11 }}><div style={{ height: "100%", borderRadius: 3, background: "var(--dn-brand-base)", width: `${(Math.min(step, topics.length) / topics.length) * 100}%` }} /></div>
           <div style={{ display: "flex", gap: 8 }}>
             <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && input.trim()) answer(input.trim()); }} placeholder="Type an answer…" style={{ flex: 1, padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 12px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
@@ -466,7 +565,7 @@ function BuildMode({ repName, snap, post, app }: { repName: string; snap: Studio
                     <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 13px", border: "1px dashed var(--dn-border)", borderRadius: 9, marginBottom: 13, cursor: "pointer", background: "var(--dn-surface-2)" }}>
                       <span style={{ font: "600 11.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>↑ Add source file</span>
                       <span style={{ font: "400 11px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Parsed into MLR review blocks before it can enter live knowledge</span>
-                      <input type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => void onUpload(e.target.files?.[0])} style={{ display: "none" }} />
+                      <input data-testid="upload-source" type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => void onUpload(e.target.files?.[0])} style={{ display: "none" }} />
                     </label>
                     {uploadMsg && <div style={{ font: "500 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginBottom: 12 }}>{uploadMsg}</div>}
                     {knowledge && (
@@ -476,6 +575,27 @@ function BuildMode({ repName, snap, post, app }: { repName: string; snap: Studio
                           <span style={{ display: "block", font: "400 10.5px/1.35 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 3 }}>{knowledge.totals.activeChunks} retrievable passage(s) from active documents, {knowledge.totals.pendingChunks} pending review passage(s), {knowledge.totals.activeSafetyStatements} active ISI block(s)</span>
                         </span>
                         <span style={{ font: "600 9.5px/1 var(--dn-font-sans)", padding: "5px 8px", borderRadius: 6, background: "rgba(6,73,172,.08)", color: "var(--dn-brand-base)" }}>NexusRep RAG</span>
+                      </div>
+                    )}
+                    {/* MLR review queue for uploaded passages — approve here and the block goes live
+                        (retrievable + its slide joins the on-screen deck). Fully self-serve. */}
+                    {pendingBlocks.length > 0 && (
+                      <div style={{ border: "1px solid #fcd34d", background: "#fffbeb", borderRadius: 9, padding: "10px 12px", marginBottom: 13 }}>
+                        <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "#92400e", marginBottom: 8 }}>Pending review · {pendingBlocks.length} passage{pendingBlocks.length > 1 ? "s" : ""}</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                          {pendingBlocks.map((p) => (
+                            <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center", padding: "8px 10px", background: "#fff", borderRadius: 8, border: "1px solid var(--dn-surface-2)" }}>
+                              <span style={{ minWidth: 0 }}>
+                                <span style={{ display: "block", font: "600 10px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", textTransform: "capitalize" }}>{p.topic.replace(/_/g, " ")} · <span style={{ fontFamily: "var(--dn-font-mono)", textTransform: "none", fontWeight: 400 }}>{p.sourceFile}</span></span>
+                                <span style={{ display: "block", font: "400 10.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.preview}</span>
+                              </span>
+                              <span style={{ display: "flex", gap: 8 }}>
+                                <button data-testid="mlr-approve" onClick={() => void reviewBlock(p.id, "approve")} style={{ ...btnGhost, padding: "6px 9px", font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>Approve</button>
+                                <button data-testid="mlr-reject" onClick={() => void reviewBlock(p.id, "reject")} style={{ ...btnGhost, padding: "6px 9px", font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>Reject</button>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                     <div style={{ borderTop: "1px solid var(--dn-surface-2)", borderBottom: "1px solid var(--dn-surface-2)", padding: "13px 0", marginBottom: 13 }}>
@@ -511,14 +631,15 @@ function BuildMode({ repName, snap, post, app }: { repName: string; snap: Studio
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", marginBottom: 8 }}>
                       <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)" }}>Source library</span>
-                      <span style={{ font: "400 10.5px/1.35 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Uploaded assets and MLR status</span>
+                      <span style={{ font: "400 10.5px/1.35 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{sourceDocs === null ? "Sample list — live library loading" : "Uploaded assets and MLR status"}</span>
                     </div>
+                    {/* REAL uploaded/seeded assets from the content module; fixture only while loading. */}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
-                      {KNOWLEDGE_ASSETS.map((c) => (
-                        <div key={c.mlrId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 11px", border: "1px solid var(--dn-surface-2)", borderRadius: 9 }}>
-                          <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 7, background: "var(--dn-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", font: "700 10px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>{c.kind}</span>
-                          <span style={{ flex: 1, minWidth: 0, lineHeight: 1.3 }}><span style={{ display: "block", font: "600 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</span><span style={{ display: "block", font: "400 10px/1.2 var(--dn-font-mono)", color: "var(--dn-fg-subtle)", marginTop: 2 }}>{c.mlrId}</span></span>
-                          <span style={{ font: "600 9.5px/1 var(--dn-font-sans)", padding: "3px 7px", borderRadius: 5, background: c.status === "Active" ? "var(--dn-accent-green-bg)" : "var(--dn-accent-yellow-bg)", color: c.status === "Active" ? "#166534" : "#92400e" }}>{c.status}</span>
+                      {(sourceDocs ?? KNOWLEDGE_ASSETS.map((c) => ({ id: c.mlrId, title: c.name, kind: c.kind, status: c.status.toLowerCase() }))).map((c) => (
+                        <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 11px", border: "1px solid var(--dn-surface-2)", borderRadius: 9 }}>
+                          <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 7, background: "var(--dn-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", font: "700 10px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)", textTransform: "uppercase" }}>{c.kind.slice(0, 3)}</span>
+                          <span style={{ flex: 1, minWidth: 0, lineHeight: 1.3 }}><span style={{ display: "block", font: "600 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.title}</span><span style={{ display: "block", font: "400 10px/1.2 var(--dn-font-mono)", color: "var(--dn-fg-subtle)", marginTop: 2 }}>{c.id}</span></span>
+                          <span style={{ font: "600 9.5px/1 var(--dn-font-sans)", padding: "3px 7px", borderRadius: 5, background: c.status === "active" ? "var(--dn-accent-green-bg)" : "var(--dn-accent-yellow-bg)", color: c.status === "active" ? "#166534" : "#92400e", textTransform: "capitalize" }}>{c.status.replace(/_/g, " ")}</span>
                         </div>
                       ))}
                     </div>
@@ -529,7 +650,8 @@ function BuildMode({ repName, snap, post, app }: { repName: string; snap: Studio
                     <div style={{ font: "400 11.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 13 }}>DocNexus suggested the cohort with the highest prescribing whitespace. Refine the full ranked list in Audience.</div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
                       <LabeledSelect label="Target segment" options={["Decile 2–4 whitespace", "All targeted"]} onChange={(v) => void post({ action: "answer", questionKey: "target_audience", value: v })} />
-                      <LabeledSelect label="Specialty" options={["Cardiology", "Interventional", "Electrophysiology", "Vascular Neurology"]} />
+                      {/* Options come from the LIVE cohort's actual specialties (fallback while loading) and the choice persists. */}
+                      <LabeledSelect label="Specialty" options={cohortSpecialties.length ? cohortSpecialties : ["Cardiology"]} onChange={(v) => void post({ action: "answer", questionKey: "specialty", value: v })} />
                     </div>
                     <span onClick={() => app.setNav("targeting")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>Open full ranked audience →</span>
                   </div>
@@ -568,10 +690,13 @@ function BuildMode({ repName, snap, post, app }: { repName: string; snap: Studio
 
 function LabeledSelect({ label, options, onChange }: { label: string; options: string[]; onChange?: (v: string) => void }) {
   const [value, setValue] = useState(options[0] ?? "");
+  // Visible confirmation that a change actually persisted (the POST is fire-and-forget).
+  const [saved, setSaved] = useState(false);
   return (
     <label style={{ display: "block" }}>
       <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)" }}>{label}</span>
-      <select value={value} onChange={(e) => { setValue(e.target.value); onChange?.(e.target.value); }} style={{ marginTop: 6, width: "100%", padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "500 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)", background: "#fff" }}>
+      {onChange && saved && <span style={{ marginLeft: 7, font: "600 9.5px/1 var(--dn-font-sans)", color: "var(--dn-success)" }}>Saved ✓</span>}
+      <select value={value} onChange={(e) => { setValue(e.target.value); onChange?.(e.target.value); if (onChange) { setSaved(true); window.setTimeout(() => setSaved(false), 2200); } }} style={{ marginTop: 6, width: "100%", padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "500 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)", background: "#fff" }}>
         {options.map((o) => <option key={o}>{o}</option>)}
       </select>
     </label>
@@ -591,6 +716,7 @@ function ToggleRow({ label, desc, on, onToggle }: { label: string; desc: string;
 
 /* ---------- TRAIN MODE (conversational coaching loop) ---------- */
 type CoachScope = "persona" | "global" | "hcp";
+interface OverviewSegment { response: string; detailAidSlideId?: string | null; slideTitle?: string | null }
 interface RepAnswer {
   text: string;
   route: string;
@@ -598,6 +724,8 @@ interface RepAnswer {
   detailAidSlideId?: string | null;
   /** Did an LLM actually apply the coaching? false = no AI key (approved text only). */
   usedLlm: boolean;
+  /** For a guided-overview answer: the per-slide steps, so Train renders it paragraph-by-paragraph. */
+  segments?: OverviewSegment[];
 }
 /** One question and the rep's answer(s) — each coaching note produces a fresh re-answer.
  *  A "greeting" exchange has no HCP question: it coaches the rep's OPENING line. */
@@ -615,6 +743,23 @@ function makePreviewSessionId(): string {
   return `session_train_preview_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+// Persist the in-progress Train coaching thread client-side so it SURVIVES switching Studio tabs,
+// navigating away, and reloading — previously it lived only in component state and vanished on
+// unmount. (Accepted coaching is already persisted server-side as rules; this keeps the UNFINISHED
+// thread + its drafts + the rehearsal session id so re-answers stay on the same preview session.)
+const TRAIN_STORE_KEY = "nexusrep:train:coaching:v2";
+interface TrainStore { exchanges?: Exchange[]; coachDraft?: Record<number, string>; previewSessionId?: string; brandName?: string }
+function loadTrainState(brandName?: string): TrainStore {
+  if (typeof window === "undefined") return {};
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(TRAIN_STORE_KEY) || "{}") as TrainStore;
+    // A thread coached against a DIFFERENT brand is stale (its questions/answers no longer
+    // match) — drop it rather than rehydrating another brand's rehearsal.
+    if (brandName && stored.brandName && stored.brandName !== brandName) return {};
+    return stored;
+  } catch { return {}; }
+}
+
 /** Split a rep answer into its coachable body and the active approved ISI block. */
 function splitIsi(text: string): [string, string | null] {
   const parts = text.split(/\n\nImportant Safety Information:\s*/);
@@ -623,17 +768,37 @@ function splitIsi(text: string): [string, string | null] {
 
 function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; repName: string; app: AppState }) {
   const brand = useBrand();
-  const [exchanges, setExchanges] = useState<Exchange[]>([]);
+  // Rehydrate the coaching thread from localStorage so it survives tab switches / reload.
+  const [exchanges, setExchanges] = useState<Exchange[]>(() => loadTrainState().exchanges ?? []);
   const [input, setInput] = useState("");
   const [asking, setAsking] = useState(false);
-  const [coachDraft, setCoachDraft] = useState<Record<number, string>>({});
+  const [coachDraft, setCoachDraft] = useState<Record<number, string>>(() => loadTrainState().coachDraft ?? {});
   const [busyIdx, setBusyIdx] = useState<number | null>(null);
   const [showVideo, setShowVideo] = useState(false);
-  const [previewSessionId, setPreviewSessionId] = useState(makePreviewSessionId);
+  const [previewSessionId, setPreviewSessionId] = useState(() => loadTrainState().previewSessionId ?? makePreviewSessionId());
+  const [overviewPlan, setOverviewPlan] = useState<OverviewPlanSnap | null>(null);
+  const [activePlanStepId, setActivePlanStepId] = useState("");
+  const [planNote, setPlanNote] = useState("");
+  const [planMsg, setPlanMsg] = useState("");
 
   const coachingRules = rules.filter((r) => r.source === "feedback");
+  const activePlanStep = overviewPlan?.plan.steps.find((s) => s.id === activePlanStepId) ?? overviewPlan?.plan.steps[0];
+  const activePlanSlideId = activePlanStep?.slideId ?? overviewPlan?.slides[0]?.id;
 
   const greetingExchange = (): Exchange => ({ q: "", kind: "greeting", answers: [{ text: brand?.greeting ?? "", route: "greeting", isi: false, detailAidSlideId: null, usedLlm: true }], coachings: [], scope: "persona", accepted: false });
+
+  // Once the brand resolves: a stored thread coached against a DIFFERENT brand is stale —
+  // reset it (its questions/answers no longer match this brand's rep).
+  useEffect(() => {
+    if (!brand?.displayName) return;
+    const stored = loadTrainState();
+    if (stored.brandName && stored.brandName !== brand.displayName) {
+      setExchanges([]);
+      setCoachDraft({});
+      setPreviewSessionId(makePreviewSessionId());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brand?.displayName]);
 
   // Seed the OPENING-LINE exchange once the greeting loads, so the disclosure itself can be
   // coached like any answer (previously it was the one line you couldn't change here).
@@ -641,6 +806,92 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     if (brand?.greeting) setExchanges((xs) => (xs.length === 0 ? [greetingExchange()] : xs));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brand?.greeting]);
+
+  // Persist the coaching thread (thread + drafts + rehearsal session + BRAND it belongs to)
+  // whenever it changes, so leaving the Train tab and coming back — or reloading — keeps
+  // everything exactly where it was (and a brand switch invalidates it, above).
+  useEffect(() => {
+    try { window.localStorage.setItem(TRAIN_STORE_KEY, JSON.stringify({ exchanges, coachDraft, previewSessionId, brandName: brand?.displayName })); } catch { /* storage disabled/full — non-fatal */ }
+  }, [exchanges, coachDraft, previewSessionId, brand?.displayName]);
+
+  const loadOverviewPlan = async () => {
+    try {
+      const res = await fetch("/api/presentation/plan");
+      if (!res.ok) return;
+      const data = (await res.json()) as OverviewPlanSnap;
+      setOverviewPlan(data);
+      setActivePlanStepId((current) => current || data.plan.steps[0]?.id || "");
+    } catch {
+      /* deck editor is progressive; training still works without it */
+    }
+  };
+
+  useEffect(() => {
+    void loadOverviewPlan();
+  }, []);
+
+  const persistOverviewPlan = async (plan = overviewPlan?.plan, message = "Pitch saved.") => {
+    if (!plan) return;
+    setPlanMsg("Saving pitch…");
+    try {
+      const res = await fetch("/api/presentation/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save", plan }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as OverviewPlanSnap;
+      setOverviewPlan(data);
+      setActivePlanStepId((current) => data.plan.steps.some((s) => s.id === current) ? current : data.plan.steps[0]?.id || "");
+      setPlanMsg(message);
+    } catch (e) {
+      setPlanMsg(`Could not save: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const updatePlanStep = (stepId: string, patch: Partial<OverviewPlanStep>, save = false) => {
+    if (!overviewPlan) return;
+    const nextPlan = { ...overviewPlan.plan, steps: overviewPlan.plan.steps.map((s) => (s.id === stepId ? { ...s, ...patch } : s)) };
+    setOverviewPlan({ ...overviewPlan, plan: nextPlan });
+    if (save) void persistOverviewPlan(nextPlan, "Pitch section saved.");
+  };
+
+  const applyPlanNote = async (feedback = planNote, stepId = activePlanStepId) => {
+    const note = feedback.trim();
+    if (!note) return;
+    setPlanMsg("Applying your note to the pitch…");
+    try {
+      const res = await fetch("/api/presentation/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "applyFeedback", feedback: note, stepId }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as OverviewPlanSnap & { warning?: string };
+      setOverviewPlan(data);
+      setActivePlanStepId(stepId || data.plan.steps[0]?.id || "");
+      setPlanNote("");
+      // Surface server-side warnings (e.g. a named slide couldn't be matched) instead of
+      // silently pretending the anchor changed.
+      setPlanMsg(data.warning ? `⚠ ${data.warning}` : "Pitch updated — the next rehearsal and every doctor conversation use it.");
+    } catch (e) {
+      setPlanMsg(`Could not apply note: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const resetOverviewPlan = async () => {
+    setPlanMsg("Resetting pitch…");
+    try {
+      const res = await fetch("/api/presentation/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reset" }) });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as OverviewPlanSnap;
+      setOverviewPlan(data);
+      setActivePlanStepId(data.plan.steps[0]?.id || "");
+      setPlanMsg("Reset to approved deck order.");
+    } catch (e) {
+      setPlanMsg(`Could not reset: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
   // Rehearse the rep with the coaching so far applied. A greeting exchange rewrites the opening
   // line (keeping the mandatory disclosures); any other rewrites the answer. Rehearsal only — the
@@ -650,26 +901,40 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
       const body = ex.kind === "greeting" ? { kind: "greeting", current: ex.current, coaching } : { kind: ex.kind, text: ex.q, coaching, previewSessionId };
       const res = await fetch("/api/train/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (res.ok) {
-        const d = (await res.json()) as { response?: string; route?: string; isiDelivered?: boolean; detailAidSlideId?: string | null; usedLlm?: boolean };
-        return { text: d.response ?? "", route: d.route ?? "", isi: !!d.isiDelivered, detailAidSlideId: d.detailAidSlideId ?? null, usedLlm: !!d.usedLlm };
+        const d = (await res.json()) as { response?: string; route?: string; isiDelivered?: boolean; detailAidSlideId?: string | null; usedLlm?: boolean; segments?: OverviewSegment[] };
+        return { text: d.response ?? "", route: d.route ?? "", isi: !!d.isiDelivered, detailAidSlideId: d.detailAidSlideId ?? null, usedLlm: !!d.usedLlm, ...(d.segments?.length ? { segments: d.segments } : {}) };
       }
     } catch {
       /* fall through */
     }
-    const turn = CONVERSATION[0]!;
-    return { text: turn.response, route: turn.intent, isi: turn.isi, detailAidSlideId: null, usedLlm: false };
+    // Honest failure: never show a canned fixture answer as if the rep said it (the fixture
+    // is themed to the seeded brand and would be wrong for a re-branded rep anyway).
+    return { text: "The rehearsal service is unreachable right now — check the server and try again.", route: "error", isi: false, detailAidSlideId: null, usedLlm: false };
   };
 
   const ask = async (forced?: string) => {
     if (asking) return;
     const q = forced?.trim() || input.trim() || brand?.tryQuestions[0] || "Tell me about this therapy.";
-    const kind = isOverviewPrompt(q) ? "overview" : undefined;
+    const kind = isOverviewPrompt(q, { productTerms: brand?.productTerms ?? [] }) ? "overview" : undefined;
     setAsking(true);
     setInput("");
     const a = await runPreview({ kind, q, current: "" }, []);
     setExchanges((xs) => [...xs, { q, kind, answers: [a], coachings: [], scope: "persona", accepted: false }]);
     setAsking(false);
   };
+
+  // Session review → "Coach this exchange": the reviewed doctor question arrives via a one-shot
+  // seed, so coaching starts from the exact line that needed work — no retyping.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(TRAIN_SEED_KEY);
+      if (!raw) return;
+      window.localStorage.removeItem(TRAIN_SEED_KEY);
+      const seed = JSON.parse(raw) as { q?: string };
+      if (seed.q) void ask(seed.q);
+    } catch { /* malformed seed — ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Add a coaching note → the rep tries again with all notes so far. Iterate until happy.
   const reAnswer = async (idx: number) => {
@@ -693,6 +958,9 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     if (ex.kind === "greeting") {
       if (ex.coachings.length) await post({ action: "greeting", value: finalAnswer });
     } else if (ex.coachings.length) {
+      if (ex.kind === "overview") {
+        for (const note of ex.coachings) await applyPlanNote(note, activePlanStepId);
+      }
       await post({ action: "acceptCoaching", coachings: ex.coachings, question: ex.q, answer: finalAnswer, scope: ex.scope });
     }
     setExchanges((xs) => xs.map((x, i) => (i === idx ? { ...x, accepted: true, ruleCount: ex.coachings.length } : x)));
@@ -722,8 +990,11 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
             <button onClick={() => void ask()} disabled={asking} style={{ ...btnPrimary, padding: "10px 14px" }}>{asking ? "…" : "Ask"}</button>
           </div>
           <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
-            <button onClick={() => void ask("Can you walk me through the approved information?")} disabled={asking} style={{ ...btnGhost, padding: "7px 10px", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>Guided overview</button>
-            <button onClick={() => void ask("What's the LIBREXIA program?")} disabled={asking} style={{ ...btnGhost, padding: "7px 10px", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>Program question</button>
+            <button onClick={() => void ask("Can you walk me through the approved information?")} disabled={asking} style={{ ...btnGhost, padding: "7px 10px", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>▶ Rehearse the pitch</button>
+            {/* Sample question comes from the brand profile (chat-configurable), never hardcoded. */}
+            {(brand?.tryQuestions?.[1] ?? brand?.tryQuestions?.[0]) && (
+              <button onClick={() => void ask(brand!.tryQuestions[1] ?? brand!.tryQuestions[0]!)} disabled={asking} style={{ ...btnGhost, padding: "7px 10px", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>Sample question</button>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 11, borderTop: "1px solid var(--dn-surface-2)" }}>
             <span style={{ font: "400 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Coach a line → the rep tries again</span>
@@ -732,7 +1003,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
         </div>
         <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)" }}>
           <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", marginBottom: 5 }}>How this works</div>
-          <div style={{ font: "400 11px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>The first card is the rep&apos;s <strong>opening line</strong> — coach it too. For any answer, add a note and the rep re-answers; when it&apos;s right, <strong>Accept</strong> and your coaching is saved as reviewable rule(s).</div>
+          <div style={{ font: "400 11px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>The <strong>brand pitch</strong> (right) is what the rep opens doctor conversations with — DocNexus drafted it from your approved deck. <strong>Rehearse</strong> it here, coach any line, and when you <strong>Accept</strong>, the pitch and the rep&apos;s rules update. The first card is the rep&apos;s <strong>opening line</strong> — coach that too.</div>
         </div>
       </div>
 
@@ -763,17 +1034,40 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
                   return (
                     <div key={v} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       <div>
-                        <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-brand-base)", marginBottom: 4 }}>{ex.kind === "greeting" ? "Rep opening" : ex.kind === "overview" ? "Guided overview" : "AI rep"}{ex.answers.length > 1 ? ` · v${v + 1}` : ""}{isLatest ? "" : " · revised ↓"}</div>
+                        <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-brand-base)", marginBottom: 4 }}>{ex.kind === "greeting" ? "Rep opening" : ex.kind === "overview" ? "Brand pitch" : "AI rep"}{ex.answers.length > 1 ? ` · v${v + 1}` : ""}{isLatest ? "" : " · revised ↓"}</div>
                         {(() => {
+                          const bubbleStyle: React.CSSProperties = { padding: "10px 12px", background: offLabel ? "#fffbeb" : isLatest ? "var(--dn-surface-2)" : "#fafbfc", border: `1px solid ${offLabel ? "#fcd34d" : "var(--dn-border)"}`, borderRadius: 9, font: "400 12px/1.55 var(--dn-font-sans)", color: isLatest ? "var(--dn-fg)" : "var(--dn-fg-subtle)", opacity: isLatest ? 1 : 0.7 };
+                          const isiBlock = (isiText: string | null) => isiText && (
+                            <div style={{ marginTop: 9, paddingTop: 8, borderTop: "1px dashed var(--dn-border)", font: "400 10px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
+                              <span style={{ fontWeight: 600, letterSpacing: ".02em" }}>Required safety information · active approved block — </span>{isiText}
+                            </div>
+                          );
+                          // A guided overview renders paragraph-by-paragraph, each labelled with the
+                          // slide it cues — so the training preview matches the doctor-facing delivery
+                          // instead of one wall of text.
+                          if (a.segments?.length) {
+                            return (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                {a.segments.map((seg, si) => {
+                                  const [segBody, segIsi] = splitIsi(seg.response);
+                                  return (
+                                    <div key={si} style={bubbleStyle}>
+                                      <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-accent-purple)", marginBottom: 5, display: "flex", gap: 6 }}>
+                                        <span>{si + 1}.</span><span>{seg.slideTitle ? `${seg.slideTitle} slide` : "Approved slide"}</span>
+                                      </div>
+                                      <div style={{ whiteSpace: "pre-wrap" }}>{segBody}</div>
+                                      {isiBlock(segIsi)}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          }
                           const [bodyText, isiText] = splitIsi(a.text);
                           return (
-                            <div style={{ padding: "10px 12px", background: offLabel ? "#fffbeb" : isLatest ? "var(--dn-surface-2)" : "#fafbfc", border: `1px solid ${offLabel ? "#fcd34d" : "var(--dn-border)"}`, borderRadius: 9, font: "400 12px/1.55 var(--dn-font-sans)", color: isLatest ? "var(--dn-fg)" : "var(--dn-fg-subtle)", opacity: isLatest ? 1 : 0.7 }}>
+                            <div style={bubbleStyle}>
                               <div style={{ whiteSpace: "pre-wrap" }}>{bodyText}</div>
-                              {isiText && (
-                                <div style={{ marginTop: 9, paddingTop: 8, borderTop: "1px dashed var(--dn-border)", font: "400 10px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
-                                  <span style={{ fontWeight: 600, letterSpacing: ".02em" }}>Required safety information · active approved block — </span>{isiText}
-                                </div>
-                              )}
+                              {isiBlock(isiText)}
                             </div>
                           );
                         })()}
@@ -798,13 +1092,13 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
                       {ex.kind === "greeting"
                         ? ex.coachings.length ? "opening line updated — live everywhere the rep greets" : "no changes needed"
                         : ex.kind === "overview"
-                          ? ex.coachings.length ? "guided overview coaching saved as reviewable rule(s)" : "no changes needed"
+                          ? ex.coachings.length ? "pitch updated — coaching saved as reviewable rule(s)" : "no changes needed"
                         : ex.coachings.length ? "your coaching saved as rule(s) → review in Rules" : "no changes needed"}
                     </span>
                   </div>
                 ) : (
                   <div style={{ border: "1px solid var(--dn-brand-light)", borderRadius: 9, padding: 10 }}>
-                    <textarea value={coachDraft[idx] ?? ""} onChange={(e) => setCoachDraft((d) => ({ ...d, [idx]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void reAnswer(idx); }} placeholder={ex.kind === "greeting" ? "Coach the opening line — warmer, shorter, mention the brand… (disclosures are kept)" : ex.kind === "overview" ? "Coach the guided overview — start with LIBREXIA, use mechanism second, make slide cues more natural…" : "Coach this answer — e.g. be more concise, lead with the FDA status, warmer tone…"} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 12px/1.45 var(--dn-font-sans)", resize: "vertical", minHeight: 42, background: "var(--dn-surface-2)" }} />
+                    <textarea value={coachDraft[idx] ?? ""} onChange={(e) => setCoachDraft((d) => ({ ...d, [idx]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void reAnswer(idx); }} placeholder={ex.kind === "greeting" ? "Coach the opening line — warmer, shorter, mention the brand… (disclosures are kept)" : ex.kind === "overview" ? "Coach the pitch — reorder sections, lead with the program, make slide cues more natural…" : "Coach this answer — e.g. be more concise, lead with the approval status, warmer tone…"} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 12px/1.45 var(--dn-font-sans)", resize: "vertical", minHeight: 42, background: "var(--dn-surface-2)" }} />
                     {ex.kind !== "greeting" && (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "9px 0", flexWrap: "wrap" }}>
                         <span style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-fg-subtle)" }}>Save as</span>
@@ -825,13 +1119,156 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
         </div>
       </div>
 
-      {/* Rules from feedback */}
-      <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
-        <div style={{ padding: "14px 16px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--dn-border)" }}><span style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Rules from your coaching</span><span onClick={() => app.setStudioMode("rules")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>See all →</span></div>
-        <div style={{ padding: "13px 16px", display: "flex", flexDirection: "column", gap: 10, maxHeight: 520, overflowY: "auto" }}>
-          {coachingRules.length === 0 && <div style={{ textAlign: "center", padding: "22px 8px", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Accept a coached answer and the rules behind it land here for review.</div>}
-          {coachingRules.map((r) => <RuleCard key={r.id} r={r} onAccept={() => void post({ action: "ruleStatus", ruleId: r.id, status: "active" })} onReject={() => void post({ action: "ruleStatus", ruleId: r.id, status: "rejected" })} compact />)}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+        <OverviewPlanCard
+          snap={overviewPlan}
+          activeStepId={activePlanStepId}
+          activeSlideId={activePlanSlideId}
+          planNote={planNote}
+          planMsg={planMsg}
+          onStep={(id) => setActivePlanStepId(id)}
+          onUpdateStep={updatePlanStep}
+          onSave={() => void persistOverviewPlan()}
+          onApplyNote={() => void applyPlanNote()}
+          onReset={() => void resetOverviewPlan()}
+          onNote={setPlanNote}
+          onRehearse={() => void ask("Can you walk me through the approved information?")}
+          rehearsing={asking}
+        />
+
+        {/* Rules from feedback */}
+        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+          <div style={{ padding: "14px 16px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--dn-border)" }}><span style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Rules from your coaching</span><span onClick={() => app.setStudioMode("rules")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>See all →</span></div>
+          <div style={{ padding: "13px 16px", display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto" }}>
+            {coachingRules.length === 0 && <div style={{ textAlign: "center", padding: "22px 8px", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Accept a coached answer and the rules behind it land here for review.</div>}
+            {coachingRules.map((r) => <RuleCard key={r.id} r={r} onAccept={() => void post({ action: "ruleStatus", ruleId: r.id, status: "active" })} onReject={() => void post({ action: "ruleStatus", ruleId: r.id, status: "rejected" })} compact />)}
+          </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function OverviewPlanCard({
+  snap,
+  activeStepId,
+  activeSlideId,
+  planNote,
+  planMsg,
+  onStep,
+  onUpdateStep,
+  onSave,
+  onApplyNote,
+  onReset,
+  onNote,
+  onRehearse,
+  rehearsing,
+}: {
+  snap: OverviewPlanSnap | null;
+  activeStepId: string;
+  activeSlideId?: string;
+  planNote: string;
+  planMsg: string;
+  onStep: (id: string) => void;
+  onUpdateStep: (id: string, patch: Partial<OverviewPlanStep>, save?: boolean) => void;
+  onSave: () => void;
+  onApplyNote: () => void;
+  onReset: () => void;
+  onNote: (note: string) => void;
+  onRehearse: () => void;
+  rehearsing: boolean;
+}) {
+  const steps = snap?.plan.steps ?? [];
+  const slides = snap?.slides ?? [];
+  const step = steps.find((s) => s.id === activeStepId) ?? steps[0];
+  const stepIndex = Math.max(0, steps.findIndex((s) => s.id === step?.id));
+  const slideLabelOf = (slideId?: string) => slides.find((s) => s.id === slideId)?.label ?? "no slide";
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+      <div style={{ padding: "13px 16px 11px", borderBottom: "1px solid var(--dn-border)", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Brand pitch</div>
+          <div style={{ font: "500 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 4 }}>Drafted by DocNexus from your approved deck. The rep opens doctor conversations with it, slide by slide — edit a section or rehearse and coach it.</div>
+        </div>
+        <button onClick={onRehearse} disabled={rehearsing} title="Run the pitch in the coaching thread on the left" style={{ ...btnPrimary, flexShrink: 0, padding: "7px 10px", font: "600 10.5px/1 var(--dn-font-sans)", opacity: rehearsing ? 0.6 : 1 }}>{rehearsing ? "…" : "▶ Rehearse"}</button>
+      </div>
+
+      <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 11 }}>
+        <div style={{ height: 178, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "1px solid var(--dn-border)", background: "var(--dn-surface-2)" }}>
+          <SlideView focusId={activeSlideId} compact fill />
+        </div>
+
+        {!snap || !step ? (
+          <div style={{ padding: "20px 8px", textAlign: "center", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Loading approved deck…</div>
+        ) : (
+          <>
+            {/* The pitch, section by section — each anchored to an approved slide. Click to edit. */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 168, overflowY: "auto" }}>
+              {steps.map((s, i) => {
+                const active = s.id === step.id;
+                return (
+                  <div
+                    key={s.id}
+                    onClick={() => onStep(s.id)}
+                    title={s.instruction || s.title}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: 8, cursor: "pointer", border: `1px solid ${active ? "var(--dn-brand-base)" : "var(--dn-surface-2)"}`, background: active ? "rgba(6,73,172,.06)" : "transparent" }}
+                  >
+                    <span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 6, display: "inline-flex", alignItems: "center", justifyContent: "center", font: "700 9.5px/1 var(--dn-font-sans)", color: active ? "#fff" : "var(--dn-fg-muted)", background: active ? "var(--dn-brand-base)" : "var(--dn-surface-2)" }}>{i + 1}</span>
+                    <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", font: `600 11px/1.3 var(--dn-font-sans)`, color: active ? "var(--dn-brand-base)" : "var(--dn-fg)" }}>{s.title}</span>
+                    <span style={{ flexShrink: 0, font: "500 9.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{slideLabelOf(s.slideId)}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "grid", gap: 8, borderTop: "1px solid var(--dn-surface-2)", paddingTop: 10 }}>
+              <span style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-brand-base)" }}>Edit section {stepIndex + 1} — saves when you click away</span>
+              <input
+                value={step.title}
+                onChange={(e) => onUpdateStep(step.id, { title: e.target.value })}
+                onBlur={() => onSave()}
+                placeholder="Section title"
+                style={{ width: "100%", padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "600 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", background: "var(--dn-surface-2)" }}
+              />
+              <select
+                value={step.slideId ?? ""}
+                onChange={(e) => onUpdateStep(step.id, { slideId: e.target.value || undefined }, true)}
+                title="The approved slide shown while the rep speaks this section"
+                style={{ width: "100%", padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "500 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", background: "#fff" }}
+              >
+                {slides.map((slide) => (
+                  <option key={slide.id} value={slide.id}>Shows slide {slide.position}: {slide.title}</option>
+                ))}
+              </select>
+              <textarea
+                value={step.instruction}
+                onChange={(e) => onUpdateStep(step.id, { instruction: e.target.value })}
+                onBlur={() => onSave()}
+                placeholder="What should the rep cover here? e.g. Lead with the Phase 3 program, keep it under 3 sentences…"
+                style={{ width: "100%", minHeight: 68, resize: "vertical", padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 11.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg)", background: "var(--dn-surface-2)" }}
+              />
+              <div style={{ padding: "8px 9px", borderRadius: 8, background: "#f8fafc", border: "1px solid var(--dn-border)", font: "400 10.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
+                {slides.find((s) => s.id === step.slideId)?.preview ?? "Select an approved slide to anchor this section."}
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gap: 7, borderTop: "1px solid var(--dn-surface-2)", paddingTop: 10 }}>
+              <input
+                value={planNote}
+                onChange={(e) => onNote(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") onApplyNote(); }}
+                placeholder="Or tell DocNexus — “lead with safety”, “use slide 3 here”…"
+                style={{ width: "100%", padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 11.5px/1.3 var(--dn-font-sans)", background: "#fff" }}
+              />
+              <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
+                <button onClick={onApplyNote} disabled={!planNote.trim()} style={{ ...btnGhost, flex: 1, padding: "8px 9px", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)", opacity: planNote.trim() ? 1 : 0.55 }}>Apply note to this section</button>
+                <button onClick={onReset} title="Discard edits and re-draft the pitch from the approved deck order" style={{ ...btnGhost, flexShrink: 0, padding: "8px 9px", font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>↺ Re-draft from deck</button>
+              </div>
+              {planMsg && <div style={{ font: "500 10.5px/1.4 var(--dn-font-sans)", color: planMsg.startsWith("Could not") ? "#991b1b" : "var(--dn-fg-subtle)" }}>{planMsg}</div>}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

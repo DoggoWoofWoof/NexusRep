@@ -47,6 +47,11 @@ export function HcpExperience({ app }: { app?: AppState }) {
   const [fs, setFs] = useState(false);
   const [listening, setListening] = useState(false);
   const [micSupported, setMicSupported] = useState(false);
+  // The doctor's identity: the invite link carries it on the shared page (/hcp?hcp=<id>),
+  // and the in-app preview passes it via Audience → "Preview AI rep" (app.sessionHcpId).
+  // Sent with every request; the server honors it only for a real targeted HCP.
+  const [urlHcpId, setUrlHcpId] = useState("");
+  const inviteHcpId = app?.sessionHcpId || urlHcpId;
 
   const voiceRef = useRef<BrowserVoiceProvider | null>(null);
   const liveRef = useRef<LiveAvatarHandle | null>(null);
@@ -59,6 +64,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
   const slideTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
+    try { setUrlHcpId(new URLSearchParams(window.location.search).get("hcp") ?? ""); } catch { /* no window */ }
     voiceRef.current = new BrowserVoiceProvider();
     void voiceRef.current.warmup();
     const rec = createRecognizer();
@@ -171,10 +177,10 @@ export function HcpExperience({ app }: { app?: AppState }) {
       const videoSession = videoOn ? (window as unknown as { __nexusrep?: { sessionId?: string } }).__nexusrep?.sessionId : undefined;
       const openNew = !videoOn && !chatSessionRef.current;
       const sessionId = videoSession ?? chatSessionRef.current ?? undefined;
-      if (!lab && isOverviewPrompt(text)) {
+      if (!lab && isOverviewPrompt(text, { productTerms: brand?.productTerms ?? [] })) {
         const res = await fetch("/api/presentation/overview", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined }),
+          body: JSON.stringify({ text, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined, hcpId: inviteHcpId || undefined }),
         });
         const data = (await res.json()) as { sessionId?: string; segments?: OverviewSegment[] };
         if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
@@ -187,7 +193,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
       }
       const res = await fetch("/api/conversation/turn", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, classifier: lab ? modelA : undefined, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined }),
+        body: JSON.stringify({ text, classifier: lab ? modelA : undefined, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined, hcpId: inviteHcpId || undefined }),
       });
       const data = (await res.json()) as { response: string; isiDelivered: boolean; followUp: string | null; detailAid: { title: string; label: string } | null; detailAidSlideId?: string | null; provider: string; latencyMs: number; sessionId?: string };
       if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
@@ -216,7 +222,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
       const res = await fetch("/api/presentation/step", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, query, displayText: label, currentSlideId: deckFocus || undefined, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined }),
+        body: JSON.stringify({ action, query, displayText: label, currentSlideId: deckFocus || undefined, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined, hcpId: inviteHcpId || undefined }),
       });
       const data = (await res.json()) as { response: string; detailAidSlideId?: string | null; sessionId?: string; step?: { index: number; total: number } | null };
       if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
@@ -304,13 +310,13 @@ export function HcpExperience({ app }: { app?: AppState }) {
           <div style={{ maxWidth: 540, width: "100%", background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 18, boxShadow: "var(--dn-shadow-medical)", overflow: "hidden" }}>
             <div style={{ background: "var(--dn-gradient-hero, linear-gradient(120deg,#04307a,#2563eb))", padding: "30px 32px", color: "#fff" }}>
               <div style={{ display: "inline-flex", alignItems: "center", gap: 7, background: "rgba(255,255,255,.15)", padding: "6px 11px", borderRadius: 20, font: "600 10.5px/1 var(--dn-font-sans)", marginBottom: 16 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fbbf24" }} />AI-guided · not a person</div>
-              <h1 style={{ font: "600 23px/1.25 var(--dn-font-sans)", margin: 0, letterSpacing: "-0.01em" }}>You're invited to an AI-guided session on {displayName}</h1>
+              <h1 style={{ font: "600 23px/1.25 var(--dn-font-sans)", margin: 0, letterSpacing: "-0.01em" }}>You&apos;re invited to an AI-guided session on {displayName}</h1>
               <p style={{ font: "400 13px/1.55 var(--dn-font-sans)", color: "rgba(255,255,255,.85)", margin: "12px 0 0" }}>A brief, on-demand walkthrough of publicly-disclosed information on {displayName}{tagline ? ` — ${tagline}` : ""} — answer questions at your own pace.</p>
             </div>
             <div style={{ padding: "26px 32px" }}>
               <div style={{ padding: "14px 16px", background: "var(--dn-surface-2)", borderRadius: 11, marginBottom: 22 }}>
                 <div style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-fg)", marginBottom: 8 }}>What to expect</div>
-                <div style={{ font: "400 12px/1.6 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>You'll talk with an AI representative that shares only publicly-disclosed information about {displayName}.{brand?.investigational ? ` ${displayName} is investigational and not FDA approved —` : ""} the rep routes clinical questions like dosing, efficacy, or safety to Medical Information, and you can ask for a human rep or MSL anytime.</div>
+                <div style={{ font: "400 12px/1.6 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>You&apos;ll talk with an AI representative that shares only publicly-disclosed information about {displayName}.{brand?.investigational ? ` ${displayName} is investigational and not FDA approved —` : ""} the rep routes clinical questions like dosing, efficacy, or safety to Medical Information, and you can ask for a human rep or MSL anytime.</div>
               </div>
               <button onClick={() => { setMsgs(greeting ? [{ role: "rep", text: greeting }] : []); setScr("convo"); }} style={{ width: "100%", padding: 14, background: "var(--dn-brand-base)", color: "#fff", border: "none", borderRadius: 10, font: "600 14px/1 var(--dn-font-sans)", cursor: "pointer" }}>Start session</button>
             </div>
@@ -348,7 +354,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
               {/* LEFT — the rep (live Tavus video OR the 3D/2D avatar) + one ask bar */}
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {videoOn
-                  ? <TavusStage ref={tavusRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} />
+                  ? <TavusStage ref={tavusRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} hcpId={inviteHcpId || undefined} />
                   : <LiveAvatar ref={liveRef} enabled={threeD} speaking={speaking} fallbackStream={null} fallbackStatus={listening ? "Listening…" : speaking ? "Speaking…" : "Ready"} height={300} />}
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{askBar("Ask")}{tryChips}</div>
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -397,7 +403,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
           <div style={{ maxWidth: 540, width: "100%", background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 18, boxShadow: "var(--dn-shadow-medical)", overflow: "hidden", textAlign: "center", padding: "30px 32px 26px" }}>
             <div style={{ width: 56, height: 56, borderRadius: "50%", background: "var(--dn-accent-green-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 26, color: "#166534" }}>✓</div>
             <h1 style={{ font: "600 21px/1.25 var(--dn-font-sans)", margin: 0, color: "var(--dn-fg)" }}>Thanks for your time</h1>
-            <p style={{ font: "400 13px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "10px 0 20px" }}>Request a follow-up and we'll send approved {displayName} information or connect you with our team.</p>
+            <p style={{ font: "400 13px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "10px 0 20px" }}>Request a follow-up and we&apos;ll send approved {displayName} information or connect you with our team.</p>
             <button onClick={() => { if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current); setScr("invite"); setMsgs([]); setNotice(""); setDeckFocus(""); setVideoOn(false); setAbRun(null); chatSessionRef.current = null; }} style={{ width: "100%", padding: 12, background: "var(--dn-surface-2)", color: "var(--dn-fg-muted)", border: "1px solid var(--dn-border)", borderRadius: 10, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Close session</button>
           </div>
         </div>

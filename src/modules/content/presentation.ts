@@ -35,12 +35,38 @@ export interface PresentationOverviewRequest {
   context?: SourceValidationContext;
   maxSlides?: number;
   guidance?: string[];
+  plan?: PresentationPlan;
+}
+
+export interface PresentationPlanStep {
+  id: string;
+  title: string;
+  /** Approved detail-aid slide to anchor this overview section. */
+  slideId?: string;
+  /** Brand-authored speaker guidance. Used for ordering/cue style; medical body stays approved-source text. */
+  instruction: string;
+}
+
+export interface PresentationPlan {
+  steps: PresentationPlanStep[];
+  updatedAt?: string;
+}
+
+export interface PresentationDeckSlide {
+  id: string;
+  title: string;
+  label: string;
+  position: number;
+  sourceId: string;
+  topic: string;
+  preview: string;
 }
 
 interface DeckItem {
   answer: ApprovedAnswer;
   slide: DetailAidSlide | null;
 }
+type PlannedDeckItem = { item: DeckItem; step?: PresentationPlanStep };
 
 function words(s: string): string[] {
   return s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
@@ -127,8 +153,88 @@ function overviewLead(index: number, total: number, title: string | undefined, s
   return pick(variants, `${seed}:${index}`);
 }
 
+function defaultStepInstruction(item: DeckItem, index: number): string {
+  if (index === 0) return "Open the overview and set context from this approved slide.";
+  const topic = item.answer.topic.replace(/[_-]+/g, " ");
+  return `Continue the overview using the approved ${topic} points on this slide.`;
+}
+
+function planLead(index: number, total: number, title: string | undefined, step: PresentationPlanStep): string {
+  const where = slidePhrase(title);
+  const guide = step.instruction.toLowerCase();
+  const isLast = index === total - 1;
+  const brief = /\b(short|brief(?:ly)?|concise|high[- ]level|quick)\b/.test(guide);
+  if (index === 0) {
+    return brief
+      ? `I’ll start briefly with ${where}.`
+      : `I’ll start the overview with ${where} so the discussion is anchored in approved material.`;
+  }
+  if (isLast) {
+    return brief
+      ? `To close, I’d show ${where}.`
+      : `To close this section, I’d bring up ${where} and keep the next step clear.`;
+  }
+  return brief
+    ? `Next, I’d put ${where} on screen.`
+    : `For this section, I’d put ${where} on screen and use the approved points there.`;
+}
+
+function resolvePlannedItems(items: DeckItem[], plan: PresentationPlan | undefined): PlannedDeckItem[] {
+  const steps = (plan?.steps ?? []).filter((s) => s.slideId || s.title.trim() || s.instruction.trim());
+  if (!steps.length) return items.map((item) => ({ item }));
+
+  const bySlide = new Map(items.filter((i) => i.slide?.id).map((i) => [String(i.slide!.id), i]));
+  const used = new Set<DeckItem>();
+  const planned: PlannedDeckItem[] = [];
+
+  for (const [i, step] of steps.entries()) {
+    let item = step.slideId ? bySlide.get(step.slideId) : undefined;
+    if (!item) {
+      const query = `${step.title} ${step.instruction}`;
+      item = items
+        .filter((candidate) => !used.has(candidate))
+        .map((candidate) => ({ candidate, score: weightedSlideScore(candidate, query) }))
+        .sort((a, b) => b.score - a.score || order(a.candidate) - order(b.candidate))[0]?.candidate;
+    }
+    item ??= items.find((candidate) => !used.has(candidate)) ?? items[i] ?? items[0];
+    if (!item) continue;
+    used.add(item);
+    planned.push({ item, step });
+  }
+
+  for (const item of items) {
+    if (!used.has(item)) planned.push({ item });
+  }
+  return planned;
+}
+
 export class PresentationSkill {
   constructor(private readonly content: ContentService) {}
+
+  async deck(ctx: SourceValidationContext = {}): Promise<PresentationDeckSlide[]> {
+    return (await this.deckItems(ctx)).map((item, index) => ({
+      id: item.slide?.id ? String(item.slide.id) : String(item.answer.detailAidSlideId ?? item.answer.id),
+      title: item.slide?.title ?? item.answer.topic,
+      label: item.slide?.label ?? `Slide ${index + 1}`,
+      position: item.slide?.position ?? index + 1,
+      sourceId: String(item.answer.id),
+      topic: item.answer.topic,
+      preview: item.answer.text.length > 150 ? `${item.answer.text.slice(0, 147).trim()}...` : item.answer.text,
+    }));
+  }
+
+  async defaultPlan(ctx: SourceValidationContext = {}): Promise<PresentationPlan> {
+    const items = await this.deckItems(ctx);
+    return {
+      updatedAt: new Date().toISOString(),
+      steps: items.map((item, index) => ({
+        id: `overview_step_${index + 1}`,
+        title: item.slide?.title ?? item.answer.topic,
+        slideId: item.slide?.id ? String(item.slide.id) : undefined,
+        instruction: defaultStepInstruction(item, index),
+      })),
+    };
+  }
 
   async step(req: PresentationRequest): Promise<PresentationStep | null> {
     const items = guidedItems(await this.deckItems(req.context ?? {}), req.guidance);
@@ -148,9 +254,10 @@ export class PresentationSkill {
   }
 
   async overview(req: PresentationOverviewRequest = {}): Promise<PresentationStep[]> {
-    const items = guidedItems(await this.deckItems(req.context ?? {}), req.guidance);
-    const total = Math.max(0, Math.min(req.maxSlides ?? items.length, items.length));
-    return items.slice(0, total).map((_item, index) => this.buildStep(items, index, index === 0 ? "start" : "next", true));
+    const deck = await this.deckItems(req.context ?? {});
+    const planned: PlannedDeckItem[] = req.plan?.steps?.length ? resolvePlannedItems(deck, req.plan) : guidedItems(deck, req.guidance).map((item) => ({ item }));
+    const total = Math.max(0, Math.min(req.maxSlides ?? planned.length, planned.length));
+    return planned.slice(0, total).map(({ item, step }, index) => this.buildPlannedStep(planned, item, index, index === 0 ? "start" : "next", step));
   }
 
   private async deckItems(ctx: SourceValidationContext): Promise<DeckItem[]> {
@@ -181,6 +288,21 @@ export class PresentationSkill {
       action,
       index,
       total: items.length,
+      text,
+      sourceIds: [item.answer.id],
+      detailAidSlideId: item.answer.detailAidSlideId,
+      slideTitle: title,
+    };
+  }
+
+  private buildPlannedStep(planned: PlannedDeckItem[], item: DeckItem, index: number, action: PresentationAction, step?: PresentationPlanStep): PresentationStep {
+    const title = item.slide?.title ?? item.slide?.label;
+    const intro = step ? planLead(index, planned.length, title, step) : overviewLead(index, planned.length, title, String(item.answer.id));
+    const text = `${intro} ${item.answer.text}`;
+    return {
+      action,
+      index,
+      total: planned.length,
       text,
       sourceIds: [item.answer.id],
       detailAidSlideId: item.answer.detailAidSlideId,

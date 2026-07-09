@@ -82,4 +82,23 @@ describe("NexusRep first-party presentation skill", () => {
     expect(steps[0]?.sourceIds).toEqual(["ans_program"]);
     expect(steps.map((s) => s.detailAidSlideId)).toContain("slide_moa");
   });
+
+  it("uses a saved guided-overview plan to drive section-by-section slide references", async () => {
+    const c = await createContainer();
+    const steps = await c.presentation.overview({
+      context: { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market },
+      plan: {
+        steps: [
+          { id: "overview_step_1", title: "Program section", slideId: "slide_program", instruction: "Start briefly with this section." },
+          { id: "overview_step_2", title: "Mechanism section", slideId: "slide_moa", instruction: "For this section refer to the mechanism slide." },
+        ],
+      },
+    });
+
+    expect(steps[0]?.detailAidSlideId).toBe("slide_program");
+    expect(steps[0]?.sourceIds).toEqual(["ans_program"]);
+    expect(steps[0]?.text).toContain("start briefly");
+    expect(steps[1]?.detailAidSlideId).toBe("slide_moa");
+    expect(steps[1]?.sourceIds).toEqual(["ans_moa"]);
+  });
 });

@@ -17,6 +17,9 @@ export interface RealtimeSessionConfig {
   replicaId?: string;
   /** Reuse an existing persona instead of creating one per session. */
   personaId?: string;
+  /** Cache key for the auto-created persona (one persona PER BRAND, e.g. the brandId) —
+   *  prevents a second brand in the same process reusing/patching the first brand's persona. */
+  personaCacheKey?: string;
   /** Opening line the avatar speaks (disclosure + greeting). */
   customGreeting?: string;
   /** Per-session context appended on top of the persona's context (NO raw PHI). */

@@ -40,12 +40,12 @@ interface CreateConversationResponse {
   meeting_token?: string;
 }
 
-// Process-wide cache of the ONE persona we create, so every session REUSES it instead of
-// spawning a new "pal" each time. `lastPrompt` lets us update the existing persona in place
-// (PATCH) when the brand's system prompt changes, rather than recreating it. Survives across
-// the per-request provider instances (module scope, not instance scope).
-let createdPersonaId: string | undefined;
-let lastPersonaPrompt: string | undefined;
+// Process-wide cache of ONE persona PER BRAND (keyed by personaCacheKey), so every session
+// reuses its brand's persona instead of spawning a new "pal" each time — and a second brand
+// in the same process can never reuse/PATCH the first brand's persona. `prompts` tracks the
+// last-applied system prompt per key so we update in place (PATCH) when it changes.
+const createdPersonas = new Map<string, string>();
+const personaPrompts = new Map<string, string>();
 
 export class TavusRealtimeProvider implements RealtimeProvider {
   readonly name = "tavus";
@@ -58,7 +58,10 @@ export class TavusRealtimeProvider implements RealtimeProvider {
 
   private async api<T>(path: string, init: RequestInit): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.cfg.timeoutMs ?? 8000);
+    // 15s default: observed live that first-boot persona create/patch + conversation create
+    // can exceed 8s, which made the FIRST video call of a session fail (configured:false)
+    // and succeed only on retry.
+    const timer = setTimeout(() => controller.abort(), this.cfg.timeoutMs ?? 15000);
     try {
       const res = await fetch(`${this.cfg.baseUrl.replace(/\/$/, "")}${path}`, {
         ...init,
@@ -79,15 +82,18 @@ export class TavusRealtimeProvider implements RealtimeProvider {
    * UPDATE the existing persona in place (best-effort PATCH) instead of recreating it.
    */
   private async ensurePersona(config: RealtimeSessionConfig): Promise<string> {
-    const existing = config.personaId ?? this.cfg.personaId ?? createdPersonaId;
+    const cacheKey = config.personaCacheKey ?? "default";
+    const existing = config.personaId ?? this.cfg.personaId ?? createdPersonas.get(cacheKey);
     if (existing) {
-      if (config.systemPrompt && config.systemPrompt !== lastPersonaPrompt) {
+      if (config.systemPrompt && config.systemPrompt !== personaPrompts.get(cacheKey)) {
         try {
           // Tavus persona update is JSON Patch (RFC 6902).
           await this.api(`/personas/${existing}`, { method: "PATCH", body: JSON.stringify([{ op: "replace", path: "/system_prompt", value: config.systemPrompt }]) });
-          lastPersonaPrompt = config.systemPrompt;
-        } catch {
-          /* best-effort — reuse the persona as-is if the update fails */
+          personaPrompts.set(cacheKey, config.systemPrompt);
+        } catch (e) {
+          // Reuse the persona as-is, but SAY so — a silently-stale system prompt is
+          // exactly the kind of failure an operator needs to see.
+          console.error("[tavus] persona update failed; reusing existing persona:", e instanceof Error ? e.message : e);
         }
       }
       return existing;
@@ -118,8 +124,8 @@ export class TavusRealtimeProvider implements RealtimeProvider {
     if (config.voice?.voiceId) layers.tts = { external_voice_id: config.voice.voiceId };
 
     const body = {
-      // Stable name (not per-session) — this persona is created ONCE and reused across sessions.
-      persona_name: "NexusRep compliant rep",
+      // Stable, per-brand name (not per-session) — one persona per brand, reused across sessions.
+      persona_name: cacheKey === "default" ? "NexusRep compliant rep" : `NexusRep compliant rep · ${cacheKey}`,
       system_prompt: config.systemPrompt,
       default_replica_id: config.replicaId ?? this.cfg.replicaId,
       pipeline_mode: "full",
@@ -127,8 +133,8 @@ export class TavusRealtimeProvider implements RealtimeProvider {
     };
     const r = await this.api<CreatePersonaResponse>("/personas", { method: "POST", body: JSON.stringify(body) });
     if (!r.persona_id) throw new Error("tavus: no persona_id returned");
-    createdPersonaId = r.persona_id;
-    lastPersonaPrompt = config.systemPrompt;
+    createdPersonas.set(cacheKey, r.persona_id);
+    personaPrompts.set(cacheKey, config.systemPrompt);
     return r.persona_id;
   }
 

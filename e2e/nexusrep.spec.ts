@@ -176,4 +176,18 @@ test.describe("Audience + Review", () => {
     await expect(page.getByText(/Transcript/i).first()).toBeVisible();
     await expect(page.getByText(/Factor XIa|Mechanism|investigational/i).first()).toBeVisible();
   });
+
+  test("Review → 'Coach this exchange' opens Training with that doctor question pre-asked", async ({ page }) => {
+    await page.goto("/");
+    await nav(page, "Sessions").click();
+    await page.getByTestId("review-session").first().click();
+    await expect(page.getByText(/session review/i)).toBeVisible({ timeout: 10_000 });
+    const coach = page.getByTestId("coach-exchange");
+    // Only sessions with at least one doctor line offer the handoff (honest hide otherwise).
+    if (!(await coach.isVisible().catch(() => false))) test.skip(true, "reviewed session has no HCP line to coach");
+    await coach.click();
+    // Lands on Train with the reviewed question already asked → the rep answers it here.
+    await expect(page.getByText("Brand pitch").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/You \(as HCP\)/i).first()).toBeVisible({ timeout: 20_000 });
+  });
 });

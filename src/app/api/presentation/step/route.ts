@@ -5,8 +5,8 @@
  */
 
 import { NextResponse } from "next/server";
-import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
+import { resolveSessionAndHcp } from "@lib/resolve-session";
 import { complianceGate, type PolicyRoute, type RiskClassification } from "@modules/compliance";
 import { presentationGuidance } from "@modules/rules";
 import type { PresentationAction } from "@modules/content";
@@ -51,31 +51,23 @@ export async function POST(req: Request): Promise<NextResponse> {
     sessionId?: unknown;
     newSession?: unknown;
     greeting?: unknown;
+    hcpId?: unknown;
   };
   const action = parseAction(body.action);
   const query = typeof body.query === "string" ? body.query : undefined;
   const displayText = typeof body.displayText === "string" ? body.displayText.trim().slice(0, 500) : "";
   const currentSlideId = typeof body.currentSlideId === "string" ? body.currentSlideId : undefined;
-  const greeting = typeof body.greeting === "string" ? body.greeting.trim() : "";
 
   const c = await getContainer();
-  const requested = typeof body.sessionId === "string" ? asId<"session_id">(body.sessionId) : undefined;
-  let sessionId = c.demo.sessionId;
-  if (requested && (await c.sessions.get(requested))) {
-    sessionId = requested;
-  } else if (body.newSession === true) {
-    const fresh = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
-    sessionId = fresh.id;
-    if (greeting) await c.sessions.appendTurn(sessionId, { speaker: "rep", text: greeting });
-  } else if (!(await c.sessions.get(sessionId))) {
-    await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId, seed: "demo" });
-  }
+  // Shared session + invite-link identity resolution (same logic as conversation/turn).
+  const { sessionId, hcpId } = await resolveSessionAndHcp(c, body);
 
   const requestText = displayText || hcpText(action, query);
   await c.sessions.appendTurn(sessionId, { speaker: "hcp", text: requestText });
+  const t0 = Date.now();
 
   const rules = (await c.studio.get(c.demo.aiRepId))?.rules ?? [];
-  const guidance = presentationGuidance(rules, { hcpId: c.demo.hcpId });
+  const guidance = presentationGuidance(rules, { hcpId });
   const step = await c.presentation.step({
     action,
     currentSlideId,
@@ -131,7 +123,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   });
   await c.sessions.recordOutcome(sessionId, { route, decision: decision.decision });
   await c.audit.record(sessionId, "response_output", { route, text: finalText, sourceIds, detailAid: detailAidSlideId, skill: "presentation" });
-  c.metrics.record({ latencyMs: 0, route });
+  c.metrics.record({ latencyMs: Date.now() - t0, route }); // real latency, not 0 (was skewing analytics)
 
   return NextResponse.json({
     route,

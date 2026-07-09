@@ -35,7 +35,9 @@ export type EscalationEventId = Brand<string, "escalation_event_id">;
  * keep snapshots stable. Falls back to time+random only when no seed is given.
  */
 export function newId<T extends string>(prefix: string, seed?: string): Brand<string, T> {
-  const suffix = seed ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  // Treat an EMPTY seed as no seed — "" would otherwise mint the colliding id
+  // `${prefix}_` for every caller that passes an empty string.
+  const suffix = seed?.trim() ? seed : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   return `${prefix}_${suffix}` as Brand<string, T>;
 }
 

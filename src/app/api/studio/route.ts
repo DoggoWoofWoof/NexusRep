@@ -64,6 +64,8 @@ function shape(snap: StudioSnapshot) {
     readiness: snap.readiness,
     sections: snap.draft.sections,
     rules: snap.rules.map((r) => toUiRule(r, personaName)),
+    // Real launch state (persisted) — the Launch screen derives per-doctor invite links from it.
+    activation: snap.activation ?? null,
   };
 }
 
@@ -93,6 +95,8 @@ export async function POST(req: Request): Promise<NextResponse> {
     coachings?: unknown;
     question?: string;
     answer?: string;
+    // launch: the activation list of cohort HCP ids to invite.
+    hcpIds?: unknown;
   };
   const c = await getContainer();
   const id = c.demo.aiRepId;
@@ -124,6 +128,15 @@ export async function POST(req: Request): Promise<NextResponse> {
       const { sensitive, style } = partitionCoaching(coachings);
       const compacted = style.length ? (await compactCoaching(style, { question: body.question ?? "", answer: body.answer ?? "" })).instruction : undefined;
       return done(await c.studio.acceptCoaching(id, { sensitive, style, compactedInstruction: compacted, scope, appliesToHcpId, sourceMessage: body.question }));
+    }
+    case "launch": {
+      // Persist the REAL activation list (validated against the claims cohort) so the Launch
+      // screen's state + per-doctor invite links survive navigation and restarts.
+      const hcpIds = Array.isArray(body.hcpIds)
+        ? body.hcpIds.filter((x): x is string => typeof x === "string" && c.targeting.has(x))
+        : [];
+      if (!hcpIds.length) return bad("hcpIds (valid cohort members) required");
+      return done(await c.studio.launch(id, hcpIds));
     }
     case "greeting": {
       // Accepting a coached OPENING LINE persists it as the rep's greeting + disclosure, so the

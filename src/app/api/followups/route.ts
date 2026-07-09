@@ -31,14 +31,18 @@ const CRM_STATUS: Record<CrmDeliveryStatus, string> = {
 export async function GET(): Promise<NextResponse> {
   const c = await getContainer();
   const [followups, outbox] = await Promise.all([c.followups.list(), c.crm.list()]);
+  // Honest CRM label: show what is actually connected. A mock adapter is labeled as
+  // simulated — never a vendor name ("Veeva") that isn't wired up.
+  const target = /mock/i.test(c.crm.adapterName) ? "CRM (simulated)" : c.crm.adapterName;
   const rows = followups.map((f) => {
     const entry = outbox.find((e) => e.sessionId === f.sourceSessionId && e.payload.followUpType === f.type);
     return {
       id: f.id,
-      hcp: hcpNameOf(f.hcpId),
+      // Resolve from the LIVE cohort first (DocNexus-backed ids), demo directory as fallback.
+      hcp: c.targeting.get(String(f.hcpId))?.name ?? hcpNameOf(f.hcpId),
       reason: REASON[f.type],
       owner: f.owner,
-      target: "Veeva",
+      target,
       status: entry ? CRM_STATUS[entry.status] : "Created",
     };
   });

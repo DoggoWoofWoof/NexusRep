@@ -64,14 +64,14 @@ export const env = {
     ["keyword", "claude", "openai", "thinking-machines"],
     "keyword",
   ),
-  // How approved answers are composed. "deterministic" (default) speaks the
-  // approved blocks verbatim — the compliance-safe default (no generated claims,
-  // no LLM embellishment). "llm" lets a grounded composer rephrase (still
-  // grounding-validated). The in-chat ⚙ Test models selector can override per turn.
+  // How approved answers are composed. "llm" lets a grounded composer rephrase
+  // (grounding-validated + gated); "deterministic" speaks approved blocks verbatim.
+  // Auto-selects "llm" when a provider key is present (same pattern as Tavus) —
+  // set NEXUSREP_COMPOSE=deterministic to force verbatim-only.
   composeMode: pick<"deterministic" | "llm">(
     process.env.NEXUSREP_COMPOSE,
     ["deterministic", "llm"],
-    "deterministic",
+    process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY ? "llm" : "deterministic",
   ),
 
   // ── HCP audience source (DocNexus advanced-search) ──────────────────────────
@@ -107,4 +107,21 @@ export const env = {
   tavusLlmKey: process.env.TAVUS_LLM_KEY ?? "",
   /** Publicly-reachable base URL of THIS app (for Tavus custom-LLM + callback). */
   publicBaseUrl: process.env.NEXUSREP_PUBLIC_URL ?? "http://localhost:3000",
+
+  // ── Demo tenant + compliance tunables (nothing behavioral is hardcoded) ──────
+  /** The demo/default HCP identity used when no invite-link identity is supplied. */
+  demoHcpId: process.env.NEXUSREP_DEMO_HCP_ID ?? "hcp_sharma",
+  /** MLR expiry for demo-seeded content. Empty → 18 months from boot. */
+  mlrExpiresAt: process.env.NEXUSREP_MLR_EXPIRES_AT ?? "",
+  /** Risk threshold at/above which a classified risk routes to a safe path (default 0.6). */
+  riskThreshold: clampNum(process.env.NEXUSREP_RISK_THRESHOLD, 0.6, 0.1, 1),
+  /** Minimum lexical coverage for an LLM-composed answer to count as grounded (default 0.5). */
+  groundingMinCoverage: clampNum(process.env.NEXUSREP_GROUNDING_MIN_COVERAGE, 0.5, 0.1, 1),
+  /** Max tokens per composed answer (default 400). */
+  composerMaxTokens: Math.round(clampNum(process.env.NEXUSREP_COMPOSER_MAX_TOKENS, 400, 50, 4000)),
 } as const;
+
+function clampNum(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && raw !== undefined && raw !== "" ? Math.max(min, Math.min(max, n)) : fallback;
+}
