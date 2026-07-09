@@ -18,6 +18,7 @@ Rules — these are absolute:
 - If the provided content does not answer the question, say you can connect them with a representative or medical information — do not guess or generalize.
 - Do NOT mention "approved content", sources, MLR, or internal systems.
 - Do NOT write, paraphrase, shorten, or summarize Important Safety Information. The platform appends the exact required ISI after your answer when needed.
+- Return only the answer body. Do not include an "Important Safety Information" heading or block.
 - Follow the brand coaching below for tone, length, and what to emphasize. When it doesn't specify a length, keep it to about 2–4 sentences.`;
 
 export interface ComposeInput {
@@ -41,13 +42,28 @@ export interface ComposeInput {
 /** Build the composer system prompt: absolute rules + approved blocks + required safety + coaching. */
 function systemFor(blocks: ApprovedAnswer[], guidance?: string[], safety?: string): string {
   const notes = (guidance ?? []).map((g) => g.trim()).filter(Boolean);
+  const hardLength = lengthConstraint(notes);
   const coaching = notes.length
-    ? `\n\nBrand coaching (tone / length / emphasis — never overrides the absolute rules above and never adds facts):\n${notes.map((g) => `- ${g}`).join("\n")}`
+    ? `\n\nBrand coaching (tone / length / emphasis — never overrides the absolute rules above and never adds facts):\n${notes.map((g) => `- ${g}`).join("\n")}${hardLength}`
     : "";
   const safe = safety?.trim()
     ? `\n\nImportant Safety Information that the platform will append EXACTLY after your answer. Do not paraphrase, shorten, summarize, or duplicate it in your response:\n${safety.trim()}`
     : "";
   return `${COMPOSER_SYSTEM}\n\nApproved content:\n${blocksText(blocks)}${safe}${coaching}`;
+}
+
+function lengthConstraint(notes: string[]): string {
+  const joined = notes.join("\n").toLowerCase();
+  if (/\b(?:one|1|single)[ -]?sentence\b/.test(joined)) {
+    return "\nHard length constraint: the answer body must be exactly one sentence before any platform-appended ISI.";
+  }
+  if (/\b(?:two|2)[ -]?sentences?\b/.test(joined)) {
+    return "\nHard length constraint: the answer body must be no more than two sentences before any platform-appended ISI.";
+  }
+  if (/\b(?:shorter|brief|concise|succinct|under \d+ words?|less detail|keep .* short|keep .* brief)\b/.test(joined)) {
+    return "\nHard length constraint: keep the answer body concise, usually one or two sentences before any platform-appended ISI.";
+  }
+  return "";
 }
 
 export interface GroundedComposer {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeSteering, generateRule } from "@modules/rules";
+import { activeSteering, generateRule, rehearsalStyleGuidance } from "@modules/rules";
 
 describe("rule generation from coaching feedback", () => {
   it("turns 'say this more briefly' into a draft persona style rule", () => {
@@ -97,6 +97,22 @@ describe("activeSteering — only ACTIVE coaching steers; style guidance reaches
     expect(s.styleGuidance).toEqual([]);
     expect(s.blockedTopics).toEqual([]);
     expect(s.leadTopics).toEqual([]);
+  });
+
+  it("rehearsal preview does use accepted draft style rules", () => {
+    const draft = generateRule({ feedback: "Use a warmer, friendlier tone.", seed: "preview-style" });
+    expect(activeSteering([draft]).styleGuidance).toEqual([]);
+    expect(rehearsalStyleGuidance([draft])).toContain("Use a warmer, friendlier tone.");
+  });
+
+  it("rehearsal preview respects HCP-scoped style guidance", () => {
+    const hcpDraft = {
+      ...generateRule({ feedback: "Keep it concise for this doctor.", seed: "hcp-style" }),
+      scope: "hcp_specific" as const,
+      appliesToHcpId: "hcp_sharma",
+    };
+    expect(rehearsalStyleGuidance([hcpDraft], { hcpId: "hcp_sharma" })).toContain("Keep responses concise unless the HCP asks for detail.");
+    expect(rehearsalStyleGuidance([hcpDraft], { hcpId: "hcp_other" })).toEqual([]);
   });
 
   it("blocked / lead topics require an active rule WITH a topic", () => {

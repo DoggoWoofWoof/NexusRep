@@ -101,10 +101,36 @@ export function HcpExperience({ app }: { app?: AppState }) {
     await Promise.all([runSide("a", modelA), runSide("b", modelB)]);
   }
 
-  function cueSlide(id?: string | null) {
+  function slideCueDelay(text?: string): number {
+    const body = text?.trim();
+    if (!body) return SLIDE_CUE_DELAY_MS;
+    const lower = body.toLowerCase();
+    const markers = [
+      "you can see",
+      "you can look",
+      "i've pulled up",
+      "i have pulled up",
+      "take a look",
+      "on your screen",
+      "let's move to",
+      "we'll start with",
+      "i'll use",
+      "i’d show",
+      "i'd show",
+    ];
+    const idx = markers
+      .map((m) => lower.indexOf(m))
+      .filter((i) => i >= 0)
+      .sort((a, b) => a - b)[0];
+    if (idx == null) return Math.min(4200, Math.max(SLIDE_CUE_DELAY_MS, body.split(/\s+/).filter(Boolean).length * 120));
+    const wordsBefore = body.slice(0, idx).split(/\s+/).filter(Boolean).length;
+    return Math.min(9000, Math.max(450, wordsBefore * 360 - 250));
+  }
+
+  function cueSlide(id?: string | null, spokenText?: string) {
     if (!id) return;
     if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current);
-    slideTimerRef.current = window.setTimeout(() => setDeckFocus(id), SLIDE_CUE_DELAY_MS);
+    slideTimerRef.current = window.setTimeout(() => setDeckFocus(id), slideCueDelay(spokenText));
   }
 
   function syncVideoRepTurn(turn: { text: string; detailAidSlideId?: string | null }) {
@@ -119,7 +145,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
       if (!hasHcp && current.every((m) => m.role === "rep")) return [{ role: "rep", text }];
       return [...current, { role: "rep", text }];
     });
-    cueSlide(turn.detailAidSlideId);
+    cueSlide(turn.detailAidSlideId, text);
   }
 
   async function playRepSegment(text: string) {
@@ -154,7 +180,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
         if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
         for (const segment of data.segments ?? []) {
           setMsgs((m) => [...m, { role: "rep", text: segment.response }]);
-          cueSlide(segment.detailAidSlideId);
+          cueSlide(segment.detailAidSlideId, segment.response);
           await playRepSegment(segment.response);
         }
         return;
@@ -170,7 +196,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
       // but a beat LATER — as it says "…you can see this on the X slide" — so the deck follows
       // the rep mid-answer instead of jump-cutting on word one. Routed answers (no slide) keep
       // the current slide up, like a person.
-      cueSlide(data.detailAidSlideId);
+      cueSlide(data.detailAidSlideId, data.response);
       if (data.followUp) setNotice(followUpNotice(data.followUp));
       // Voice: the live replica speaks it (echo) when on video; otherwise browser/3D TTS.
       if (videoOn) await playRepSegment(data.response);
@@ -195,11 +221,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
       const data = (await res.json()) as { response: string; detailAidSlideId?: string | null; sessionId?: string; step?: { index: number; total: number } | null };
       if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
       setMsgs((m) => [...m, { role: "rep", text: data.response }]);
-      if (data.detailAidSlideId) {
-        const id = data.detailAidSlideId;
-        if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current);
-        slideTimerRef.current = window.setTimeout(() => setDeckFocus(id), SLIDE_CUE_DELAY_MS);
-      }
+      cueSlide(data.detailAidSlideId, data.response);
       if (videoOn) await playRepSegment(data.response);
       else void speak(data.response);
     } finally {

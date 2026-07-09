@@ -14,6 +14,7 @@ import type { PublicBrand } from "@modules/brand";
 
 let cache: PublicBrand | null = null;
 let inflight: Promise<PublicBrand | null> | null = null;
+const BRAND_CHANGED = "nexusrep:brand-changed";
 
 function load(): Promise<PublicBrand | null> {
   if (cache) return Promise.resolve(cache);
@@ -26,13 +27,30 @@ function load(): Promise<PublicBrand | null> {
   return inflight;
 }
 
+export function invalidateBrandCache(): void {
+  cache = null;
+  inflight = null;
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(BRAND_CHANGED));
+}
+
 export function useBrand(): PublicBrand | null {
   const [brand, setBrand] = useState<PublicBrand | null>(cache);
   useEffect(() => {
-    if (cache) { setBrand(cache); return; }
     let alive = true;
-    void load().then((b) => { if (alive) setBrand(b); });
-    return () => { alive = false; };
+
+    const refresh = () => {
+      cache = null;
+      inflight = null;
+      void load().then((b) => { if (alive) setBrand(b); });
+    };
+
+    if (cache) setBrand(cache);
+    else refresh();
+    window.addEventListener(BRAND_CHANGED, refresh);
+    return () => {
+      alive = false;
+      window.removeEventListener(BRAND_CHANGED, refresh);
+    };
   }, []);
   return brand;
 }

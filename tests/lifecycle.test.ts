@@ -155,6 +155,20 @@ describe("build → converse → review → coach (end to end)", () => {
     expect(gate.every((g) => (g.payload as { decision?: string }).decision === "approved")).toBe(true);
   });
 
+  it("does not repeat the full active ISI on every approved product follow-up in the same session", async () => {
+    const c = await createContainer();
+    const sid = await startSession(c);
+    const first = await c.conversation.turn(turnCtx(c, "What is Milvexian and how does it work?", sid));
+    const second = await c.conversation.turn(turnCtx(c, "What's the LIBREXIA program?", sid));
+    expect(first.output.isiAttached).toBe(true);
+    expect(second.output.route).toBe("approved_answer");
+    expect(second.output.isiAttached).toBe(false);
+    expect(second.output.responseText).not.toContain("Important Safety Information:");
+    expect(second.output.detailAidSlideId).toBe("slide_program");
+    const audit = await c.audit.forSession(sid);
+    expect(audit.some((a) => a.type === "response_validation" && a.payload.action === "isi_already_delivered")).toBe(true);
+  });
+
   it("uses the specific mechanism slide for natural Factor XIa follow-up wording", async () => {
     const c = await createContainer();
     const sid = await startSession(c);

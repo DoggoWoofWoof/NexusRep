@@ -3,7 +3,7 @@
 /**
  * Renders the live Tavus replica for the HCP view. Asks our server to open a CVI
  * conversation (POST /api/tavus/conversation), then joins the returned Daily/WebRTC
- * room with the Daily SDK and shows the replica's video + audio and live captions.
+ * room with the Daily SDK and shows the replica's video + audio.
  * The replica's replies are produced by our compliance endpoint (see the route),
  * so nothing it says bypasses the gate. Daily is imported lazily (browser only).
  */
@@ -63,7 +63,6 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
   const startedRef = useRef(false);
   const [stage, setStage] = useState<Stage>("loading");
   const [note, setNote] = useState("");
-  const [caption, setCaption] = useState("");
 
   useEffect(() => {
     onRepTurnRef.current = onRepTurn;
@@ -203,7 +202,6 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
           const props = p?.properties ?? {};
           const utter = String(props.speech ?? props.text ?? "").trim();
           if (!utter) return;
-          setCaption(utter);
           // Log BOTH sides into the call's session (the transcript source of truth).
           const role = String(props.role ?? "").toLowerCase();
           const speaker = role.includes("replica") ? "rep" : role.includes("user") ? "hcp" : null;
@@ -259,11 +257,6 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
           {stage === "joining" && "Connecting to the Tavus replica…"}
           {stage === "unconfigured" && note}
           {stage === "error" && `Couldn't start the video rep: ${note}`}
-        </div>
-      )}
-      {!bare && stage === "live" && caption && (
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: 44, textAlign: "center", padding: "0 16px" }}>
-          <span style={{ background: "rgba(0,0,0,.55)", color: "#fff", padding: "6px 12px", borderRadius: 8, fontSize: 13, lineHeight: 1.4 }}>{caption}</span>
         </div>
       )}
       {!bare && stage === "live" && note && (

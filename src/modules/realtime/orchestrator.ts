@@ -127,6 +127,7 @@ export class TurnOrchestrator {
     let requiredSafetyText: string | undefined;
     let detailAidSlideId: string | undefined;
     let followUpType: FollowUpType | undefined;
+    let gateClassification = classification;
 
     if (r === "approved_answer") {
       const result = await this.retrieval.retrieveApproved({
@@ -165,7 +166,9 @@ export class TurnOrchestrator {
       // Required safety info (ISI) for this turn, if the classifier flagged it. Studio may
       // draft revised ISI wording through MLR, but runtime still appends the current active
       // approved block exactly and the gate validates that text before anything is spoken.
-      const isi = classification.isiRequired ? await this.firstSafetyStatement() : undefined;
+      const activeIsi = classification.isiRequired ? await this.firstSafetyStatement() : undefined;
+      const isiAlreadyDelivered = Boolean(activeIsi && (opts?.preview ? false : await this.isSafetyStatementDelivered(ctx.sessionId, activeIsi)));
+      const isi = activeIsi && !isiAlreadyDelivered ? activeIsi : undefined;
       // The on-screen slide is offered to the composer as a HINT so it can weave a BRIEF, varied
       // reference itself (and drop it when asked to be terse) — instead of a fixed bolt-on sentence
       // that read repetitively. Rehearsal + active persona_style coaching also flow in as guidance.
@@ -219,6 +222,12 @@ export class TurnOrchestrator {
         requiredSafetyText = isi.text;
         body = `${body}\n\nImportant Safety Information: ${isi.text}`;
         isiAttached = true;
+      } else if (activeIsi && isiAlreadyDelivered) {
+        gateClassification = { ...classification, isiRequired: false };
+        await this.audit.record(ctx.sessionId, "response_validation", {
+          action: "isi_already_delivered",
+          safetyStatementId: String(activeIsi.id),
+        });
       }
       responseText = body;
       sourceIds = result.answers.map((a) => a.id);
@@ -242,7 +251,13 @@ export class TurnOrchestrator {
       responseText = SAFE_FALLBACK;
     }
 
-    return this.finalize(ctx, r, classification, responseText, sourceIds, isiAttached, requiredSafetyText, followUpType, detailAidSlideId, opts?.preview ?? false);
+    return this.finalize(ctx, r, gateClassification, responseText, sourceIds, isiAttached, requiredSafetyText, followUpType, detailAidSlideId, opts?.preview ?? false);
+  }
+
+  private async isSafetyStatementDelivered(sessionId: SessionId, isi: SafetyStatement): Promise<boolean> {
+    const needle = `Important Safety Information: ${isi.text}`;
+    const events = await this.audit.forSession(sessionId);
+    return events.some((event) => event.type === "response_output" && typeof event.payload.text === "string" && event.payload.text.includes(needle));
   }
 
   private async finalize(

@@ -23,7 +23,7 @@ const PRESENTATION_CLASSIFICATION: RiskClassification = {
   medicalInfoRisk: 0,
   promptInjectionRisk: 0,
   comparativeClaimRisk: 0,
-  isiRequired: true,
+  isiRequired: false,
 };
 
 function parseAction(v: unknown): PresentationAction {
@@ -35,6 +35,10 @@ function hcpText(action: PresentationAction, query?: string): string {
   if (action === "previous") return "Previous slide.";
   if (action === "jump") return query?.trim() ? `Show me the ${query.trim()} slide.` : "Jump to the relevant slide.";
   return "Walk me through the approved deck.";
+}
+
+function normalized(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -68,7 +72,6 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   const requestText = displayText || hcpText(action, query);
   await c.sessions.appendTurn(sessionId, { speaker: "hcp", text: requestText });
-  await c.audit.record(sessionId, "classification", { ...PRESENTATION_CLASSIFICATION, skill: "presentation" });
 
   const step = await c.presentation.step({
     action,
@@ -83,15 +86,18 @@ export async function POST(req: Request): Promise<NextResponse> {
   let detailAidSlideId: string | undefined;
   let isiAttached = false;
   let requiredSafetyText: string | undefined;
+  let classification = PRESENTATION_CLASSIFICATION;
 
   if (step) {
     route = "approved_answer";
     sourceIds = step.sourceIds.map(String);
     detailAidSlideId = step.detailAidSlideId ? String(step.detailAidSlideId) : undefined;
     const isi = await c.content.latestActiveSafetyStatement();
-    requiredSafetyText = isi?.text;
-    isiAttached = Boolean(isi);
-    responseText = isi ? `${step.text}\n\nImportant Safety Information: ${isi.text}` : step.text;
+    const includesSafetyText = Boolean(isi && normalized(step.text).includes(normalized(isi.text)));
+    classification = { ...PRESENTATION_CLASSIFICATION, isiRequired: includesSafetyText };
+    requiredSafetyText = includesSafetyText ? isi?.text : undefined;
+    isiAttached = includesSafetyText;
+    responseText = step.text;
     await c.audit.record(sessionId, "retrieval", {
       skill: "presentation",
       accepted: sourceIds,
@@ -100,10 +106,11 @@ export async function POST(req: Request): Promise<NextResponse> {
       step: { action: step.action, index: step.index, total: step.total },
     });
   }
+  await c.audit.record(sessionId, "classification", { ...classification, skill: "presentation" });
 
   const decision = complianceGate({
     responseText,
-    classification: PRESENTATION_CLASSIFICATION,
+    classification,
     sourceIds,
     isiAttached,
     requiredSafetyText,

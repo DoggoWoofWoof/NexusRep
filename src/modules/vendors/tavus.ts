@@ -144,7 +144,9 @@ export class TavusRealtimeProvider implements RealtimeProvider {
       ...(config.audioOnly ? { audio_only: true } : {}),
       ...(config.callbackUrl ? { callback_url: config.callbackUrl } : {}),
       properties: {
-        enable_closed_captions: true,
+        // NexusRep renders the review transcript itself from the audited session.
+        // Tavus captions would create a second, sometimes mismatched subtitle layer over the face.
+        enable_closed_captions: false,
         ...(config.record ? { enable_recording: true } : {}),
         ...(config.language ? { language: config.language } : {}),
       },

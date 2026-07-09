@@ -68,6 +68,7 @@ describe("Tavus realtime adapter", () => {
     expect(convo.body?.persona_id).toBe("p1");
     expect(convo.body?.replica_id).toBe("r1");
     expect(convo.body?.custom_greeting).toBe("hi doctor");
+    expect((convo.body?.properties as { enable_closed_captions?: boolean } | undefined)?.enable_closed_captions).toBe(false);
 
     await tavus.endSession();
     expect(calls.some((c) => c.url.endsWith("/end"))).toBe(true);

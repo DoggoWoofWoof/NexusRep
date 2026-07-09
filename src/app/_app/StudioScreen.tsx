@@ -5,7 +5,7 @@ import type { AppState } from "./NexusRepApp";
 import { btnGhost, btnPrimary } from "./NexusRepApp";
 import { CONVERSATION, DEFAULT_RULES, KNOWLEDGE_ASSETS, setupTopicsFor, type Rule } from "./data";
 import { TavusStage } from "../_components/TavusStage";
-import { useBrand } from "../_components/useBrand";
+import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 
 type StudioMode = "setup" | "train" | "rules" | "readiness";
 const MODES: { key: StudioMode; label: string }[] = [
@@ -134,6 +134,7 @@ export function StudioScreen({ app }: { app: AppState }) {
       if (!res.ok) return null;
       const data = (await res.json()) as StudioSnap | null;
       if (data) setSnap(data);
+      if (data && (body.action === "answer" || body.action === "greeting")) invalidateBrandCache();
       return data;
     } catch {
       return null;

@@ -26,8 +26,32 @@ behind them. Implemented stage-by-stage with review gates.
 | 9 — Analytics console | ✅ done | Live aggregation across sessions/follow-ups/content/targeting |
 | 10 — Integration + hardening, demo + handover | ✅ done | Brand generalization (any brand = a `BrandProfile`, no code edits) + self-serve setup/upload, humanlike conversation, clean demo recording, full E2E (functional + visual) green end-to-end |
 
-**Test status:** `typecheck` clean · **169 unit/integration tests** pass (1 guarded live test skipped) ·
+**Test status:** `typecheck` clean · **174 unit/integration tests** pass (1 guarded live test skipped) ·
 **17 Playwright E2E pass** (14 functional lifecycle + 3 visual) with the deterministic Playwright server.
+
+### Latest — Tavus transcript + coaching preview fidelity (2026-07-09)
+
+Fixed the duplicated/mismatched Tavus captions and tightened the Training & Preview coaching loop:
+
+- **Tavus video no longer renders duplicate captions.** The Tavus conversation payload disables
+  provider closed captions, and `TavusStage` no longer draws its own black subtitle overlay. The
+  transcript/captions panel is the single source of truth, hydrated from audited session turns.
+- **Saved greeting changes refresh every client surface.** `useBrand()` now supports cache
+  invalidation; Studio Build answers and coached greeting saves trigger a brand refetch so the HCP
+  view and Tavus custom greeting reload the saved line instead of a stale cached one.
+- **Accepted style coaching affects rehearsal immediately.** Draft persona-style rules from accepted
+  coaching are now folded into `/api/train/preview` guidance, while live HCP turns still use only
+  active rules. This lets brand users keep iterating in preview before activating rules.
+- **Length coaching is obeyed more tightly.** The grounded composer turns "one sentence", "two
+  sentences", "concise", and similar notes into hard answer-body constraints. ISI is still appended
+  separately and verbatim by the orchestrator, so coaching can shape the answer body without
+  rewriting safety language.
+- **Slide/ISI repetition reduced.** Deck walkthrough steps no longer append the full ISI unless the
+  step is actually the safety statement, and normal turns skip repeating the full active ISI once it
+  has already been delivered in that session.
+- **Verified:** `npm run typecheck`; `npm test` → 174 passed / 1 skipped. Live `/api/train/preview`
+  smoke with "one sentence + mention slide" returned `usedLlm:true`, `route:approved_answer`,
+  `detailAidSlideId:"slide_moa"`, one coached sentence before the required verbatim ISI.
 
 ### Latest — Session recording + replay sync (2026-07-09)
 

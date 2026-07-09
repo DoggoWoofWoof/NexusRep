@@ -81,4 +81,20 @@ describe("StudioService persistence", () => {
     const after = await studio.setRuleStatus(aiRepId, coaching!.id, "active");
     expect(after?.rules.find((r) => r.id === coaching!.id)?.status).toBe("active");
   });
+
+  it("persists an accepted coached answer as a reviewable style rule", async () => {
+    const studio = await fresh();
+    const snap = await studio.acceptCoaching(aiRepId, {
+      sensitive: [],
+      style: ["Keep it concise.", "Use a warmer tone."],
+      compactedInstruction: "Keep answers concise and warm.\nExample: Happy to walk you through the approved points.",
+      scope: "persona",
+      sourceMessage: "What is Milvexian?",
+    });
+    const rule = snap?.rules.find((r) => r.origin === "coaching" && r.type === "persona_style");
+    expect(rule?.status).toBe("draft");
+    expect(rule?.instruction).toContain("Keep answers concise and warm");
+    expect(rule?.sourceFeedback).toBe("Keep it concise. / Use a warmer tone.");
+    expect((await studio.get(aiRepId))?.rules.find((r) => r.id === rule?.id)?.instruction).toContain("Example:");
+  });
 });

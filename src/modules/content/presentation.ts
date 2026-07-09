@@ -10,7 +10,6 @@ import { isOk } from "@lib/result";
 import type { ApprovedAnswerId, DetailAidSlideId } from "@lib/ids";
 import type { ApprovedAnswer, DetailAidSlide } from "./types";
 import type { ContentService, SourceValidationContext } from "./service";
-import { slideReference } from "./responseBuilder";
 
 export type PresentationAction = "start" | "next" | "previous" | "jump";
 
@@ -145,14 +144,12 @@ export class PresentationSkill {
 
   private buildStep(items: DeckItem[], index: number, action: PresentationAction, overview = false): PresentationStep {
     const item = items[index]!;
-    const related = items[index + 1];
     const title = item.slide?.title ?? item.slide?.label;
     const intro = overview ? overviewLead(index, items.length, title, String(item.answer.id)) : lead(action, title);
-    const text = `${intro} ${item.answer.text}${slideReference({
-      seed: `presentation:${item.answer.id}:${overview ? "overview" : action}`,
-      slideTitle: title,
-      relatedTitle: related?.slide?.title ?? related?.slide?.label,
-    })}`;
+    // The presentation intro is already the human slide cue ("Next, let's move to ...").
+    // Do not add the generic response-builder slide sentence here, or a walkthrough
+    // repeats itself on every slide.
+    const text = `${intro} ${item.answer.text}`;
     return {
       action,
       index,

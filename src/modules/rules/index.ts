@@ -113,6 +113,27 @@ export function activeSteering(rules: TrainingRule[], opts?: { hcpId?: string })
 }
 
 /**
+ * Rehearsal preview is a safe sandbox: accepted style drafts should affect the next
+ * coached preview immediately, while live HCP turns still use only active rules.
+ */
+export function rehearsalStyleGuidance(rules: TrainingRule[], opts?: { hcpId?: string }): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const rule of rules) {
+    if (rule.origin !== "coaching") continue;
+    if (rule.type !== "persona_style") continue;
+    if (rule.status !== "draft" && rule.status !== "active") continue;
+    if (rule.appliesToHcpId && rule.appliesToHcpId !== opts?.hcpId) continue;
+    const instruction = rule.instruction.trim();
+    const key = instruction.toLowerCase();
+    if (!instruction || seen.has(key)) continue;
+    seen.add(key);
+    out.push(instruction);
+  }
+  return out;
+}
+
+/**
  * Split coaching notes into compliance-SENSITIVE (blocked/comparative/ordering — each must stay
  * its own gated rule) vs STYLE (tone/emphasis — safe to compact into one rule). Used on accept so
  * "compact into one rule" never collapses a gated note into an ungated style rule.
