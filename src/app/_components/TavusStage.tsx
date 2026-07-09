@@ -72,19 +72,24 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
   async function notifyAuthoritativeRepTurn(sessionId: string, utterance: string) {
     const notify = onRepTurnRef.current;
     if (!notify) return;
+    let notice: RepTurnNotice = { text: utterance };
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        notify(notice);
+        return;
+      }
       const data = (await res.json()) as { turns?: RepTurnNotice[] };
       const reps = (data.turns ?? []).filter((t) => t && "text" in t);
       const normalized = utterance.replace(/\s+/g, " ").trim();
       const turn =
         [...reps].reverse().find((t) => t.text.replace(/\s+/g, " ").trim() === normalized) ??
         [...reps].reverse().find((t) => t.text);
-      if (turn) notify(turn);
+      if (turn) notice = { ...turn, text: utterance };
     } catch {
-      // Slide hydration is best-effort; the transcript still lives server-side.
+      // Slide hydration is best-effort; the spoken caption is still useful to the UI.
     }
+    notify(notice);
   }
 
   useEffect(() => {

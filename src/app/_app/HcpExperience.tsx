@@ -107,6 +107,21 @@ export function HcpExperience({ app }: { app?: AppState }) {
     slideTimerRef.current = window.setTimeout(() => setDeckFocus(id), SLIDE_CUE_DELAY_MS);
   }
 
+  function syncVideoRepTurn(turn: { text: string; detailAidSlideId?: string | null }) {
+    const text = turn.text.trim();
+    if (!text) return;
+    setMsgs((current) => {
+      const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+      if (current.some((m) => m.role === "rep" && norm(m.text) === norm(text))) return current;
+      const hasHcp = current.some((m) => m.role === "hcp");
+      // Before the doctor asks anything, the only local rep line is the preloaded greeting.
+      // Replace it with the actual Tavus-spoken greeting so the video caption and transcript match.
+      if (!hasHcp && current.every((m) => m.role === "rep")) return [{ role: "rep", text }];
+      return [...current, { role: "rep", text }];
+    });
+    cueSlide(turn.detailAidSlideId);
+  }
+
   async function playRepSegment(text: string) {
     if (videoOn) {
       tavusRef.current?.speak(text);
@@ -311,7 +326,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
               {/* LEFT — the rep (live Tavus video OR the 3D/2D avatar) + one ask bar */}
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {videoOn
-                  ? <TavusStage ref={tavusRef} onClose={() => setVideoOn(false)} onRepTurn={(turn) => cueSlide(turn.detailAidSlideId)} />
+                  ? <TavusStage ref={tavusRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} />
                   : <LiveAvatar ref={liveRef} enabled={threeD} speaking={speaking} fallbackStream={null} fallbackStatus={listening ? "Listening…" : speaking ? "Speaking…" : "Ready"} height={300} />}
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{askBar("Ask")}{tryChips}</div>
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
