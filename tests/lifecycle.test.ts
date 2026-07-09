@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import { createContainer } from "@lib/container";
+import { asId } from "@lib/ids";
 import { classify, route } from "@modules/compliance";
 import { resolveBrandProfile, setupAnswersOf, MILVEXIAN_PROFILE } from "@modules/brand";
 import { setupTopicsFor } from "../src/app/_app/data";
@@ -167,6 +168,25 @@ describe("build → converse → review → coach (end to end)", () => {
     expect(second.output.detailAidSlideId).toBe("slide_program");
     const audit = await c.audit.forSession(sid);
     expect(audit.some((a) => a.type === "response_validation" && a.payload.action === "isi_already_delivered")).toBe(true);
+  });
+
+  it("does not repeat the full active ISI during a training preview rehearsal session", async () => {
+    const c = await createContainer();
+    const sid = asId<"session_id">("session_train_preview_test");
+    const ctx = (text: string) => ({
+      sessionId: sid,
+      hcpId: c.demo.hcpId,
+      audience: c.demo.audience,
+      indication: c.demo.indication,
+      market: c.demo.market,
+      investigational: c.demo.investigational,
+      text,
+    });
+    const first = await c.orchestrator.handleTurn(ctx("What is Milvexian and how does it work?"), { preview: true });
+    const second = await c.orchestrator.handleTurn(ctx("What's the LIBREXIA program?"), { preview: true });
+    expect(first.isiAttached).toBe(true);
+    expect(second.isiAttached).toBe(false);
+    expect(second.responseText).not.toContain("Important Safety Information:");
   });
 
   it("uses the specific mechanism slide for natural Factor XIa follow-up wording", async () => {

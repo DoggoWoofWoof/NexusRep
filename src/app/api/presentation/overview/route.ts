@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { complianceGate, type PolicyRoute, type RiskClassification } from "@modules/compliance";
+import { presentationGuidance } from "@modules/rules";
 
 export const dynamic = "force-dynamic";
 
@@ -65,13 +66,17 @@ export async function POST(req: Request): Promise<NextResponse> {
   await c.sessions.appendTurn(sessionId, { speaker: "hcp", text });
   let nextRepAt = Date.now() + 350;
 
+  const rules = (await c.studio.get(c.demo.aiRepId))?.rules ?? [];
+  const guidance = presentationGuidance(rules, { hcpId: c.demo.hcpId });
   const steps = await c.presentation.overview({
     context: { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market },
+    guidance,
   });
   const isi = await c.content.latestActiveSafetyStatement();
   const route: PolicyRoute = steps.length ? "approved_answer" : "fallback";
   const segments = [];
-  let overviewIsiDelivered = false;
+  const priorAudit = isi ? await c.audit.forSession(sessionId) : [];
+  let overviewIsiDelivered = Boolean(isi && priorAudit.some((event) => event.type === "response_output" && typeof event.payload.text === "string" && event.payload.text.includes(`Important Safety Information: ${isi.text}`)));
 
   for (const [index, step] of steps.entries()) {
     const finalSegment = index === steps.length - 1;

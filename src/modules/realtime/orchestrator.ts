@@ -167,7 +167,7 @@ export class TurnOrchestrator {
       // draft revised ISI wording through MLR, but runtime still appends the current active
       // approved block exactly and the gate validates that text before anything is spoken.
       const activeIsi = classification.isiRequired ? await this.firstSafetyStatement() : undefined;
-      const isiAlreadyDelivered = Boolean(activeIsi && (opts?.preview ? false : await this.isSafetyStatementDelivered(ctx.sessionId, activeIsi)));
+      const isiAlreadyDelivered = Boolean(activeIsi && await this.isSafetyStatementDelivered(ctx.sessionId, activeIsi));
       const isi = activeIsi && !isiAlreadyDelivered ? activeIsi : undefined;
       // The on-screen slide is offered to the composer as a HINT so it can weave a BRIEF, varied
       // reference itself (and drop it when asked to be terse) — instead of a fixed bolt-on sentence

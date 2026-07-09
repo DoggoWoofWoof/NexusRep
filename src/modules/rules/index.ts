@@ -134,6 +134,33 @@ export function rehearsalStyleGuidance(rules: TrainingRule[], opts?: { hcpId?: s
 }
 
 /**
+ * Presentation/deck walkthrough guidance is consumed by the first-party presentation
+ * skill. Live overview uses active rules only; rehearsal may include non-rejected
+ * coaching drafts so a brand user can tune slide order before activating anything.
+ */
+export function presentationGuidance(rules: TrainingRule[], opts?: { hcpId?: string; rehearsal?: boolean }): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const rule of rules) {
+    if (rule.origin !== "coaching") continue;
+    if (rule.appliesToHcpId && rule.appliesToHcpId !== opts?.hcpId) continue;
+    if (opts?.rehearsal) {
+      if (rule.status === "rejected" || rule.status === "blocked_by_compliance") continue;
+    } else if (rule.status !== "active") {
+      continue;
+    }
+    const text = [rule.instruction, rule.sourceFeedback, rule.topic].filter(Boolean).join(" ");
+    if (!/\b(ppt|deck|slides?|presentation|walkthrough|overview|show|screen|start|lead|order|next|first|program|mechanism|safety|status)\b/i.test(text)) continue;
+    const instruction = rule.instruction.trim();
+    const key = instruction.toLowerCase();
+    if (!instruction || seen.has(key)) continue;
+    seen.add(key);
+    out.push(instruction);
+  }
+  return out;
+}
+
+/**
  * Split coaching notes into compliance-SENSITIVE (blocked/comparative/ordering — each must stay
  * its own gated rule) vs STYLE (tone/emphasis — safe to compact into one rule). Used on accept so
  * "compact into one rule" never collapses a gated note into an ungated style rule.

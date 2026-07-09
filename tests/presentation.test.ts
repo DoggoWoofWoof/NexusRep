@@ -70,4 +70,16 @@ describe("NexusRep first-party presentation skill", () => {
     expect(steps[4]?.text).toContain("Important Safety Information");
     expect(steps[5]?.text).toContain("human representative");
   });
+
+  it("uses presentation coaching to lead with a requested approved slide", async () => {
+    const c = await createContainer();
+    const steps = await c.presentation.overview({
+      context: { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market },
+      guidance: ["Start the guided overview with the LIBREXIA program slide, then use mechanism."],
+    });
+
+    expect(steps[0]?.detailAidSlideId).toBe("slide_program");
+    expect(steps[0]?.sourceIds).toEqual(["ans_program"]);
+    expect(steps.map((s) => s.detailAidSlideId)).toContain("slide_moa");
+  });
 });

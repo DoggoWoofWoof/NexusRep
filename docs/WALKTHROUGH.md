@@ -26,8 +26,28 @@ behind them. Implemented stage-by-stage with review gates.
 | 9 — Analytics console | ✅ done | Live aggregation across sessions/follow-ups/content/targeting |
 | 10 — Integration + hardening, demo + handover | ✅ done | Brand generalization (any brand = a `BrandProfile`, no code edits) + self-serve setup/upload, humanlike conversation, clean demo recording, full E2E (functional + visual) green end-to-end |
 
-**Test status:** `typecheck` clean · **174 unit/integration tests** pass (1 guarded live test skipped) ·
+**Test status:** `typecheck` clean · **176 unit/integration tests** pass (1 guarded live test skipped) ·
 **17 Playwright E2E pass** (14 functional lifecycle + 3 visual) with the deterministic Playwright server.
+
+### Latest — Guided overview training + ISI cadence (2026-07-09)
+
+Fixed the robotic ISI repetition in rehearsal and made guided deck walkthroughs trainable:
+
+- **Training Preview now behaves like one rehearsal session.** The UI sends a per-restart
+  `previewSessionId`; once the active ISI has been delivered in that rehearsal, follow-up product
+  questions do not keep appending the full `Important Safety Information:` block.
+- **Guided overview is now first-class in Training & Preview.** The training panel has a
+  `Guided overview` starter. Ask it, coach it ("start with LIBREXIA", "use mechanism second",
+  "make slide cues more natural"), re-answer until it is right, then accept the coaching as rules.
+- **Presentation/deck coaching now reaches the deck skill.** Accepted active presentation guidance
+  feeds `/api/presentation/overview` and `/api/presentation/step`; rehearsal also consumes
+  non-rejected draft guidance so the brand user can test slide order before activation.
+- **Slide order uses approved slide/source matching, not keywords alone.** Guidance weighting favors
+  slide title/label/topic over incidental body text, so "start with the LIBREXIA program slide" puts
+  `slide_program` first instead of matching the title slide just because it mentions LIBREXIA.
+- **Verified:** `npm run typecheck`; `npm test` → 176 passed / 1 skipped. Live smoke:
+  first rehearsal answer delivered ISI, second did not repeat it; guided overview coaching started
+  on `slide_program`.
 
 ### Latest — Tavus transcript + coaching preview fidelity (2026-07-09)
 

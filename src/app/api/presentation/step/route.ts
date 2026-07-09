@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { complianceGate, type PolicyRoute, type RiskClassification } from "@modules/compliance";
+import { presentationGuidance } from "@modules/rules";
 import type { PresentationAction } from "@modules/content";
 
 export const dynamic = "force-dynamic";
@@ -73,11 +74,14 @@ export async function POST(req: Request): Promise<NextResponse> {
   const requestText = displayText || hcpText(action, query);
   await c.sessions.appendTurn(sessionId, { speaker: "hcp", text: requestText });
 
+  const rules = (await c.studio.get(c.demo.aiRepId))?.rules ?? [];
+  const guidance = presentationGuidance(rules, { hcpId: c.demo.hcpId });
   const step = await c.presentation.step({
     action,
     currentSlideId,
     query,
     context: { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market },
+    guidance,
   });
 
   let route: PolicyRoute = "fallback";

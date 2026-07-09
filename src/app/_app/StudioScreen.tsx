@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { AppState } from "./NexusRepApp";
 import { btnGhost, btnPrimary } from "./NexusRepApp";
 import { CONVERSATION, DEFAULT_RULES, KNOWLEDGE_ASSETS, setupTopicsFor, type Rule } from "./data";
+import { isOverviewPrompt } from "./overviewPrompt";
 import { TavusStage } from "../_components/TavusStage";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 
@@ -602,12 +603,16 @@ interface RepAnswer {
  *  A "greeting" exchange has no HCP question: it coaches the rep's OPENING line. */
 interface Exchange {
   q: string;
-  kind?: "greeting";
+  kind?: "greeting" | "overview";
   answers: RepAnswer[]; // v1, then a new version per coaching note
   coachings: string[]; // the notes applied so far (visible in the thread)
   scope: CoachScope;
   accepted: boolean;
   ruleCount?: number; // rules saved on accept
+}
+
+function makePreviewSessionId(): string {
+  return `session_train_preview_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
 /** Split a rep answer into its coachable body and the active approved ISI block. */
@@ -624,6 +629,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
   const [coachDraft, setCoachDraft] = useState<Record<number, string>>({});
   const [busyIdx, setBusyIdx] = useState<number | null>(null);
   const [showVideo, setShowVideo] = useState(false);
+  const [previewSessionId, setPreviewSessionId] = useState(makePreviewSessionId);
 
   const coachingRules = rules.filter((r) => r.source === "feedback");
 
@@ -639,9 +645,9 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
   // Rehearse the rep with the coaching so far applied. A greeting exchange rewrites the opening
   // line (keeping the mandatory disclosures); any other rewrites the answer. Rehearsal only — the
   // preview endpoint creates no session, logs no turn, enqueues no follow-up.
-  const runPreview = async (ex: { kind?: "greeting"; q: string; current: string }, coaching: string[]): Promise<RepAnswer> => {
+  const runPreview = async (ex: { kind?: "greeting" | "overview"; q: string; current: string }, coaching: string[]): Promise<RepAnswer> => {
     try {
-      const body = ex.kind === "greeting" ? { kind: "greeting", current: ex.current, coaching } : { text: ex.q, coaching };
+      const body = ex.kind === "greeting" ? { kind: "greeting", current: ex.current, coaching } : { kind: ex.kind, text: ex.q, coaching, previewSessionId };
       const res = await fetch("/api/train/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (res.ok) {
         const d = (await res.json()) as { response?: string; route?: string; isiDelivered?: boolean; detailAidSlideId?: string | null; usedLlm?: boolean };
@@ -654,13 +660,14 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     return { text: turn.response, route: turn.intent, isi: turn.isi, detailAidSlideId: null, usedLlm: false };
   };
 
-  const ask = async () => {
+  const ask = async (forced?: string) => {
     if (asking) return;
-    const q = input.trim() || brand?.tryQuestions[0] || "Tell me about this therapy.";
+    const q = forced?.trim() || input.trim() || brand?.tryQuestions[0] || "Tell me about this therapy.";
+    const kind = isOverviewPrompt(q) ? "overview" : undefined;
     setAsking(true);
     setInput("");
-    const a = await runPreview({ q, current: "" }, []);
-    setExchanges((xs) => [...xs, { q, answers: [a], coachings: [], scope: "persona", accepted: false }]);
+    const a = await runPreview({ kind, q, current: "" }, []);
+    setExchanges((xs) => [...xs, { q, kind, answers: [a], coachings: [], scope: "persona", accepted: false }]);
     setAsking(false);
   };
 
@@ -714,9 +721,13 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
             <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void ask(); }} placeholder="Ask the rep a question…" style={{ flex: 1, padding: "10px 12px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 12.5px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
             <button onClick={() => void ask()} disabled={asking} style={{ ...btnPrimary, padding: "10px 14px" }}>{asking ? "…" : "Ask"}</button>
           </div>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
+            <button onClick={() => void ask("Can you walk me through the approved information?")} disabled={asking} style={{ ...btnGhost, padding: "7px 10px", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>Guided overview</button>
+            <button onClick={() => void ask("What's the LIBREXIA program?")} disabled={asking} style={{ ...btnGhost, padding: "7px 10px", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>Program question</button>
+          </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 11, borderTop: "1px solid var(--dn-surface-2)" }}>
             <span style={{ font: "400 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Coach a line → the rep tries again</span>
-            <span onClick={() => { setExchanges([greetingExchange()]); setCoachDraft({}); }} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>↺ Restart</span>
+            <span onClick={() => { setExchanges([greetingExchange()]); setCoachDraft({}); setPreviewSessionId(makePreviewSessionId()); }} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>↺ Restart</span>
           </div>
         </div>
         <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)" }}>
@@ -752,7 +763,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
                   return (
                     <div key={v} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       <div>
-                        <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-brand-base)", marginBottom: 4 }}>{ex.kind === "greeting" ? "Rep opening" : "AI rep"}{ex.answers.length > 1 ? ` · v${v + 1}` : ""}{isLatest ? "" : " · revised ↓"}</div>
+                        <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-brand-base)", marginBottom: 4 }}>{ex.kind === "greeting" ? "Rep opening" : ex.kind === "overview" ? "Guided overview" : "AI rep"}{ex.answers.length > 1 ? ` · v${v + 1}` : ""}{isLatest ? "" : " · revised ↓"}</div>
                         {(() => {
                           const [bodyText, isiText] = splitIsi(a.text);
                           return (
@@ -786,12 +797,14 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
                     <span style={{ font: "400 11px/1.3 var(--dn-font-sans)", color: "#166534" }}>
                       {ex.kind === "greeting"
                         ? ex.coachings.length ? "opening line updated — live everywhere the rep greets" : "no changes needed"
+                        : ex.kind === "overview"
+                          ? ex.coachings.length ? "guided overview coaching saved as reviewable rule(s)" : "no changes needed"
                         : ex.coachings.length ? "your coaching saved as rule(s) → review in Rules" : "no changes needed"}
                     </span>
                   </div>
                 ) : (
                   <div style={{ border: "1px solid var(--dn-brand-light)", borderRadius: 9, padding: 10 }}>
-                    <textarea value={coachDraft[idx] ?? ""} onChange={(e) => setCoachDraft((d) => ({ ...d, [idx]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void reAnswer(idx); }} placeholder={ex.kind === "greeting" ? "Coach the opening line — warmer, shorter, mention the brand… (disclosures are kept)" : "Coach this answer — e.g. be more concise, lead with the FDA status, warmer tone…"} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 12px/1.45 var(--dn-font-sans)", resize: "vertical", minHeight: 42, background: "var(--dn-surface-2)" }} />
+                    <textarea value={coachDraft[idx] ?? ""} onChange={(e) => setCoachDraft((d) => ({ ...d, [idx]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void reAnswer(idx); }} placeholder={ex.kind === "greeting" ? "Coach the opening line — warmer, shorter, mention the brand… (disclosures are kept)" : ex.kind === "overview" ? "Coach the guided overview — start with LIBREXIA, use mechanism second, make slide cues more natural…" : "Coach this answer — e.g. be more concise, lead with the FDA status, warmer tone…"} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 12px/1.45 var(--dn-font-sans)", resize: "vertical", minHeight: 42, background: "var(--dn-surface-2)" }} />
                     {ex.kind !== "greeting" && (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "9px 0", flexWrap: "wrap" }}>
                         <span style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-fg-subtle)" }}>Save as</span>

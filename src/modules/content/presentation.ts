@@ -18,6 +18,7 @@ export interface PresentationRequest {
   currentSlideId?: string;
   query?: string;
   context?: SourceValidationContext;
+  guidance?: string[];
 }
 
 export interface PresentationStep {
@@ -33,6 +34,7 @@ export interface PresentationStep {
 export interface PresentationOverviewRequest {
   context?: SourceValidationContext;
   maxSlides?: number;
+  guidance?: string[];
 }
 
 interface DeckItem {
@@ -49,10 +51,35 @@ function score(item: DeckItem, query: string): number {
   return words(query).reduce((n, w) => n + (hay.includes(w) ? 1 : 0), 0);
 }
 
+function weightedSlideScore(item: DeckItem, query: string): number {
+  const slideHay = `${item.answer.topic} ${item.slide?.title ?? ""} ${item.slide?.label ?? ""}`.toLowerCase();
+  const bodyHay = item.answer.text.toLowerCase();
+  return words(query).reduce((n, w) => n + (slideHay.includes(w) ? 3 : 0) + (bodyHay.includes(w) ? 1 : 0), 0);
+}
+
 function order(item: DeckItem): number {
   if (item.slide?.position != null) return item.slide.position;
   const fromLabel = item.slide?.label.match(/\b(?:slide|page)\s+(\d+)/i)?.[1];
   return fromLabel ? Number(fromLabel) : Number.MAX_SAFE_INTEGER;
+}
+
+function guidanceText(guidance: string[] | undefined): string {
+  return (guidance ?? []).map((g) => g.trim()).filter(Boolean).join(" ");
+}
+
+function leadWeight(item: DeckItem, guidance: string | undefined): number {
+  const g = guidance?.trim();
+  if (!g) return 0;
+  const lower = g.toLowerCase();
+  const wantsLead = /\b(lead|start|open|begin|first|prioriti(?:ze|se)|earlier|before|show .* first|use .* first)\b/.test(lower);
+  if (!wantsLead) return 0;
+  return weightedSlideScore(item, lower);
+}
+
+function guidedItems(items: DeckItem[], guidance: string[] | undefined): DeckItem[] {
+  const guide = guidanceText(guidance);
+  if (!guide) return items;
+  return [...items].sort((a, b) => leadWeight(b, guide) - leadWeight(a, guide) || order(a) - order(b) || String(a.answer.id).localeCompare(String(b.answer.id)));
 }
 
 function lead(action: PresentationAction, title?: string): string {
@@ -104,7 +131,7 @@ export class PresentationSkill {
   constructor(private readonly content: ContentService) {}
 
   async step(req: PresentationRequest): Promise<PresentationStep | null> {
-    const items = await this.deckItems(req.context ?? {});
+    const items = guidedItems(await this.deckItems(req.context ?? {}), req.guidance);
     if (!items.length) return null;
 
     let index = 0;
@@ -121,7 +148,7 @@ export class PresentationSkill {
   }
 
   async overview(req: PresentationOverviewRequest = {}): Promise<PresentationStep[]> {
-    const items = await this.deckItems(req.context ?? {});
+    const items = guidedItems(await this.deckItems(req.context ?? {}), req.guidance);
     const total = Math.max(0, Math.min(req.maxSlides ?? items.length, items.length));
     return items.slice(0, total).map((_item, index) => this.buildStep(items, index, index === 0 ? "start" : "next", true));
   }
