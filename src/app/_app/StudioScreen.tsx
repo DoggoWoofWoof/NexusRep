@@ -716,7 +716,7 @@ function ToggleRow({ label, desc, on, onToggle }: { label: string; desc: string;
 
 /* ---------- TRAIN MODE (conversational coaching loop) ---------- */
 type CoachScope = "persona" | "global" | "hcp";
-interface OverviewSegment { response: string; detailAidSlideId?: string | null; slideTitle?: string | null }
+interface OverviewSegment { response: string; detailAidSlideId?: string | null; slideTitle?: string | null; stepId?: string | null; stepTitle?: string | null }
 interface RepAnswer {
   text: string;
   route: string;
@@ -778,6 +778,9 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
   const [previewSessionId, setPreviewSessionId] = useState(() => loadTrainState().previewSessionId ?? makePreviewSessionId());
   const [overviewPlan, setOverviewPlan] = useState<OverviewPlanSnap | null>(null);
   const [activePlanStepId, setActivePlanStepId] = useState("");
+  // Inline per-section coaching on a rehearsed pitch segment ({exchange, segment} being coached).
+  const [segCoach, setSegCoach] = useState<{ exIdx: number; segIdx: number } | null>(null);
+  const [segNote, setSegNote] = useState("");
   const [planNote, setPlanNote] = useState("");
   const [planMsg, setPlanMsg] = useState("");
 
@@ -879,6 +882,19 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     }
   };
 
+  // Reorder pitch sections (the arrows in the card) — reorder client-side, persist the plan.
+  const movePlanStep = (stepId: string, dir: -1 | 1) => {
+    if (!overviewPlan) return;
+    const steps = [...overviewPlan.plan.steps];
+    const i = steps.findIndex((st) => st.id === stepId);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= steps.length) return;
+    [steps[i], steps[j]] = [steps[j]!, steps[i]!];
+    const nextPlan = { ...overviewPlan.plan, steps };
+    setOverviewPlan({ ...overviewPlan, plan: nextPlan });
+    void persistOverviewPlan(nextPlan, "Pitch order updated — the rep now presents in this order.");
+  };
+
   const resetOverviewPlan = async () => {
     setPlanMsg("Resetting pitch…");
     try {
@@ -937,12 +953,15 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
   }, []);
 
   // Add a coaching note → the rep tries again with all notes so far. Iterate until happy.
-  const reAnswer = async (idx: number) => {
-    const note = (coachDraft[idx] ?? "").trim();
+  // Pitch (overview) notes are applied to the plan IMMEDIATELY (the plan is the artifact the
+  // rep speaks from), targeted at the given section — or the currently selected one.
+  const reAnswer = async (idx: number, opts?: { stepId?: string; note?: string }) => {
+    const note = (opts?.note ?? coachDraft[idx] ?? "").trim();
     const ex = exchanges[idx];
     if (!note || !ex || ex.accepted || busyIdx !== null) return;
     const coachings = [...ex.coachings, note];
     setBusyIdx(idx);
+    if (ex.kind === "overview") await applyPlanNote(note, opts?.stepId ?? activePlanStepId);
     const a = await runPreview({ kind: ex.kind, q: ex.q, current: ex.answers[ex.answers.length - 1]!.text }, coachings);
     setExchanges((xs) => xs.map((x, i) => (i === idx ? { ...x, coachings, answers: [...x.answers, a] } : x)));
     setCoachDraft((d) => ({ ...d, [idx]: "" }));
@@ -957,10 +976,10 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     const finalAnswer = ex.answers[ex.answers.length - 1]!.text;
     if (ex.kind === "greeting") {
       if (ex.coachings.length) await post({ action: "greeting", value: finalAnswer });
+    } else if (ex.kind === "overview") {
+      // Pitch notes were applied to the plan the moment they were coached (reAnswer /
+      // per-section coach) — accepting just closes the exchange. No duplicate rules.
     } else if (ex.coachings.length) {
-      if (ex.kind === "overview") {
-        for (const note of ex.coachings) await applyPlanNote(note, activePlanStepId);
-      }
       await post({ action: "acceptCoaching", coachings: ex.coachings, question: ex.q, answer: finalAnswer, scope: ex.scope });
     }
     setExchanges((xs) => xs.map((x, i) => (i === idx ? { ...x, accepted: true, ruleCount: ex.coachings.length } : x)));
@@ -1042,21 +1061,57 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
                               <span style={{ fontWeight: 600, letterSpacing: ".02em" }}>Required safety information · active approved block — </span>{isiText}
                             </div>
                           );
-                          // A guided overview renders paragraph-by-paragraph, each labelled with the
-                          // slide it cues — so the training preview matches the doctor-facing delivery
-                          // instead of one wall of text.
+                          // The pitch renders section-by-section, 1:1 with the Brand-pitch plan:
+                          // same numbering, same titles, same slides. Click a section → the pitch
+                          // panel jumps to it (slide + editor); ✎ coaches JUST that section.
                           if (a.segments?.length) {
                             return (
                               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                                 {a.segments.map((seg, si) => {
                                   const [segBody, segIsi] = splitIsi(seg.response);
+                                  const active = isLatest && !!seg.stepId && seg.stepId === activePlanStepId;
+                                  const coachingThis = isLatest && !ex.accepted && segCoach?.exIdx === idx && segCoach?.segIdx === si;
                                   return (
-                                    <div key={si} style={bubbleStyle}>
-                                      <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-accent-purple)", marginBottom: 5, display: "flex", gap: 6 }}>
-                                        <span>{si + 1}.</span><span>{seg.slideTitle ? `${seg.slideTitle} slide` : "Approved slide"}</span>
+                                    <div
+                                      key={si}
+                                      onClick={() => seg.stepId && setActivePlanStepId(seg.stepId)}
+                                      title={seg.stepId ? "Click to open this section in the Brand pitch panel" : undefined}
+                                      style={{ ...bubbleStyle, ...(seg.stepId ? { cursor: "pointer" } : {}), ...(active ? { borderColor: "var(--dn-brand-base)", boxShadow: "0 0 0 1px var(--dn-brand-base)" } : {}) }}
+                                    >
+                                      <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-accent-purple)", marginBottom: 5, display: "flex", gap: 6, alignItems: "center" }}>
+                                        <span>{si + 1}.</span>
+                                        <span style={{ flex: 1 }}>{seg.stepTitle ?? seg.slideTitle ?? "Approved section"}</span>
+                                        {seg.slideTitle && <span style={{ color: "var(--dn-fg-subtle)", textTransform: "none", letterSpacing: 0 }}>▤ shows {seg.slideTitle}</span>}
+                                        {isLatest && !ex.accepted && seg.stepId && (
+                                          <span
+                                            onClick={(e) => { e.stopPropagation(); setSegCoach(coachingThis ? null : { exIdx: idx, segIdx: si }); setSegNote(""); }}
+                                            style={{ color: "var(--dn-brand-light)", cursor: "pointer", textTransform: "none", letterSpacing: 0 }}
+                                          >
+                                            ✎ Coach
+                                          </span>
+                                        )}
                                       </div>
                                       <div style={{ whiteSpace: "pre-wrap" }}>{segBody}</div>
                                       {isiBlock(segIsi)}
+                                      {coachingThis && (
+                                        <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                                          <input
+                                            autoFocus
+                                            value={segNote}
+                                            onChange={(e) => setSegNote(e.target.value)}
+                                            onKeyDown={(e) => { if (e.key === "Enter" && segNote.trim()) { void reAnswer(idx, { stepId: seg.stepId ?? undefined, note: segNote.trim() }); setSegCoach(null); } }}
+                                            placeholder={`Coach section ${si + 1} — shorter, warmer, use a different slide…`}
+                                            style={{ flex: 1, padding: "7px 9px", border: "1px solid var(--dn-brand-light)", borderRadius: 7, font: "400 11.5px/1.3 var(--dn-font-sans)", background: "#fff" }}
+                                          />
+                                          <button
+                                            onClick={() => { if (segNote.trim()) { void reAnswer(idx, { stepId: seg.stepId ?? undefined, note: segNote.trim() }); setSegCoach(null); } }}
+                                            disabled={!segNote.trim() || busy}
+                                            style={{ ...btnPrimary, padding: "7px 10px", font: "600 10.5px/1 var(--dn-font-sans)", opacity: segNote.trim() && !busy ? 1 : 0.55 }}
+                                          >
+                                            {busy ? "…" : "Apply"}
+                                          </button>
+                                        </div>
+                                      )}
                                     </div>
                                   );
                                 })}
@@ -1092,13 +1147,13 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
                       {ex.kind === "greeting"
                         ? ex.coachings.length ? "opening line updated — live everywhere the rep greets" : "no changes needed"
                         : ex.kind === "overview"
-                          ? ex.coachings.length ? "pitch updated — coaching saved as reviewable rule(s)" : "no changes needed"
+                          ? ex.coachings.length ? "pitch plan updated — every section keeps your notes" : "no changes needed"
                         : ex.coachings.length ? "your coaching saved as rule(s) → review in Rules" : "no changes needed"}
                     </span>
                   </div>
                 ) : (
                   <div style={{ border: "1px solid var(--dn-brand-light)", borderRadius: 9, padding: 10 }}>
-                    <textarea value={coachDraft[idx] ?? ""} onChange={(e) => setCoachDraft((d) => ({ ...d, [idx]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void reAnswer(idx); }} placeholder={ex.kind === "greeting" ? "Coach the opening line — warmer, shorter, mention the brand… (disclosures are kept)" : ex.kind === "overview" ? "Coach the pitch — reorder sections, lead with the program, make slide cues more natural…" : "Coach this answer — e.g. be more concise, lead with the approval status, warmer tone…"} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 12px/1.45 var(--dn-font-sans)", resize: "vertical", minHeight: 42, background: "var(--dn-surface-2)" }} />
+                    <textarea value={coachDraft[idx] ?? ""} onChange={(e) => setCoachDraft((d) => ({ ...d, [idx]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void reAnswer(idx); }} placeholder={ex.kind === "greeting" ? "Coach the opening line — warmer, shorter, mention the brand… (disclosures are kept)" : ex.kind === "overview" ? `Coach the selected pitch section — or click ✎ on any part above. e.g. "keep it under 2 sentences", "use slide 3 here"…` : "Coach this answer — e.g. be more concise, lead with the approval status, warmer tone…"} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 12px/1.45 var(--dn-font-sans)", resize: "vertical", minHeight: 42, background: "var(--dn-surface-2)" }} />
                     {ex.kind !== "greeting" && (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "9px 0", flexWrap: "wrap" }}>
                         <span style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-fg-subtle)" }}>Save as</span>
@@ -1134,6 +1189,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
           onNote={setPlanNote}
           onRehearse={() => void ask("Can you walk me through the approved information?")}
           rehearsing={asking}
+          onMove={movePlanStep}
         />
 
         {/* Rules from feedback */}
@@ -1163,6 +1219,7 @@ function OverviewPlanCard({
   onNote,
   onRehearse,
   rehearsing,
+  onMove,
 }: {
   snap: OverviewPlanSnap | null;
   activeStepId: string;
@@ -1177,6 +1234,7 @@ function OverviewPlanCard({
   onNote: (note: string) => void;
   onRehearse: () => void;
   rehearsing: boolean;
+  onMove: (stepId: string, dir: -1 | 1) => void;
 }) {
   const steps = snap?.plan.steps ?? [];
   const slides = snap?.slides ?? [];
@@ -1217,6 +1275,10 @@ function OverviewPlanCard({
                     <span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 6, display: "inline-flex", alignItems: "center", justifyContent: "center", font: "700 9.5px/1 var(--dn-font-sans)", color: active ? "#fff" : "var(--dn-fg-muted)", background: active ? "var(--dn-brand-base)" : "var(--dn-surface-2)" }}>{i + 1}</span>
                     <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", font: `600 11px/1.3 var(--dn-font-sans)`, color: active ? "var(--dn-brand-base)" : "var(--dn-fg)" }}>{s.title}</span>
                     <span style={{ flexShrink: 0, font: "500 9.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{slideLabelOf(s.slideId)}</span>
+                    <span style={{ flexShrink: 0, display: "inline-flex", gap: 2 }}>
+                      <span onClick={(e) => { e.stopPropagation(); onMove(s.id, -1); }} title="Move this section earlier" style={{ width: 16, textAlign: "center", color: i === 0 ? "var(--dn-border)" : "var(--dn-fg-subtle)", cursor: i === 0 ? "default" : "pointer", font: "600 10px/1.4 var(--dn-font-sans)" }}>↑</span>
+                      <span onClick={(e) => { e.stopPropagation(); onMove(s.id, 1); }} title="Move this section later" style={{ width: 16, textAlign: "center", color: i === steps.length - 1 ? "var(--dn-border)" : "var(--dn-fg-subtle)", cursor: i === steps.length - 1 ? "default" : "pointer", font: "600 10px/1.4 var(--dn-font-sans)" }}>↓</span>
+                    </span>
                   </div>
                 );
               })}
@@ -1224,32 +1286,43 @@ function OverviewPlanCard({
 
             <div style={{ display: "grid", gap: 8, borderTop: "1px solid var(--dn-surface-2)", paddingTop: 10 }}>
               <span style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-brand-base)" }}>Edit section {stepIndex + 1} — saves when you click away</span>
-              <input
-                value={step.title}
-                onChange={(e) => onUpdateStep(step.id, { title: e.target.value })}
-                onBlur={() => onSave()}
-                placeholder="Section title"
-                style={{ width: "100%", padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "600 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", background: "var(--dn-surface-2)" }}
-              />
-              <select
-                value={step.slideId ?? ""}
-                onChange={(e) => onUpdateStep(step.id, { slideId: e.target.value || undefined }, true)}
-                title="The approved slide shown while the rep speaks this section"
-                style={{ width: "100%", padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "500 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", background: "#fff" }}
-              >
-                {slides.map((slide) => (
-                  <option key={slide.id} value={slide.id}>Shows slide {slide.position}: {slide.title}</option>
-                ))}
-              </select>
-              <textarea
-                value={step.instruction}
-                onChange={(e) => onUpdateStep(step.id, { instruction: e.target.value })}
-                onBlur={() => onSave()}
-                placeholder="What should the rep cover here? e.g. Lead with the Phase 3 program, keep it under 3 sentences…"
-                style={{ width: "100%", minHeight: 68, resize: "vertical", padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 11.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg)", background: "var(--dn-surface-2)" }}
-              />
-              <div style={{ padding: "8px 9px", borderRadius: 8, background: "#f8fafc", border: "1px solid var(--dn-border)", font: "400 10.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
-                {slides.find((s) => s.id === step.slideId)?.preview ?? "Select an approved slide to anchor this section."}
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ font: "600 8.5px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)" }}>Section title</span>
+                <input
+                  value={step.title}
+                  onChange={(e) => onUpdateStep(step.id, { title: e.target.value })}
+                  onBlur={() => onSave()}
+                  placeholder="Section title"
+                  style={{ width: "100%", padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "600 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", background: "var(--dn-surface-2)" }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ font: "600 8.5px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)" }}>Slide on screen during this section</span>
+                <select
+                  value={step.slideId ?? ""}
+                  onChange={(e) => onUpdateStep(step.id, { slideId: e.target.value || undefined }, true)}
+                  style={{ width: "100%", padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "500 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", background: "#fff" }}
+                >
+                  {slides.map((slide) => (
+                    <option key={slide.id} value={slide.id}>Slide {slide.position}: {slide.title}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 4 }}>
+                <span style={{ font: "600 8.5px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)" }}>Your notes to the rep — tone, emphasis, length</span>
+                <textarea
+                  value={step.instruction}
+                  onChange={(e) => onUpdateStep(step.id, { instruction: e.target.value })}
+                  onBlur={() => onSave()}
+                  placeholder="e.g. Lead with the Phase 3 program; keep it under 3 sentences."
+                  style={{ width: "100%", minHeight: 68, resize: "vertical", padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 11.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg)", background: "var(--dn-surface-2)" }}
+                />
+              </label>
+              <div style={{ display: "grid", gap: 4 }}>
+                <span style={{ font: "600 8.5px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)" }}>What the rep says here — approved text (locked, changes go through MLR)</span>
+                <div style={{ padding: "8px 9px", borderRadius: 8, background: "#f8fafc", border: "1px dashed var(--dn-border)", font: "400 10.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
+                  {slides.find((s) => s.id === step.slideId)?.preview ?? "Select an approved slide to anchor this section."}
+                </div>
               </div>
             </div>
 

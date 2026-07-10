@@ -307,6 +307,41 @@ export function resolveBrandProfile(base: BrandProfile, answers: Record<string, 
   };
 }
 
+/**
+ * Derive "Try asking" suggestions from the LIVE approved knowledge base, so the doctor
+ * view suggests questions the rep can actually answer — dynamically, from whatever
+ * content cleared MLR (seeded deck or uploads), never a static list that can drift.
+ * Topics come from the approved answers; known topics get a natural phrasing, unknown
+ * ones (e.g. from an uploaded FAQ) get a safe generic phrasing.
+ */
+export function tryQuestionsFromKnowledge(topics: string[], displayName: string, max = 4): string[] {
+  // Word-anchored so a novel topic never false-matches (e.g. "reimbursement_pathways"
+  // must NOT read as mechanism) — unknown topics fall through to the generic phrasing.
+  const templates: [RegExp, (n: string, t: string) => string][] = [
+    [/\b(mechanism|moa)\b/, (n) => `How does ${n} work?`],
+    [/\b(trial|program|phase|efficacy|endpoint|study)\b/, () => `What is the clinical program studying?`],
+    [/\b(dosing|dose|administration|regimen)\b/, () => `What dosing is being studied?`],
+    [/\b(safety|isi|adverse|warning)s?\b/, () => `What safety information should I be aware of?`],
+    [/\b(status|approval|regulatory|development)\b/, (n) => `What is ${n}'s development status?`],
+    [/\b(access|support|enrollment)\b/, () => `Is there an access or support program?`],
+    [/\b(indication|population|patient)s?\b/, (n) => `Who is ${n} being studied for?`],
+    [/\b(storage|handling|stability)\b/, (n, t) => `What is the ${n} ${t.replace(/[_-]+/g, " ")} guidance?`],
+  ];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of topics) {
+    const topic = raw.trim().toLowerCase().replace(/[_-]+/g, " ");
+    if (!topic || topic === "overview" || topic === "escalation" || topic === "contact") continue; // covered by the pitch / routing
+    const template = templates.find(([re]) => re.test(topic));
+    const q = template ? template[1](displayName, topic) : `What does the approved information cover on ${topic}?`;
+    if (seen.has(q)) continue;
+    seen.add(q);
+    out.push(q);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 /** A live approved-content slide (from upload → MLR approval) to surface in the deck. */
 export interface LiveDeckInput {
   id: string;

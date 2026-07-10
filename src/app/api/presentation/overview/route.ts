@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import { getContainer } from "@lib/container";
 import { resolveSessionAndHcp } from "@lib/resolve-session";
 import { complianceGate, isiAlreadyDelivered, type PolicyRoute, type RiskClassification } from "@modules/compliance";
-import { PresentationSkill } from "@modules/content";
+import { mergePlan, PresentationSkill } from "@modules/content";
 import { presentationGuidance } from "@modules/rules";
 
 export const dynamic = "force-dynamic";
@@ -60,14 +60,13 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   const snap = await c.studio.get(c.demo.aiRepId);
   const rules = snap?.rules ?? [];
-  const guidedPlan = snap?.guidedOverview;
   const guidance = presentationGuidance(rules, { hcpId });
   const presentation = new PresentationSkill(c.content);
-  const steps = await presentation.overview({
-    context: { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market },
-    guidance,
-    ...(guidedPlan?.steps?.length ? { plan: guidedPlan } : {}),
-  });
+  const ctx = { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market };
+  // Doctor delivery follows the SAME effective plan the Brand-pitch card shows — never a
+  // silently reordered walk (what the brand user rehearsed is what the doctor hears).
+  const plan = mergePlan(snap?.guidedOverview, await presentation.defaultPlan(ctx), await presentation.deck(ctx));
+  const steps = await presentation.overview({ context: ctx, guidance, plan });
   const isi = await c.content.latestActiveSafetyStatement();
   const route: PolicyRoute = steps.length ? "approved_answer" : "fallback";
   const segments = [];

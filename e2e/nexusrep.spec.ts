@@ -100,7 +100,8 @@ test.describe("HCP doctor view", () => {
 
   test("answers a public product question with the investigational disclosure + ISI", async ({ page }) => {
     await startHcpSession(page);
-    await page.getByText(/What is Milvexian and how does it work/i).first().click();
+    // The "Try" chips derive from the live approved knowledge (mechanism topic → this phrasing).
+    await page.getByText(/How does Milvexian work/i).first().click();
     await expect(page.getByText(/investigational|Factor XIa|LIBREXIA/i).first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/Important Safety Information/i)).toBeVisible();
   });

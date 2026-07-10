@@ -29,6 +29,9 @@ export interface PresentationStep {
   sourceIds: ApprovedAnswerId[];
   detailAidSlideId?: DetailAidSlideId;
   slideTitle?: string;
+  /** The pitch-plan step this segment delivers — links a spoken segment to its editable section. */
+  stepId?: string;
+  stepTitle?: string;
 }
 
 export interface PresentationOverviewRequest {
@@ -50,6 +53,31 @@ export interface PresentationPlanStep {
 export interface PresentationPlan {
   steps: PresentationPlanStep[];
   updatedAt?: string;
+}
+
+function cleanStep(step: PresentationPlanStep, fallback: PresentationPlanStep, slides: PresentationDeckSlide[], index: number): PresentationPlanStep {
+  const allowedSlide = step.slideId && slides.some((s) => s.id === step.slideId) ? step.slideId : fallback.slideId;
+  return {
+    id: /^[a-z0-9_-]{3,80}$/i.test(step.id) ? step.id : fallback.id || `overview_step_${index + 1}`,
+    title: step.title?.trim().slice(0, 90) || fallback.title || `Section ${index + 1}`,
+    ...(allowedSlide ? { slideId: allowedSlide } : {}),
+    instruction: step.instruction?.trim().slice(0, 500) || fallback.instruction || "",
+  };
+}
+
+/**
+ * The EFFECTIVE overview plan: the saved (brand-edited) plan when one exists, else the
+ * DocNexus-drafted default — with every step sanitized against the current approved deck.
+ * Every surface that speaks or displays the pitch must resolve the plan through this,
+ * so the pitch card, the Train rehearsal, and the doctor-facing delivery always agree.
+ */
+export function mergePlan(saved: PresentationPlan | undefined, fallback: PresentationPlan, slides: PresentationDeckSlide[]): PresentationPlan {
+  const base = saved?.steps?.length ? saved : fallback;
+  const fallbackByIndex = fallback.steps;
+  return {
+    updatedAt: base.updatedAt ?? fallback.updatedAt,
+    steps: base.steps.map((step, index) => cleanStep(step, fallbackByIndex[index] ?? fallback.steps[0]!, slides, index)),
+  };
 }
 
 export interface PresentationDeckSlide {
@@ -307,6 +335,7 @@ export class PresentationSkill {
       sourceIds: [item.answer.id],
       detailAidSlideId: item.answer.detailAidSlideId,
       slideTitle: title,
+      ...(step ? { stepId: step.id, stepTitle: step.title } : {}),
     };
   }
 }

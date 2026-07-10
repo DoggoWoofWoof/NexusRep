@@ -29,7 +29,34 @@ behind them. Implemented stage-by-stage with review gates.
 **Test status:** `typecheck` clean · **189 unit/integration tests** pass (1 guarded live test skipped) ·
 **20 Playwright E2E pass** (17 functional incl. the blank-slate self-serve journey + 3 visual).
 
-### Latest — Upload-driven setup + Brand-pitch training UX + session→coach handoff (2026-07-10)
+### Latest — Pitch coherence: ONE plan everywhere, per-section coaching, knowledge-derived suggestions (2026-07-10)
+
+- **The pitch plan is now the single source of truth.** `mergePlan` (moved into the
+  presentation module) resolves the EFFECTIVE plan — saved brand edits over the DocNexus
+  default — and the Brand-pitch card, the Train rehearsal, **and the doctor-facing overview**
+  all speak from it. Previously, with no saved plan, old coaching rules silently reordered the
+  spoken walk while the card showed deck order (the "flow doesn't match the PPT" confusion).
+- **Rehearsed pitch segments are 1:1 with the plan** — same numbering, same section titles,
+  "shows <slide>" on each — and **clicking a segment jumps the pitch panel to that section**
+  (slide preview + editor), transcript-style.
+- **Per-section coaching**: every segment has a **Coach** control — the note applies to THAT
+  section's plan instruction immediately (persisted) and the rep re-delivers. The exchange-level
+  coach box now also applies live to the selected section (it used to do nothing until Accept).
+  Sections can be **reordered** in the card; Accept no longer double-saves pitch notes as rules.
+- **Pitch editor de-mystified**: every field is labeled (Section title / Slide on screen /
+  Your notes to the rep), and the grey box is explicitly "approved text (locked, changes go
+  through MLR)" — the MLR-approved words the rep speaks, not an input.
+- **Doctor "Try asking" chips derive from the LIVE knowledge base** (`tryQuestionsFromKnowledge`):
+  topics of retrievable approved answers become natural questions (word-anchored templates + a
+  generic fallback for novel upload topics). Explicit setup answers still win; profile is last.
+- **`useBrand` made resilient**: a failed first `/api/brand` fetch (cold compile / cold boot) no
+  longer strands mounted components at "Loading deck…" forever — failures retry with backoff and
+  a late success broadcasts to every consumer.
+- **Bug fixed**: literal backspace characters had replaced `` regex anchors in the plan route
+  (shell heredoc mangling) — the "slide couldn't be matched" warning never fired.
+- New tests: `tests/pitch-coherence.test.ts` (mergePlan fidelity + try-question derivation).
+
+### Upload-driven setup + Brand-pitch training UX + session→coach handoff (2026-07-10)
 
 - **Upload a document → setup fills itself.** `POST /api/content/ingest` now also infers setup
   answers from the uploaded text (`inferSetupAnswersFromDocument` in `setupAssistant`): brand,

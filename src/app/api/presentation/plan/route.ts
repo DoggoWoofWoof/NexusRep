@@ -6,31 +6,12 @@
 
 import { NextResponse } from "next/server";
 import { getContainer } from "@lib/container";
-import { PresentationSkill, type PresentationDeckSlide, type PresentationPlan, type PresentationPlanStep } from "@modules/content";
+import { mergePlan, PresentationSkill, type PresentationDeckSlide, type PresentationPlan, type PresentationPlanStep } from "@modules/content";
 
 export const dynamic = "force-dynamic";
 
 function contextOf(c: Awaited<ReturnType<typeof getContainer>>) {
   return { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market };
-}
-
-function cleanStep(step: PresentationPlanStep, fallback: PresentationPlanStep, slides: PresentationDeckSlide[], index: number): PresentationPlanStep {
-  const allowedSlide = step.slideId && slides.some((s) => s.id === step.slideId) ? step.slideId : fallback.slideId;
-  return {
-    id: /^[a-z0-9_-]{3,80}$/i.test(step.id) ? step.id : fallback.id || `overview_step_${index + 1}`,
-    title: step.title?.trim().slice(0, 90) || fallback.title || `Section ${index + 1}`,
-    ...(allowedSlide ? { slideId: allowedSlide } : {}),
-    instruction: step.instruction?.trim().slice(0, 500) || fallback.instruction || "",
-  };
-}
-
-function mergePlan(saved: PresentationPlan | undefined, fallback: PresentationPlan, slides: PresentationDeckSlide[]): PresentationPlan {
-  const base = saved?.steps?.length ? saved : fallback;
-  const fallbackByIndex = fallback.steps;
-  return {
-    updatedAt: base.updatedAt ?? fallback.updatedAt,
-    steps: base.steps.map((step, index) => cleanStep(step, fallbackByIndex[index] ?? fallback.steps[0]!, slides, index)),
-  };
 }
 
 function parseStepIndex(feedback: string): number | null {
@@ -66,7 +47,7 @@ function applyFeedback(plan: PresentationPlan, slides: PresentationDeckSlide[], 
   if (targetIndex < 0 || !plan.steps[targetIndex]) return { plan, warning: "Couldn't find that overview step — nothing was changed." };
   // Fail LOUDLY (not silently) when the coach names a slide we can't match: the step keeps
   // its current slide and the user is told, instead of thinking the anchor changed.
-  const mentionsSlide = /slide/i.test(note);
+  const mentionsSlide = /\bslide\b/i.test(note);
   const warning = mentionsSlide && !slide ? "That slide couldn't be matched to the approved deck — the step's slide was left unchanged (the note was still saved)." : undefined;
 
   const next: PresentationPlan = {

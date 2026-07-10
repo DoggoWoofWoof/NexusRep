@@ -10,7 +10,7 @@
 
 import { NextResponse } from "next/server";
 import { getContainer } from "@lib/container";
-import { mergeLiveDeck, resolveBrandProfile, setupAnswersOf, toPublicBrand, type LiveDeckInput } from "@modules/brand";
+import { mergeLiveDeck, resolveBrandProfile, setupAnswersOf, toPublicBrand, tryQuestionsFromKnowledge, type LiveDeckInput } from "@modules/brand";
 import { isRetrievable } from "@modules/content";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +20,8 @@ export async function GET(): Promise<NextResponse> {
   // Resolve the profile from the Setup Assistant's answers so anything the brand user set
   // BY CHATTING (name, greeting, indication, talking points, audience) drives the live rep.
   const draft = (await c.studio.get(c.demo.aiRepId))?.draft;
-  const brand = resolveBrandProfile(c.brand, setupAnswersOf(draft));
+  const setupAnswers = setupAnswersOf(draft);
+  const brand = resolveBrandProfile(c.brand, setupAnswers);
 
   // The on-screen deck = the authored profile deck + LIVE approved content (uploads that
   // cleared MLR). This is what lets a brand configured purely by chat + upload render real
@@ -35,5 +36,18 @@ export async function GET(): Promise<NextResponse> {
     })
     .filter((s): s is LiveDeckInput => s !== null);
 
-  return NextResponse.json({ ...toPublicBrand(brand), deck: mergeLiveDeck(brand.deck, live) });
+  // "Try asking" chips: an explicit setup answer wins; otherwise derive from the LIVE
+  // approved knowledge (ordered by slide position) so suggestions always match what the
+  // rep can actually answer — including freshly approved uploads.
+  const retrievable = answers
+    .filter((a) => isRetrievable(a.mlr))
+    .sort((a, b) => (slideById.get(String(a.detailAidSlideId))?.position ?? 999) - (slideById.get(String(b.detailAidSlideId))?.position ?? 999));
+  const derived = tryQuestionsFromKnowledge(retrievable.map((a) => a.topic), brand.displayName);
+  const tryQuestions = setupAnswers.try_questions?.trim()
+    ? brand.tryQuestions
+    : derived.length >= 2
+      ? derived
+      : brand.tryQuestions;
+
+  return NextResponse.json({ ...toPublicBrand(brand), tryQuestions, deck: mergeLiveDeck(brand.deck, live) });
 }

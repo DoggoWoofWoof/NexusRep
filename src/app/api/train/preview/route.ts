@@ -14,7 +14,7 @@ import { NextResponse } from "next/server";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { complianceGate, isiAlreadyDelivered, type PolicyRoute, type RiskClassification } from "@modules/compliance";
-import { composeGreeting, firstAvailableComposer, PresentationSkill } from "@modules/content";
+import { composeGreeting, firstAvailableComposer, mergePlan, PresentationSkill } from "@modules/content";
 import { isOverviewPrompt } from "@modules/content/overviewPrompt";
 import { presentationGuidance, rehearsalStyleGuidance } from "@modules/rules";
 
@@ -97,11 +97,11 @@ export async function POST(req: Request): Promise<NextResponse> {
     const savedDeckGuidance = presentationGuidance(rules, { hcpId: c.demo.hcpId, rehearsal: true });
     const guidance = Array.from(new Set([...savedDeckGuidance, ...coaching].map((g) => g.trim()).filter(Boolean)));
     const presentation = new PresentationSkill(c.content);
-    const steps = await presentation.overview({
-      context: { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market },
-      guidance,
-      ...(studioSnap?.guidedOverview?.steps?.length ? { plan: studioSnap.guidedOverview } : {}),
-    });
+    const ctx = { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market };
+    // ALWAYS speak from the effective plan (saved ?? DocNexus default) — the same plan the
+    // Brand-pitch card displays. Rehearsal must never follow a different order than the card.
+    const plan = mergePlan(studioSnap?.guidedOverview, await presentation.defaultPlan(ctx), await presentation.deck(ctx));
+    const steps = await presentation.overview({ context: ctx, guidance, plan });
     const isi = await c.content.latestActiveSafetyStatement();
     const priorAudit = isi ? await c.audit.forSession(sessionId) : [];
     let isiDelivered = Boolean(isi && isiAlreadyDelivered(priorAudit, isi.text));
@@ -109,7 +109,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     const responses: string[] = [];
     // Per-step segments so the Train rehearsal can render the overview paragraph-by-paragraph with
     // each step's own slide — matching the doctor-facing delivery — instead of one joined block.
-    const segments: { response: string; detailAidSlideId: string | null; slideTitle: string | null }[] = [];
+    const segments: { response: string; detailAidSlideId: string | null; slideTitle: string | null; stepId: string | null; stepTitle: string | null }[] = [];
     let firstSlide: string | null = null;
     let attachedThisRun = false;
 
@@ -148,6 +148,8 @@ export async function POST(req: Request): Promise<NextResponse> {
         response: responseText,
         detailAidSlideId: decision.decision === "approved" ? detailAidSlideId ?? null : null,
         slideTitle: step.slideTitle ?? null,
+        stepId: step.stepId ?? null,
+        stepTitle: step.stepTitle ?? null,
       });
     }
 

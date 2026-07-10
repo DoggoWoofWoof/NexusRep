@@ -10,6 +10,7 @@ export { parsePdf, isPdf } from "./parsers/pdf";
 export { buildApprovedResponse, slideReference, type BuiltResponse } from "./responseBuilder";
 export { getComposer, resolveComposer, firstAvailableComposer, composeGreeting, compactCoaching, llmComplete, type GroundedComposer, type ComposeInput } from "./composer";
 export {
+  mergePlan,
   PresentationSkill,
   type PresentationAction,
   type PresentationDeckSlide,
