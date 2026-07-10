@@ -9,6 +9,7 @@ import { isOverviewPrompt } from "./overviewPrompt";
 import { SlideView } from "../_components/SlideView";
 import { VideoAgentStage } from "../_components/VideoAgentStage";
 import { StudioAgentMode } from "./StudioAgentMode";
+import { BrowserVoiceProvider } from "@lib/browser-speech";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 
 type StudioMode = "setup" | "agent" | "pitch" | "train" | "rules" | "readiness";
@@ -825,6 +826,20 @@ function loadTrainState(brandName?: string): TrainStore {
 }
 
 /** Split a rep answer into its coachable body and the active approved ISI block. */
+// The trainer HEARS a recoached line immediately — same browser voice the doctor
+// view uses, so coaching judges cadence and tone, not just the words on screen.
+let trainerVoice: BrowserVoiceProvider | null = null;
+async function speakCoached(text: string): Promise<void> {
+  const [body] = splitIsi(text);
+  if (!body.trim()) return;
+  if (!trainerVoice) {
+    trainerVoice = new BrowserVoiceProvider();
+    await trainerVoice.warmup();
+  }
+  trainerVoice.cancel();
+  void trainerVoice.speak(body);
+}
+
 function splitIsi(text: string): [string, string | null] {
   const parts = text.split(/\n\nImportant Safety Information:\s*/);
   return parts.length > 1 ? [parts[0]!.trim(), parts.slice(1).join(" ").trim()] : [text, null];
@@ -849,8 +864,8 @@ function PitchMode() {
   const [lineCoach, setLineCoach] = useState<number | null>(null);
   const [lineNote, setLineNote] = useState("");
 
-  const generate = async () => {
-    if (generating) return;
+  const generate = async (): Promise<OverviewSegment[]> => {
+    if (generating) return script ?? [];
     setGenerating(true);
     setScriptMsg("");
     try {
@@ -862,9 +877,11 @@ function PitchMode() {
       if (!res.ok) throw new Error(String(res.status));
       const d = (await res.json()) as { segments?: OverviewSegment[] };
       setScript(d.segments ?? []);
+      return d.segments ?? [];
     } catch (e) {
       setScript([]);
       setScriptMsg(`Couldn't generate the script: ${e instanceof Error ? e.message : String(e)}`);
+      return [];
     } finally {
       setGenerating(false);
     }
@@ -883,7 +900,10 @@ function PitchMode() {
     setLineCoach(null);
     setLineNote("");
     await applyPlanNote(n, seg.stepId ?? activePlanStepId);
-    await generate();
+    const fresh = await generate();
+    // Hear the coached line as the rep would deliver it.
+    const updated = fresh.find((x) => x.stepId && x.stepId === (seg.stepId ?? activePlanStepId));
+    if (updated) void speakCoached(updated.response);
   };
 
   // ── Deck sources: which uploaded/approved documents feed the deck + script.
@@ -1282,6 +1302,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     setFollowSlideId((a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId) ?? null);
     setCoachDraft((d) => ({ ...d, [idx]: "" }));
     setBusyIdx(null);
+    void speakCoached(a.text); // hear the retake, don't just read it
   };
 
   // Accept the current answer. Greeting → persist the new opening line. Otherwise → compact the

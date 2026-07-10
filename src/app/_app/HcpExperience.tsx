@@ -31,8 +31,8 @@ export function HcpExperience({ app }: { app?: AppState }) {
   const [notice, setNotice] = useState("");
   const [speaking, setSpeaking] = useState(false);
   const [threeD, setThreeD] = useState(false);
-  // Spoken answers are OPT-IN: the browser voice starts muted (the Sound button turns it on).
-  const [voiceOn, setVoiceOn] = useState(false);
+  // Rep voice starts ON; the red "Rep voice off" state makes turning it off obvious.
+  const [voiceOn, setVoiceOn] = useState(true);
   // Video-call audio state mirrored from the stage (the header button proxies to it —
   // controls must not disappear when the mode changes).
   const [videoMuted, setVideoMuted] = useState(false);
