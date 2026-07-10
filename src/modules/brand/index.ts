@@ -312,6 +312,14 @@ export function resolveBrandProfile(base: BrandProfile, answers: Record<string, 
   const tagline = get("tagline") ?? base.tagline;
   const tryQuestions = list("try_questions") ?? base.tryQuestions;
   const extraHotwords = list("hotwords") ?? [];
+  // Targeting + campaign progress are brand config too — editable by chatting, like
+  // everything else. Malformed dates/lengths are ignored (the base profile stands).
+  const specialties = list("target_specialties") ?? base.clinical.specialties;
+  const diagnosisCodes = list("diagnosis_codes") ?? base.clinical.diagnosisCodes;
+  const startRaw = get("campaign_start");
+  const startDate = startRaw && !Number.isNaN(new Date(startRaw).getTime()) ? startRaw : base.campaign.startDate;
+  const lengthRaw = Number(get("campaign_length"));
+  const lengthDays = Number.isFinite(lengthRaw) && lengthRaw > 0 ? Math.floor(lengthRaw) : base.campaign.lengthDays;
   const investigational = base.clinical.investigational;
   return {
     ...base,
@@ -321,7 +329,8 @@ export function resolveBrandProfile(base: BrandProfile, answers: Record<string, 
     greeting,
     talkingPoints,
     tryQuestions,
-    clinical: { ...base.clinical, indication, audience },
+    clinical: { ...base.clinical, indication, audience, specialties, diagnosisCodes },
+    campaign: { ...base.campaign, startDate, lengthDays },
     // Chat-supplied hotwords also become product terms so intent/overview detection
     // and ingestion topic hints track whatever the brand user typed — no code edits.
     lexicon: {

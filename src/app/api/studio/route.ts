@@ -103,9 +103,16 @@ export async function POST(req: Request): Promise<NextResponse> {
   const done = (snap: StudioSnapshot | null) => NextResponse.json(snap ? shape(snap) : null);
 
   switch (body.action) {
-    case "answer":
+    case "answer": {
       if (!body.questionKey || typeof body.value !== "string") return bad("questionKey and value required");
-      return done(await c.studio.answer(id, body.questionKey, body.value));
+      const snap = await c.studio.answer(id, body.questionKey, body.value);
+      // Targeting edits take effect NOW — re-query the cohort with the resolved brand
+      // (fire-and-forget; the Audience screen reads the fresh cohort on next load).
+      if (body.questionKey === "target_specialties" || body.questionKey === "diagnosis_codes") {
+        void c.audienceRuntime.reloadForBrandChange().catch((e: unknown) => console.warn("[audience] reload after targeting edit failed:", e instanceof Error ? e.message : e));
+      }
+      return done(snap);
+    }
     case "section":
       if (!body.section || !body.status) return bad("section and status required");
       return done(await c.studio.setSectionStatus(id, body.section, body.status as SectionStatus));

@@ -139,3 +139,28 @@ describe("campaign day counter is computed, not frozen", () => {
     }
   });
 });
+
+describe("targeting + campaign are chat-editable brand config", () => {
+  it("Setup Assistant answers drive the audience query and campaign progress", async () => {
+    const { resolveBrandProfile } = await import("@modules/brand");
+    const r = resolveBrandProfile(MILVEXIAN_PROFILE, {
+      target_specialties: "Oncology, Hematology",
+      diagnosis_codes: "C50; C91",
+      campaign_start: "2026-01-01",
+      campaign_length: "30",
+    });
+    expect(r.clinical.specialties).toEqual(["Oncology", "Hematology"]);
+    expect(r.clinical.diagnosisCodes).toEqual(["C50", "C91"]);
+    expect(r.campaign.startDate).toBe("2026-01-01");
+    expect(r.campaign.lengthDays).toBe(30);
+    // The edited targeting flows into the cohort query — no Milvexian inheritance.
+    expect(audienceQueryFor(r.clinical).specialties).toEqual(["Oncology", "Hematology"]);
+  });
+
+  it("malformed campaign values are ignored (base profile stands)", async () => {
+    const { resolveBrandProfile } = await import("@modules/brand");
+    const r = resolveBrandProfile(MILVEXIAN_PROFILE, { campaign_start: "not-a-date", campaign_length: "-5" });
+    expect(r.campaign.startDate).toBe("2026-06-23");
+    expect(r.campaign.lengthDays).toBe(92);
+  });
+});

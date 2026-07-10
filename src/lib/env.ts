@@ -22,6 +22,10 @@ const docnexusIdToken = process.env.DOCNEXUS_ID_TOKEN ?? "";
 const docnexusPlatformEmail = process.env.DOCNEXUS_PLATFORM_EMAIL ?? "";
 const docnexusPlatformPassword = process.env.DOCNEXUS_PLATFORM_PASSWORD ?? "";
 const docnexusHasPlatformLogin = Boolean(docnexusPlatformEmail && docnexusPlatformPassword);
+// The browserless server path (DEPLOY.md): a long-lived Cognito refresh token + client id.
+// Must count as a credential, or a Render deploy configured exactly as documented would
+// silently stay on the modeled cohort.
+const docnexusHasRefreshLogin = Boolean(process.env.DOCNEXUS_REFRESH_TOKEN && process.env.DOCNEXUS_COGNITO_CLIENT_ID);
 const docnexusIdTokenFile = process.env.DOCNEXUS_ID_TOKEN_FILE ?? (docnexusHasPlatformLogin ? ".docnexus-id-token.json" : "");
 /** Parse a numeric env var; a malformed value falls back instead of becoming NaN
  *  (NaN reached setTimeout as delay 0 and instantly aborted the claims fetch). */
@@ -89,7 +93,7 @@ export const env = {
   audienceProvider: pick<AudienceProviderName>(
     process.env.NEXUSREP_AUDIENCE,
     ["modeled", "docnexus"],
-    docnexusApiKey || docnexusBearer || docnexusIdToken || docnexusIdTokenFile || docnexusHasPlatformLogin ? "docnexus" : "modeled",
+    docnexusApiKey || docnexusBearer || docnexusIdToken || docnexusIdTokenFile || docnexusHasPlatformLogin || docnexusHasRefreshLogin ? "docnexus" : "modeled",
   ),
   docnexusBaseUrl: process.env.DOCNEXUS_ADVANCED_SEARCH_URL ?? "https://advanced-search.docnexus.ai",
   docnexusApiKey,

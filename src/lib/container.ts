@@ -27,7 +27,7 @@ import { AnalyticsService, RuntimeMetrics } from "@modules/analytics";
 import { StudioService } from "@modules/aiRepStudio";
 import { activeSteering } from "@modules/rules";
 import { MlrService } from "@modules/mlr";
-import { getBrandProfile, setupAnswersOf, type BrandProfile } from "@modules/brand";
+import { getBrandProfile, setupAnswersOf, type BrandProfile, resolveBrandProfile } from "@modules/brand";
 import { seedDemoHistory, seedDemoStudio } from "@lib/demo-seed";
 
 export interface AppContainer {
@@ -42,7 +42,7 @@ export interface AppContainer {
   conversation: ConversationService;
   targeting: TargetingService;
   /** Live audience-source state: current source, degraded flag, throttled re-fetch. */
-  audienceRuntime: { readonly source: string; readonly degraded: boolean; refresh(): Promise<boolean> };
+  audienceRuntime: { readonly source: string; readonly degraded: boolean; refresh(): Promise<boolean>; reloadForBrandChange(): Promise<void> };
   analytics: AnalyticsService;
   metrics: RuntimeMetrics;
   studio: StudioService;
@@ -141,7 +141,17 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
   const sessions = new SessionService(repos);
   // Load the targeting cohort from the DocNexus claims backend when configured;
   // otherwise the modeled cardiology cohort. Never throws — falls back safely.
-  const { cohort, source: audienceSource } = await loadCohort(audienceQueryFor(brand.clinical));
+  // Targeting follows the RESOLVED brand (base profile + Setup Assistant answers), so
+  // specialties/diagnosis codes edited by chatting actually drive the cohort query.
+  const resolvedClinical = async () => {
+    try {
+      const draft = (await studio.get(aiRepId))?.draft;
+      return resolveBrandProfile(brand, setupAnswersOf(draft)).clinical;
+    } catch {
+      return brand.clinical;
+    }
+  };
+  const { cohort, source: audienceSource } = await loadCohort(audienceQueryFor(await resolvedClinical()));
   // Coaching → behavior: each turn folds the rep's ACTIVE, compliance-cleared rules into
   // runtime steering (blocked topics reroute; lead topics re-rank). Draft/gated rules never
   // steer, so the compliance gate stays authoritative.
@@ -179,7 +189,7 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
       if (!audienceState.source.includes("fallback")) return true;
       if (Date.now() - audienceState.lastAttemptAt < 60_000) return false;
       audienceState.lastAttemptAt = Date.now();
-      const next = await loadCohort(audienceQueryFor(brand.clinical));
+      const next = await loadCohort(audienceQueryFor(await resolvedClinical()));
       if (!next.source.includes("fallback")) {
         targeting.replaceCohort(next.cohort);
         audienceState.source = next.source;
@@ -187,6 +197,14 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
         return true;
       }
       return false;
+    },
+    /** Re-query the cohort NOW with the current resolved brand targeting — called when
+     *  the Setup Assistant changes target_specialties / diagnosis_codes. */
+    async reloadForBrandChange(): Promise<void> {
+      const next = await loadCohort(audienceQueryFor(await resolvedClinical()));
+      targeting.replaceCohort(next.cohort);
+      audienceState.source = next.source;
+      console.info(`[audience] cohort re-queried for brand targeting change: ${next.source} (${next.cohort.length} HCPs)`);
     },
   };
   const metrics = new RuntimeMetrics();
