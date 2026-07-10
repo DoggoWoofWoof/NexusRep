@@ -1327,15 +1327,6 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
             <span onClick={() => { setExchanges([greetingExchange()]); setCoachDraft({}); setPreviewSessionId(makePreviewSessionId()); }} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>↺ Restart</span>
           </div>
         </div>
-        {/* Rules from coaching — HERE, because Train's Accept is what creates them.
-            (Script coaching in Pitch & Script saves permanently into the plan — no rules.) */}
-        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
-          <div style={{ padding: "12px 14px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--dn-border)" }}><span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Rules from your coaching</span><span onClick={() => app.setStudioMode("rules")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>See all →</span></div>
-          <div style={{ padding: "11px 14px", display: "flex", flexDirection: "column", gap: 9, maxHeight: 230, overflowY: "auto" }}>
-            {coachingRules.length === 0 && <div style={{ textAlign: "center", padding: "14px 8px", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Accept a coached answer and the rules behind it land here for review.</div>}
-            {coachingRules.map((r) => <RuleCard key={r.id} r={r} onAccept={() => void post({ action: "ruleStatus", ruleId: r.id, status: "active" })} onReject={() => void post({ action: "ruleStatus", ruleId: r.id, status: "rejected" })} compact />)}
-          </div>
-        </div>
         <ModelLab />
         <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)" }}>
           <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", marginBottom: 5 }}>How this works</div>
@@ -1510,6 +1501,15 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
               <div style={{ font: "400 10px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 7 }}>Ask a question or click any rep line — the slide the doctor would see appears here.</div>
             </div>
           )}
+        </div>
+        {/* Rules from coaching — below the deck, next to the thread whose Accept creates them.
+            (Script coaching in Pitch & Script saves permanently into the plan — no rules.) */}
+        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+          <div style={{ padding: "12px 14px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--dn-border)" }}><span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Rules from your coaching</span><span onClick={() => app.setStudioMode("rules")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>See all →</span></div>
+          <div style={{ padding: "11px 14px", display: "flex", flexDirection: "column", gap: 9, maxHeight: 230, overflowY: "auto" }}>
+            {coachingRules.length === 0 && <div style={{ textAlign: "center", padding: "14px 8px", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Accept a coached answer and the rules behind it land here for review.</div>}
+            {coachingRules.map((r) => <RuleCard key={r.id} r={r} onAccept={() => void post({ action: "ruleStatus", ruleId: r.id, status: "active" })} onReject={() => void post({ action: "ruleStatus", ruleId: r.id, status: "rejected" })} compact />)}
+          </div>
         </div>
       </div>
     </div>
