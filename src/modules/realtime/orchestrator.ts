@@ -11,7 +11,7 @@
  */
 
 import type { HcpId, SessionId } from "@lib/ids";
-import { classify, complianceGate, route, validateGrounding, type PolicyRoute, type RiskClassification, isiAlreadyDelivered } from "@modules/compliance";
+import { classify, complianceGate, route, validateGrounding, type PolicyRoute, type RiskClassification, isiAlreadyDelivered, stripEmbeddedIsi } from "@modules/compliance";
 import type { RetrievalService } from "@modules/retrieval";
 import { buildApprovedResponse, type ApprovedAnswer, type ContentService, type GroundedComposer, type SafetyStatement } from "@modules/content";
 import type { AuditService } from "@modules/audit";
@@ -166,9 +166,16 @@ export class TurnOrchestrator {
       // Required safety info (ISI) for this turn, if the classifier flagged it. Studio may
       // draft revised ISI wording through MLR, but runtime still appends the current active
       // approved block exactly and the gate validates that text before anything is spoken.
-      const activeIsi = classification.isiRequired ? await this.firstSafetyStatement() : undefined;
-      const isiAlreadyDelivered = Boolean(activeIsi && await this.isSafetyStatementDelivered(ctx.sessionId, activeIsi));
-      const isi = activeIsi && !isiAlreadyDelivered ? activeIsi : undefined;
+      const isiStatement = await this.firstSafetyStatement();
+      const activeIsi = classification.isiRequired ? isiStatement : undefined;
+      const priorEvents = await this.audit.forSession(ctx.sessionId);
+      const isiDelivered = Boolean(activeIsi && isiAlreadyDelivered(priorEvents, activeIsi.text));
+      const isi = activeIsi && !isiDelivered ? activeIsi : undefined;
+      // The AI/investigational disclosure is a per-SESSION obligation (the greeting carries
+      // it; the first answer may repeat it). Re-stating it on every reply reads as canned —
+      // once any answer has gone out, disclosure guidance is dropped and the composer is
+      // told not to restate it.
+      const disclosureGiven = priorEvents.some((e) => e.type === "response_output" && typeof e.payload.text === "string" && (e.payload.text as string).trim().length > 0);
       // The on-screen slide is offered to the composer as a HINT so it can weave a BRIEF, varied
       // reference itself (and drop it when asked to be terse) — instead of a fixed bolt-on sentence
       // that read repetitively. Rehearsal + active persona_style coaching also flow in as guidance.
@@ -176,11 +183,14 @@ export class TurnOrchestrator {
       const slideHint = slideTitle
         ? [`A detail-aid slide titled "${slideTitle}" is on the doctor's screen${relatedTitle ? ` (a "${relatedTitle}" slide is also available)` : ""}. You may refer to what's on screen briefly and naturally when it helps, but keep it crisp, vary the wording, and omit it when asked to be brief.`]
         : [];
-      const guidance = [...(opts?.coaching ?? []), ...(opts?.steering?.styleGuidance ?? []), ...slideHint];
+      const steeringGuidance = (opts?.steering?.styleGuidance ?? []).filter(
+        (g) => !disclosureGiven || !/disclos|investigational|not fda/i.test(g),
+      );
+      const guidance = [...(opts?.coaching ?? []), ...steeringGuidance, ...slideHint];
       const overrideComposer = opts?.composer;
       const activeComposer = overrideComposer !== undefined ? overrideComposer : this.composer;
       const composeFn = activeComposer?.available()
-        ? (q: string, b: ApprovedAnswer[]) => activeComposer.compose({ question: q, blocks: b, guidance, safety: isi?.text }).then((r) => r.text)
+        ? (q: string, b: ApprovedAnswer[]) => activeComposer.compose({ question: q, blocks: b, guidance, safety: isi?.text, alreadyDisclosed: disclosureGiven }).then((r) => r.text)
         : undefined;
       // Deterministic fallback (no LLM) speaks approved text + one brief slide cue; it cannot weave,
       // so the ISI is appended verbatim below.
@@ -188,7 +198,9 @@ export class TurnOrchestrator {
       let body: string;
       if (composeFn) {
         try {
-          const composed = (await composeFn(ctx.text, result.answers)).trim();
+          // Deterministic backstop: whatever the model wove in, an embedded ISI copy is
+          // removed — the platform alone decides when the exact ISI is appended.
+          const composed = stripEmbeddedIsi((await composeFn(ctx.text, result.answers)).trim(), isiStatement?.text ?? "");
           if (!composed) {
             body = deterministic();
           } else {
@@ -220,7 +232,7 @@ export class TurnOrchestrator {
         requiredSafetyText = isi.text;
         body = `${body}\n\nImportant Safety Information: ${isi.text}`;
         isiAttached = true;
-      } else if (activeIsi && isiAlreadyDelivered) {
+      } else if (activeIsi && isiDelivered) {
         gateClassification = { ...classification, isiRequired: false };
         await this.audit.record(ctx.sessionId, "response_validation", {
           action: "isi_already_delivered",
@@ -240,7 +252,23 @@ export class TurnOrchestrator {
         "Thank you for reporting that. I'm logging this so our safety team can follow up. Can you share any additional detail?";
       followUpType = "pharmacovigilance";
     } else if (r === "medical_information") {
-      responseText = "That's a detailed medical question. I can connect you with our medical information team.";
+      // A safety-information ask has an APPROVED verbatim answer — the ISI. Deliver it
+      // (once per session) alongside the Medical Information handoff instead of only
+      // bouncing; anything deeper still routes. Fail-safe: without an active ISI, or
+      // once it's been delivered, the plain handoff stands.
+      const miIsi = classification.isiRequired ? await this.firstSafetyStatement() : undefined;
+      const miEvents = miIsi ? await this.audit.forSession(ctx.sessionId) : [];
+      if (miIsi && !isiAlreadyDelivered(miEvents, miIsi.text)) {
+        responseText = `Here is the approved safety information I can share.
+
+Important Safety Information: ${miIsi.text}
+
+For anything beyond this, I can connect you with our medical information team.`;
+        requiredSafetyText = miIsi.text;
+        isiAttached = true;
+      } else {
+        responseText = "That's a detailed medical question. I can connect you with our medical information team.";
+      }
       followUpType = "medical_information";
     } else if (r === "human_handoff") {
       responseText = "Of course — I can arrange for a representative to contact you.";
@@ -250,13 +278,6 @@ export class TurnOrchestrator {
     }
 
     return this.finalize(ctx, r, gateClassification, responseText, sourceIds, isiAttached, requiredSafetyText, followUpType, detailAidSlideId, opts?.preview ?? false);
-  }
-
-  private async isSafetyStatementDelivered(sessionId: SessionId, isi: SafetyStatement): Promise<boolean> {
-    // The ONE shared implementation (whitespace-normalized) — a private un-normalized copy
-    // here could disagree with the routes and re-deliver ISI on formatting variance.
-    const events = await this.audit.forSession(sessionId);
-    return isiAlreadyDelivered(events, isi.text);
   }
 
   private async finalize(

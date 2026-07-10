@@ -143,7 +143,7 @@ export async function seedDemoStudio(deps: { studio: StudioService; aiRepId: AiR
   await deps.studio.setSectionStatus(deps.aiRepId, "approved_knowledge", "complete");
 
   // Locked compliance guardrails (always active, cannot be trained away).
-  await deps.studio.addGuardrail(deps.aiRepId, { type: "persona_style", scope: "global", instruction: "Deliver the investigational disclosure on any product or safety question.", seed: "grd_isi" });
+  await deps.studio.addGuardrail(deps.aiRepId, { type: "persona_style", scope: "global", instruction: "Deliver the investigational disclosure once per conversation (greeting or first product answer) — do not repeat it on every reply.", seed: "grd_isi" });
   await deps.studio.addGuardrail(deps.aiRepId, { type: "blocked_topic", scope: "global", instruction: "Refuse off-label or pediatric questions and route to Medical Information.", seed: "grd_offlabel" });
   await deps.studio.addGuardrail(deps.aiRepId, { type: "persona_style", scope: "persona", instruction: "Open every session with the AI + investigational disclosure before sharing information.", seed: "grd_disclosure" });
 

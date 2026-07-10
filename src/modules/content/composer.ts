@@ -38,10 +38,13 @@ export interface ComposeInput {
    * checks the exact text is present.
    */
   safety?: string;
+  /** True once the AI/investigational disclosure has been given this session — the answer
+   *  must not restate it (a rep who re-introduces themselves every reply reads as canned). */
+  alreadyDisclosed?: boolean;
 }
 
 /** Build the composer system prompt: absolute rules + approved blocks + required safety + coaching. */
-function systemFor(blocks: ApprovedAnswer[], guidance?: string[], safety?: string): string {
+function systemFor(blocks: ApprovedAnswer[], guidance?: string[], safety?: string, alreadyDisclosed?: boolean): string {
   const notes = (guidance ?? []).map((g) => g.trim()).filter(Boolean);
   const hardLength = lengthConstraint(notes);
   const coaching = notes.length
@@ -50,7 +53,10 @@ function systemFor(blocks: ApprovedAnswer[], guidance?: string[], safety?: strin
   const safe = safety?.trim()
     ? `\n\nImportant Safety Information that the platform will append EXACTLY after your answer. Do not paraphrase, shorten, summarize, or duplicate it in your response:\n${safety.trim()}`
     : "";
-  return `${COMPOSER_SYSTEM}\n\nApproved content:\n${blocksText(blocks)}${safe}${coaching}`;
+  const disclosed = alreadyDisclosed
+    ? "\n\nThe AI-representative disclosure and the investigational / not-FDA-approved status were ALREADY stated earlier in this conversation. Do NOT restate either - answer the question directly."
+    : "";
+  return `${COMPOSER_SYSTEM}\n\nApproved content:\n${blocksText(blocks)}${safe}${disclosed}${coaching}`;
 }
 
 function lengthConstraint(notes: string[]): string {
@@ -84,14 +90,14 @@ function anthropicModel(): string {
 const claudeComposer: GroundedComposer = {
   name: "claude",
   available: () => Boolean(process.env.ANTHROPIC_API_KEY),
-  async compose({ question, blocks, guidance, safety }) {
+  async compose({ question, blocks, guidance, safety, alreadyDisclosed }) {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic();
     const t0 = Date.now();
     const res = await client.messages.create({
       model: anthropicModel(),
       max_tokens: env.composerMaxTokens,
-      system: systemFor(blocks, guidance, safety),
+      system: systemFor(blocks, guidance, safety, alreadyDisclosed),
       messages: [{ role: "user", content: question }],
     });
     const text = res.content.find((b) => b.type === "text")?.text ?? "";
@@ -105,7 +111,7 @@ function makeOpenAiCompatibleComposer(cfg: CompatCfg): GroundedComposer {
   return {
     name: cfg.name,
     available: () => Boolean(cfg.baseUrl()) && Boolean(cfg.apiKey()),
-    async compose({ question, blocks, guidance, safety }) {
+    async compose({ question, blocks, guidance, safety, alreadyDisclosed }) {
       const baseUrl = cfg.baseUrl();
       const apiKey = cfg.apiKey();
       if (!baseUrl || !apiKey) throw new Error(`${cfg.name}: not configured`);
@@ -117,7 +123,7 @@ function makeOpenAiCompatibleComposer(cfg: CompatCfg): GroundedComposer {
           model: cfg.model(),
           max_tokens: env.composerMaxTokens,
           messages: [
-            { role: "system", content: systemFor(blocks, guidance, safety) },
+            { role: "system", content: systemFor(blocks, guidance, safety, alreadyDisclosed) },
             { role: "user", content: question },
           ],
         }),
