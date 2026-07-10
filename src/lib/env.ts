@@ -70,10 +70,15 @@ export const env = {
   ),
   // Which LLM provider runs the intent/risk classifier in the live conversation.
   // Defaults to the deterministic keyword classifier ($0, always available).
+  // Default to LLM-based routing when a key is present (Claude preferred, then OpenAI) —
+  // it reads AE-report-vs-question, comparative-vs-anatomy, and negation far better than the
+  // keyword baseline. The keyword classifier stays the offline/e2e fallback and still runs
+  // in parallel to contribute deterministic risk floors (mergeWithKeywordSignals). Force it
+  // with NEXUSREP_CLASSIFIER=keyword (the e2e suite does, for determinism + zero token cost).
   classifierProvider: pick<ClassifierProviderName>(
     process.env.NEXUSREP_CLASSIFIER,
     ["keyword", "claude", "openai", "thinking-machines"],
-    "keyword",
+    process.env.ANTHROPIC_API_KEY ? "claude" : process.env.OPENAI_API_KEY ? "openai" : "keyword",
   ),
   // How approved answers are composed. "llm" lets a grounded composer rephrase
   // (grounding-validated + gated); "deterministic" speaks approved blocks verbatim.

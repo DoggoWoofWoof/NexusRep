@@ -89,3 +89,38 @@ describe("parseClassification (LLM JSON normalizer)", () => {
     expect(() => parseClassification("not json")).toThrow();
   });
 });
+
+// ── Keyword classifier hardening: word boundaries + AE report-vs-question ──
+import { classify as kwClassify } from "@modules/compliance/classifier";
+import { route as routeOf } from "@modules/compliance";
+
+describe("keyword classifier no longer false-fires", () => {
+  it("a safety QUESTION is answered, not filed as an adverse event", () => {
+    const c = kwClassify("what are the side effects of this?");
+    expect(c.intent).not.toBe("adverse_event");
+    expect(routeOf(c)).not.toBe("adverse_event");
+    expect(c.intent).toBe("safety"); // → approved safety/ISI answer
+  });
+
+  it("a genuine AE REPORT still routes to pharmacovigilance", () => {
+    const c = kwClassify("My patient had bleeding after taking it");
+    expect(c.intent).toBe("adverse_event");
+    expect(routeOf(c)).toBe("adverse_event");
+  });
+
+  it("a bare symptom mention stays conservative (AE)", () => {
+    expect(kwClassify("could this cause swelling").intent).toBe("adverse_event");
+  });
+
+  it("'superior to' is comparative, but cardiology anatomy is not", () => {
+    expect(routeOf(kwClassify("is it superior to apixaban"))).toBe("medical_information");
+    const anatomy = kwClassify("does it help with superior vena cava thrombosis");
+    expect(anatomy.comparativeClaimRisk).toBeLessThan(0.6);
+    expect(routeOf(anatomy)).not.toBe("medical_information");
+  });
+
+  it("substring false-positives are gone ('consider' no longer trips 'side')", () => {
+    const c = kwClassify("should I consider this for my patient");
+    expect(c.intent).not.toBe("safety");
+  });
+});

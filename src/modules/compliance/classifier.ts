@@ -7,15 +7,28 @@
 
 import type { Intent, RiskClassification } from "./types";
 
-const AE_TERMS = [
-  "side effect", "adverse", "reaction", "rash", "nausea", "dizzy", "dizziness",
-  "hospitalized", "bleeding", "swelling", "allergic", "fainted", "death",
+// Symptom mentions strong enough to take the safe (adverse-event) path on their own —
+// a doctor raising any of these gets caution/PV routing regardless of phrasing.
+const AE_SYMPTOM_TERMS = [
+  "rash", "nausea", "dizzy", "dizziness", "hospitalized", "bleeding",
+  "swelling", "allergic", "anaphylax", "fainted", "died", "death",
+];
+// Ambiguous terms: an adverse-event REPORT only when a report cue is also present —
+// otherwise "what are the side effects?" is a safety QUESTION, not a report to route
+// to pharmacovigilance. (The safety intent below picks up the no-cue case.)
+const AE_REPORT_TERMS = ["side effect", "adverse event", "adverse reaction", "adverse", "reaction"];
+const AE_REPORT_CUES = [
+  "my patient", "patient had", "patient experienced", "experienced", "developed",
+  "after taking", "after starting", "after a dose", "reported", "presented with",
+  "came in with", "i had", "i experienced", "she had", "he had", "they had", "started having",
 ];
 const OFF_LABEL_TERMS = [
   "off-label", "off label", "pediatric", "children", "pregnan", "unapproved",
   "other indication", "not approved for", "weight loss",
 ];
-const COMPARATIVE_TERMS = ["better than", "safer than", "superior", "versus", "vs ", "compared to", "competitor"];
+// "superior to" (not bare "superior") — otherwise cardiology anatomy like
+// "superior vena cava" false-fires the comparative route.
+const COMPARATIVE_TERMS = ["better than", "safer than", "superior to", "more effective than", "versus", "vs", "compared to", "competitor"];
 const INJECTION_TERMS = ["ignore previous", "ignore the above", "system prompt", "developer mode", "jailbreak"];
 const HUMAN_TERMS = ["talk to a person", "human rep", "representative", "call me", "sales rep", "speak to someone"];
 const MSL_TERMS = ["pharmacokinetic", "data on file", "study design", "medical information", "msl"];
@@ -25,7 +38,7 @@ const MSL_TERMS = ["pharmacokinetic", "data on file", "study design", "medical i
 // the investigational guardrail then routes clinical specifics to Medical Info.
 const INTENT_TERMS: Record<Exclude<Intent, "off_label" | "adverse_event" | "comparative" | "human_request" | "other">, string[]> = {
   dosing: ["dose", "dosing", "titration", "mg", "how much", "frequency"],
-  safety: ["safety", "contraindicat", "warning", "isi", "risk", "side"],
+  safety: ["safety", "contraindicat", "warning", "isi", "risk", "side effect", "adverse", "reaction", "tolerab"],
   administration: ["administer", "injection", "infusion", "how to take", "route"],
   trial_data: ["trial", "study", "efficacy", "endpoint", "clinical data", "results"],
   access: ["coverage", "cost", "access", "insurance", "copay", "reimburs"],
@@ -109,14 +122,28 @@ export function canonicalizeProductNames(input: string): string {
   return out + input.slice(cursor);
 }
 
+/** Whole-word-ish containment: the term must begin at a word boundary, so "side" no
+ *  longer matches inside "consider" and "risk" no longer matches "asterisk" — while
+ *  intentional prefixes ("pregnan" → "pregnancy") and unit-after-digit ("mg" → "5mg")
+ *  still match. Multi-word phrases match across flexible whitespace. */
+function matchesTerm(text: string, term: string): boolean {
+  const t = term.trim();
+  if (!t) return false;
+  const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  return new RegExp(`(^|[^a-z])(${escaped})`, "i").test(text);
+}
+
 function hits(text: string, terms: string[]): number {
-  return terms.reduce((n, t) => (text.includes(t) ? n + 1 : n), 0);
+  return terms.reduce((n, t) => (matchesTerm(text, t) ? n + 1 : n), 0);
 }
 
 export function classify(input: string): RiskClassification {
   const text = input.toLowerCase();
 
-  const aeRisk = clamp(hits(text, AE_TERMS) * 0.6);
+  // A symptom mention is an AE on its own; an ambiguous term ("side effect", "reaction")
+  // is an AE only WITH a report cue — so a safety QUESTION doesn't file a PV report.
+  const aeReport = hits(text, AE_REPORT_TERMS) > 0 && hits(text, AE_REPORT_CUES) > 0;
+  const aeRisk = clamp(hits(text, AE_SYMPTOM_TERMS) * 0.6 + (aeReport ? 0.6 : 0));
   const offLabelRisk = clamp(hits(text, OFF_LABEL_TERMS) * 0.7);
   const comparativeRisk = clamp(hits(text, COMPARATIVE_TERMS) * 0.7);
   const injectionRisk = clamp(hits(text, INJECTION_TERMS) * 0.8);

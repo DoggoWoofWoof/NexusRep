@@ -23,7 +23,13 @@ Return ONLY a JSON object (no prose, no code fences) with exactly these fields:
 
 "product_info" = a general question about what the product is, its mechanism/class, its clinical program, or its regulatory/approval status (publicly-disclosable facts). Use it for "what is X / how does it work / what program is it in / is it approved". Prefer a specific clinical intent (dosing/safety/trial_data) when the HCP asks for those specifics.
 
-Prioritize safety: an adverse-event mention outranks everything; an off-label request outranks informational intents.`;
+Judge these nuances precisely — they are where keyword matching fails:
+- adverse_event / high adverseEventRisk means the HCP is REPORTING or describing a real patient experience ("my patient developed a rash", "she had bleeding after the dose"). A QUESTION about the safety profile ("what are the side effects?", "how is it tolerated?", "is bleeding a known risk?") is intent "safety" with LOW adverseEventRisk — it is answered from approved safety info, not filed as a report.
+- comparativeClaimRisk is high only for a real head-to-head comparison against another drug ("is it better than apixaban", "safer than X"). Anatomy or clinical phrasing that merely contains words like "superior"/"inferior" (e.g. "superior vena cava") is NOT comparative.
+- Read negation: "is it approved for children?" IS an off-label/unapproved-use question (offLabelRisk high) for an adult-indication product; a reassurance question is still about the product.
+- A slightly garbled or mis-transcribed product name from voice input should still be treated as being about the product — do not drop to "other" just because the name looks misspelled.
+
+Prioritize safety: a genuine adverse-event report outranks everything; an off-label request outranks informational intents. When uncertain between "answer" and "escalate", prefer the safer (higher-risk) reading.`;
 
 const INTENTS: Intent[] = [
   "product_info", "dosing", "safety", "administration", "trial_data", "access",
