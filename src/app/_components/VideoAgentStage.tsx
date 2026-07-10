@@ -303,12 +303,9 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
       )}
       {!bare && (
         <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6 }}>
-          {/* Agent-audio mute lives on the HCP header Sound button (via setMuted on the
-              handle) — a second toggle on the pane was duplicated state. The pane keeps
-              only the my-microphone toggle. */}
-          {stage === "live" && (
-            <button onClick={() => { const next = !micOn; setMicOn(next); transportRef.current?.setMicEnabled(next); }} aria-label={micOn ? "Mute my microphone" : "Unmute my microphone"} title={micOn ? "Mute my microphone" : "Unmute my microphone"} style={{ background: micOn ? "rgba(255,255,255,.15)" : "rgba(220,38,38,.75)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>{micOn ? "🎙" : "🎙✕"}</button>
-          )}
+          {/* No overlay controls on the pane besides End video: agent audio is the header
+              Sound button, and your microphone is the ask-bar mic button (both proxy to
+              the stage handle). */}
           <button onClick={onClose} style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>End video</button>
         </div>
       )}
