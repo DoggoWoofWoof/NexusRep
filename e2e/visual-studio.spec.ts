@@ -31,7 +31,7 @@ test("studio pitch & script screen", async ({ page }) => {
   await expect(page.getByText("Deck sources")).toBeVisible({ timeout: 15_000 });
   // The script auto-drafts from the approved deck (deterministic under the e2e env).
   await expect(page.getByText(/what the rep says, slide by slide/i)).toBeVisible();
-  await expect(page.getByText(/▤ /).first()).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByText("✎ Coach").first()).toBeVisible({ timeout: 25_000 });
   await expect(page.getByText("Brand pitch").first()).toBeVisible();
   await expect(page).toHaveScreenshot("studio-pitch.png", { fullPage: true });
 });

@@ -772,6 +772,15 @@ function ToggleRow({ label, desc, on, onToggle }: { label: string; desc: string;
 /* ---------- TRAIN MODE (conversational coaching loop) ---------- */
 type CoachScope = "persona" | "global" | "hcp";
 interface OverviewSegment { response: string; detailAidSlideId?: string | null; slideTitle?: string | null; stepId?: string | null; stepTitle?: string | null }
+
+/** True when the slide chip would just repeat the section label — the auto-drafted pitch
+ *  names each section after its slide, so the chip only earns its place when they differ
+ *  (a renamed section, or a section re-anchored to another slide). */
+function slideChipRedundant(sectionLabel?: string | null, slideTitle?: string | null): boolean {
+  if (!slideTitle) return true;
+  const norm = (x: string) => x.replace(/\s+/g, " ").trim().toLowerCase();
+  return !!sectionLabel && norm(sectionLabel) === norm(slideTitle);
+}
 interface RepAnswer {
   text: string;
   route: string;
@@ -981,7 +990,7 @@ function PitchMode() {
                 <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-accent-purple)", marginBottom: 5, display: "flex", gap: 6, alignItems: "center" }}>
                   <span>{si + 1}.</span>
                   <span style={{ flex: 1 }}>{seg.stepTitle ?? seg.slideTitle ?? "Approved section"}</span>
-                  {seg.slideTitle && <span style={{ color: "var(--dn-fg-subtle)", textTransform: "none", letterSpacing: 0 }}>▤ {seg.slideTitle}</span>}
+                  {!slideChipRedundant(seg.stepTitle ?? seg.slideTitle, seg.slideTitle) && <span style={{ color: "var(--dn-fg-subtle)", textTransform: "none", letterSpacing: 0 }}>▤ {seg.slideTitle}</span>}
                   {seg.stepId && (
                     <span onClick={(e) => { e.stopPropagation(); setLineCoach(coachingThis ? null : si); setLineNote(""); }} style={{ color: "var(--dn-brand-light)", cursor: "pointer", textTransform: "none", letterSpacing: 0 }}>✎ Coach</span>
                   )}
@@ -1389,7 +1398,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
                                       <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-accent-purple)", marginBottom: 5, display: "flex", gap: 6, alignItems: "center" }}>
                                         <span>{si + 1}.</span>
                                         <span style={{ flex: 1 }}>{seg.stepTitle ?? seg.slideTitle ?? "Approved section"}</span>
-                                        {seg.slideTitle && <span style={{ color: "var(--dn-fg-subtle)", textTransform: "none", letterSpacing: 0 }}>▤ shows {seg.slideTitle}</span>}
+                                        {!slideChipRedundant(seg.stepTitle ?? seg.slideTitle, seg.slideTitle) && <span style={{ color: "var(--dn-fg-subtle)", textTransform: "none", letterSpacing: 0 }}>▤ shows {seg.slideTitle}</span>}
                                         {isLatest && !ex.accepted && seg.stepId && (
                                           <span
                                             onClick={(e) => { e.stopPropagation(); setSegCoach(coachingThis ? null : { exIdx: idx, segIdx: si }); setSegNote(""); }}
