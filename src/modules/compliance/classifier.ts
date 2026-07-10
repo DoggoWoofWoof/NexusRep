@@ -33,7 +33,7 @@ const INTENT_TERMS: Record<Exclude<Intent, "off_label" | "adverse_event" | "comp
   // topics an investigational rep answers directly. GENERIC terms only; product/
   // program names come from the brand lexicon (configureClassifierLexicon).
   product_info: [
-    "what is", "mechanism", "how does", "moa",
+    "what is", "what's", "tell me about", "tell me more", "explain", "mechanism", "how does", "moa",
     "program", "indication", "investigational", "fast track", "development", "class of drug",
   ],
 };
@@ -42,8 +42,71 @@ const INTENT_TERMS: Record<Exclude<Intent, "off_label" | "adverse_event" | "comp
 // in this generic engine file. The container configures this once from the BrandProfile,
 // so onboarding a new brand never edits the classifier.
 let PRODUCT_TERMS: string[] = [];
+let PRODUCT_CANON: { despaced: string; display: string }[] = [];
 export function configureClassifierLexicon(productTerms: string[]): void {
   PRODUCT_TERMS = productTerms.map((t) => t.toLowerCase().trim()).filter(Boolean);
+  PRODUCT_CANON = PRODUCT_TERMS.map((t) => ({
+    despaced: t.replace(/[^a-z0-9]/g, ""),
+    display: t.replace(/\b\w/g, (c) => c.toUpperCase()),
+  }));
+}
+
+/** Longest common CONTIGUOUS substring length — the fuzzy signal for a mistranscribed name. */
+function longestCommonSubstr(a: string, b: string): number {
+  if (!a || !b) return 0;
+  let best = 0;
+  const row = new Array<number>(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    let diagPrev = 0;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = row[j]!;
+      if (a[i - 1] === b[j - 1]) { row[j] = diagPrev + 1; if (row[j]! > best) best = row[j]!; }
+      else row[j] = 0;
+      diagPrev = tmp;
+    }
+  }
+  return best;
+}
+
+/**
+ * Recover an ASR/typo near-miss of a product name ("no vexian", "novexian", "milvexin" →
+ * "Milvexian") so a garbled name still classifies as a product question AND retrieves the
+ * right approved content — instead of bouncing to the human-handoff fallback.
+ *
+ * Conservative by design: only product terms ≥6 chars, needs a ≥6-char contiguous overlap
+ * that is also ≥60% of the term with a length within 3 — a random word can't trip it, and
+ * exact matches pass through untouched. Runs on 2-word then 1-word windows so "no vexian"
+ * is caught as one name.
+ */
+export function canonicalizeProductNames(input: string): string {
+  if (!PRODUCT_CANON.length || !input) return input;
+  const tokens = [...input.matchAll(/\S+/g)].map((m) => ({ raw: m[0], start: m.index!, end: m.index! + m[0].length }));
+  if (!tokens.length) return input;
+  const norm = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const repls: { start: number; end: number; display: string }[] = [];
+  const used = new Array<boolean>(tokens.length).fill(false);
+  for (const win of [1, 2]) {
+    for (let i = 0; i + win <= tokens.length; i++) {
+      if (used.slice(i, i + win).some(Boolean)) continue;
+      const cand = norm(tokens.slice(i, i + win).map((t) => t.raw).join(""));
+      if (cand.length < 4) continue;
+      for (const term of PRODUCT_CANON) {
+        if (term.despaced.length < 6 || cand === term.despaced) continue; // tiny terms + exact hits: leave alone
+        const lcs = longestCommonSubstr(cand, term.despaced);
+        if (lcs >= 6 && lcs >= Math.ceil(term.despaced.length * 0.6) && Math.abs(cand.length - term.despaced.length) <= 2) {
+          repls.push({ start: tokens[i]!.start, end: tokens[i + win - 1]!.end, display: term.display });
+          for (let k = i; k < i + win; k++) used[k] = true;
+          break;
+        }
+      }
+    }
+  }
+  if (!repls.length) return input;
+  repls.sort((a, b) => a.start - b.start);
+  let out = "";
+  let cursor = 0;
+  for (const r of repls) { out += input.slice(cursor, r.start) + r.display; cursor = r.end; }
+  return out + input.slice(cursor);
 }
 
 function hits(text: string, terms: string[]): number {
