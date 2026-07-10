@@ -17,6 +17,28 @@ import { setActiveTavusSession } from "@lib/tavus-session";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request): Promise<NextResponse> {
+  try {
+    return await startConversation(req);
+  } catch (error) {
+    // Never return an HTML 500 — the client parses this as JSON and would crash with
+    // "Unexpected token '<'". Always hand back a clean, actionable payload.
+    console.error("[tavus/conversation]", error);
+    return NextResponse.json(
+      {
+        provider: "tavus",
+        configured: false,
+        conversationUrl: null,
+        token: null,
+        sessionId: null,
+        reachableLlm: false,
+        note: `Couldn't start the video rep: ${error instanceof Error ? error.message : String(error)}`,
+      },
+      { status: 200 },
+    );
+  }
+}
+
+async function startConversation(req: Request): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as { hcpId?: unknown };
   const c = await getContainer();
   const provider = getRealtimeProvider();
@@ -37,9 +59,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   setActiveTavusSession(hist.id);
   if (persona.customGreeting) await c.sessions.appendTurn(hist.id, { speaker: "rep", text: persona.customGreeting });
 
-  let session;
-  try {
-    session = await provider.startSession({
+  const startArgs = {
       record: true,
       callbackUrl: `${env.publicBaseUrl}/api/tavus/webhook`,
       sessionId: hist.id,
@@ -59,18 +79,37 @@ export async function POST(req: Request): Promise<NextResponse> {
       // Routing (off-label→MSL, AE→PV) is handled inside our custom-LLM endpoint, so
       // no inline persona tools are needed. External tool-calling would use Tavus's
       // /v2/tools registry. No external_voice_id — the replica uses its default voice.
-    });
+    };
+
+  let session;
+  try {
+    session = await provider.startSession(startArgs);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({
-      provider: provider.name,
-      configured: false,
-      conversationUrl: null,
-      token: null,
-      sessionId: hist.id,
-      reachableLlm: !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl),
-      note: `Tavus could not start this conversation: ${message}`,
-    });
+    // Self-heal the concurrent-conversation cap: previews that closed without ending (a
+    // tab shut mid-call, a process restart) leave live conversations that pile up to
+    // Tavus's limit. End the stale ones and retry ONCE before giving up.
+    if (/maximum concurrent conversations/i.test(message)) {
+      const ended = await provider.endActiveConversations();
+      if (ended > 0) {
+        try {
+          session = await provider.startSession(startArgs);
+        } catch (retryError) {
+          return NextResponse.json({
+            provider: provider.name, configured: false, conversationUrl: null, token: null, sessionId: hist.id,
+            reachableLlm: !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl),
+            note: `Tavus could not start this conversation: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
+          });
+        }
+      }
+    }
+    if (!session) {
+      return NextResponse.json({
+        provider: provider.name, configured: false, conversationUrl: null, token: null, sessionId: hist.id,
+        reachableLlm: !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl),
+        note: `Tavus could not start this conversation: ${message}`,
+      });
+    }
   }
 
   // Link the Tavus conversation id to our per-call session, so the recording_ready

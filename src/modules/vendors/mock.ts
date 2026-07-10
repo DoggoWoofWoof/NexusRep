@@ -44,6 +44,13 @@ export class MockRealtimeProvider implements RealtimeProvider {
   async endSession(): Promise<void> {
     this.session = null;
   }
+  async endConversation(): Promise<void> {
+    /* mock: nothing to end */
+  }
+
+  async endActiveConversations(): Promise<number> {
+    return 0;
+  }
 }
 
 export class MockVoiceProvider implements VoiceProvider {

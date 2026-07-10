@@ -182,11 +182,29 @@ export class TavusRealtimeProvider implements RealtimeProvider {
 
   async endSession(): Promise<void> {
     if (!this.conversationId) return;
-    try {
-      await this.api(`/conversations/${this.conversationId}/end`, { method: "POST" });
-    } catch {
-      /* best-effort; conversation frees on timeout regardless */
-    }
+    await this.endConversation(this.conversationId);
     this.conversationId = null;
+  }
+
+  async endConversation(conversationId: string): Promise<void> {
+    if (!conversationId) return;
+    try {
+      await this.api(`/conversations/${conversationId}/end`, { method: "POST" });
+    } catch {
+      /* best-effort; a conversation also frees on Tavus's inactivity timeout */
+    }
+  }
+
+  /** List active conversations and end them all — frees concurrent-conversation slots after
+   *  previews that closed without ending (e.g. a tab closed mid-call, or a process restart). */
+  async endActiveConversations(): Promise<number> {
+    try {
+      const res = await this.api<{ data?: { conversation_id?: string; status?: string }[] }>("/conversations?status=active", { method: "GET" });
+      const ids = (res.data ?? []).map((c) => c.conversation_id).filter((id): id is string => Boolean(id));
+      await Promise.all(ids.map((id) => this.endConversation(id)));
+      return ids.length;
+    } catch {
+      return 0;
+    }
   }
 }

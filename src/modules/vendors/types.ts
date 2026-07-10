@@ -66,6 +66,12 @@ export interface RealtimeProvider {
   sendSystemEvent(event: RealtimeSystemEvent): Promise<void>;
   sendToolResult(result: ToolResult): Promise<void>;
   endSession(): Promise<void>;
+  /** End ONE conversation by id (client calls this on close so a preview doesn't linger
+   *  and eat a concurrent-conversation slot). Best-effort. */
+  endConversation(conversationId: string): Promise<void>;
+  /** End every currently-active conversation on the account and return how many were ended.
+   *  Used to self-heal the "maximum concurrent conversations" cap. Best-effort. */
+  endActiveConversations(): Promise<number>;
 }
 
 // ── Voice ───────────────────────────────────────────────────────────────────

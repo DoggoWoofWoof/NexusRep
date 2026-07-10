@@ -114,7 +114,18 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
           // Invite-link identity — server honors it only for a real cohort member.
           body: JSON.stringify(hcpId ? { hcpId } : {}),
         });
-        const d = (await res.json()) as ConvResp;
+        // The server always returns JSON — but a Render OOM/502 or gateway error yields an
+        // HTML error page. Parse defensively so we show a clean note instead of crashing with
+        // "Unexpected token '<'", and fall back to the built-in avatar.
+        const raw = await res.text();
+        let d: ConvResp;
+        try {
+          d = JSON.parse(raw) as ConvResp;
+        } catch {
+          setNote(`Couldn't start the video rep: the service returned an error (HTTP ${res.status}). It may be out of memory or restarting — the built-in avatar still works.`);
+          setStage("unconfigured");
+          return;
+        }
         if (!d.configured || !d.conversationUrl) {
           setNote(d.note);
           setStage("unconfigured");
@@ -243,6 +254,21 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
       const c = callRef.current;
       if (c) { try { c.leave(); c.destroy(); } catch { /* noop */ } }
       callRef.current = null;
+      // Leaving the Daily call does NOT end the Tavus conversation — it lingers and holds a
+      // concurrent-conversation slot until Tavus times it out. End it explicitly so repeated
+      // previews don't pile up to the account cap. keepalive: survives the unmount/navigation.
+      const cid = convIdRef.current;
+      if (cid) {
+        try {
+          void fetch("/api/tavus/conversation/end", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ conversationId: cid }),
+            keepalive: true,
+          });
+        } catch { /* best-effort */ }
+      }
+      convIdRef.current = "";
     };
   }, []);
 

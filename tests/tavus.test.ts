@@ -116,3 +116,42 @@ describe("Tavus custom-LLM endpoint preserves the compliance gate", () => {
     expect(content).not.toMatch(/\bmg\b|milligram/);
   });
 });
+
+// ── Concurrency hygiene: previews must end their conversation + self-heal the cap ──
+describe("Tavus conversation cleanup", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("endConversation POSTs /conversations/{id}/end", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", (async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method} ${String(url)}`);
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch);
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1" });
+    await tavus.endConversation("c-123");
+    expect(calls.some((c) => c === "POST https://tavusapi.com/v2/conversations/c-123/end")).toBe(true);
+  });
+
+  it("endActiveConversations lists active + ends each, returns the count", async () => {
+    const ended: string[] = [];
+    vi.stubGlobal("fetch", (async (url: string) => {
+      const u = String(url);
+      if (u.endsWith("/conversations?status=active")) {
+        return new Response(JSON.stringify({ data: [{ conversation_id: "c1", status: "active" }, { conversation_id: "c2", status: "active" }] }), { status: 200 });
+      }
+      const m = u.match(/\/conversations\/(c\d)\/end$/);
+      if (m) { ended.push(m[1]!); return new Response("{}", { status: 200 }); }
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch);
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1" });
+    const n = await tavus.endActiveConversations();
+    expect(n).toBe(2);
+    expect(ended.sort()).toEqual(["c1", "c2"]);
+  });
+
+  it("endActiveConversations fails safe to 0 when listing errors", async () => {
+    vi.stubGlobal("fetch", (async () => new Response("nope", { status: 500 })) as typeof fetch);
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1" });
+    expect(await tavus.endActiveConversations()).toBe(0);
+  });
+});
