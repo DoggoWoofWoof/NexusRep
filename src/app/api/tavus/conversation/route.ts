@@ -144,6 +144,6 @@ async function startConversation(req: Request): Promise<NextResponse> {
       ? "The DocNexus Agent isn't configured yet — using the built-in avatar meanwhile."
       : reachableLlm
         ? "Live DocNexus Agent — replies produced by our compliance endpoint."
-        : "Replica renders and greets, but replies won't flow: the public URL isn't reachable (dead tunnel?). Restart the tunnel and update NEXUSREP_PUBLIC_URL.",
+        : "The DocNexus Agent renders and greets, but replies won't flow: the public URL isn't reachable. Restart it and update NEXUSREP_PUBLIC_URL.",
   });
 }
