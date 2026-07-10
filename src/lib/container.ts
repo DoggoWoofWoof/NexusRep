@@ -40,6 +40,8 @@ export interface AppContainer {
   sessions: SessionService;
   conversation: ConversationService;
   targeting: TargetingService;
+  /** Live audience-source state: current source, degraded flag, throttled re-fetch. */
+  audienceRuntime: { readonly source: string; readonly degraded: boolean; refresh(): Promise<boolean> };
   analytics: AnalyticsService;
   metrics: RuntimeMetrics;
   studio: StudioService;
@@ -141,13 +143,6 @@ export async function createContainer(opts?: { seedHistory?: boolean }): Promise
   // Coaching → behavior: each turn folds the rep's ACTIVE, compliance-cleared rules into
   // runtime steering (blocked topics reroute; lead topics re-rank). Draft/gated rules never
   // steer, so the compliance gate stays authoritative.
-  const conversation = new ConversationService({
-    orchestrator, sessions, crm, audit,
-    context: { brandId, campaignId },
-    steeringFor: async (hcpId) => activeSteering((await studio.get(aiRepId))?.rules ?? [], { hcpId }),
-    // CRM identity from the claims cohort (no NPI → truthful "needs_mapping" in the outbox).
-    npiFor: (hcpId) => cohort.find((f) => String(f.id) === hcpId || String(f.id) === `hcp_${hcpId}`)?.npi,
-  });
   // Score density relative to the cohort's top provider. For a pre-launch drug the
   // absolute claims counts for the target indications are small, so an absolute
   // reference makes every HCP flat-line at the whitespace baseline; ranking within
@@ -158,6 +153,40 @@ export async function createContainer(opts?: { seedHistory?: boolean }): Promise
     indicationLabel: brand.clinical.indication,
     densityRef: maxDensity > 0 ? maxDensity : undefined,
   });
+  const conversation = new ConversationService({
+    orchestrator, sessions, crm, audit,
+    context: { brandId, campaignId },
+    steeringFor: async (hcpId) => activeSteering((await studio.get(aiRepId))?.rules ?? [], { hcpId }),
+    // CRM identity via the targeting service (prefix-tolerant, and self-healing when the
+    // live cohort recovers). No NPI → truthful "needs_mapping" in the outbox.
+    npiFor: (hcpId) => targeting.get(hcpId)?.npi,
+  });
+  // Self-healing audience source: a boot-time fallback to the modeled cohort (timeout,
+  // expired token) retries on demand — throttled — and swaps the LIVE cohort back into
+  // the same TargetingService instance every consumer already holds.
+  const audienceState = { source: audienceSource, lastAttemptAt: Date.now() };
+  const audienceRuntime = {
+    get source() {
+      return audienceState.source;
+    },
+    get degraded() {
+      return audienceState.source.includes("fallback");
+    },
+    /** Retry the live provider when degraded (max once per 60s). True if healthy after the call. */
+    async refresh(): Promise<boolean> {
+      if (!audienceState.source.includes("fallback")) return true;
+      if (Date.now() - audienceState.lastAttemptAt < 60_000) return false;
+      audienceState.lastAttemptAt = Date.now();
+      const next = await loadCohort();
+      if (!next.source.includes("fallback")) {
+        targeting.replaceCohort(next.cohort);
+        audienceState.source = next.source;
+        console.info(`[audience] live cohort recovered: ${next.source} (${next.cohort.length} HCPs)`);
+        return true;
+      }
+      return false;
+    },
+  };
   const metrics = new RuntimeMetrics();
   const analytics = new AnalyticsService({ sessions, followups, crm, content, targeting, metrics });
   // MLR review loop: on approval, publish the answer to retrieval so the rep can
@@ -249,6 +278,7 @@ export async function createContainer(opts?: { seedHistory?: boolean }): Promise
     studio,
     mlr,
     brand,
+    audienceRuntime,
     demo: { tenantId, brandId, campaignId, aiRepId, hcpId, sessionId, audience, indication, market, audienceSource, investigational: brand.clinical.investigational },
   };
 }

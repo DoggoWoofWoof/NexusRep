@@ -22,14 +22,16 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 900 } },
-      testIgnore: /rebrand\.spec\.ts/,
+      testIgnore: /rebrand\.spec\.ts|visual-studio\.spec\.ts/,
     },
     {
       // Tests that MUTATE global server state (e.g. the brand name) run AFTER the parallel
       // suite — a rename window mid-run corrupts visual snapshots and brand assertions.
       name: "mutating",
       use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 900 } },
-      testMatch: /rebrand\.spec\.ts/,
+      testMatch: /rebrand\.spec\.ts|visual-studio\.spec\.ts/,
+      // Serial: the studio shots must not race the re-brand mutation.
+      fullyParallel: false,
       dependencies: ["chromium"],
     },
   ],

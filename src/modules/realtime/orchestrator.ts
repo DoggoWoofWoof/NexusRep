@@ -11,7 +11,7 @@
  */
 
 import type { HcpId, SessionId } from "@lib/ids";
-import { classify, complianceGate, route, validateGrounding, type PolicyRoute, type RiskClassification } from "@modules/compliance";
+import { classify, complianceGate, route, validateGrounding, type PolicyRoute, type RiskClassification, isiAlreadyDelivered } from "@modules/compliance";
 import type { RetrievalService } from "@modules/retrieval";
 import { buildApprovedResponse, type ApprovedAnswer, type ContentService, type GroundedComposer, type SafetyStatement } from "@modules/content";
 import type { AuditService } from "@modules/audit";
@@ -253,9 +253,10 @@ export class TurnOrchestrator {
   }
 
   private async isSafetyStatementDelivered(sessionId: SessionId, isi: SafetyStatement): Promise<boolean> {
-    const needle = `Important Safety Information: ${isi.text}`;
+    // The ONE shared implementation (whitespace-normalized) — a private un-normalized copy
+    // here could disagree with the routes and re-deliver ISI on formatting variance.
     const events = await this.audit.forSession(sessionId);
-    return events.some((event) => event.type === "response_output" && typeof event.payload.text === "string" && event.payload.text.includes(needle));
+    return isiAlreadyDelivered(events, isi.text);
   }
 
   private async finalize(

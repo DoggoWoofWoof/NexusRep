@@ -30,3 +30,17 @@ test("hcp invite screen", async ({ page }) => {
   await expect(page.getByText(/investigational oral Factor XIa/i)).toBeVisible();
   await expect(page).toHaveScreenshot("hcp.png", { fullPage: true });
 });
+
+// Build/Train visual baselines live in visual-studio.spec.ts (the serial `mutating`
+// project): the parallel suite mutates studio state (uploads, setup answers, coaching
+// rules), so those shots are only deterministic AFTER the full chromium pass.
+
+test("audience screen", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("aside").getByText("Audience", { exact: false }).first().click();
+  await expect(page.getByRole("heading", { name: /Who should the rep speak to/i })).toBeVisible();
+  // Wait for the LIVE (modeled, deterministic under e2e) cohort — not the fixture flash.
+  await expect(page.getByTestId("audience-row").first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/of \d+ doctors/)).toBeVisible();
+  await expect(page).toHaveScreenshot("audience.png", { fullPage: true });
+});

@@ -64,8 +64,8 @@ export async function GET(): Promise<NextResponse> {
     ),
     seat(
       "Audience / claims",
-      String(c.demo.audienceSource).startsWith("docnexus") ? "DocNexus Advanced Search (live claims)" : "Modeled cohort",
-      String(c.demo.audienceSource).startsWith("docnexus") ? "connected" : "simulated",
+      String(c.audienceRuntime.source).startsWith("docnexus") ? "DocNexus Advanced Search (live claims)" : "Modeled cohort",
+      String(c.audienceRuntime.source).startsWith("docnexus") ? "connected" : "simulated",
     ),
   ];
 

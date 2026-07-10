@@ -189,14 +189,6 @@ export interface SessionRow {
   followup: string;
 }
 
-export const SESSIONS: SessionRow[] = [
-  { id: "SX-4471", hcp: "Dr. A. Sharma", date: "2026-06-19 09:42", duration: "07:48", questions: 4, comp: "Approved", compTone: "green", followup: "Medical Info follow-up" },
-  { id: "SX-4468", hcp: "Dr. M. Okafor", date: "2026-06-18 14:05", duration: "12:10", questions: 6, comp: "Approved", compTone: "green", followup: "Rep follow-up" },
-  { id: "SX-4465", hcp: "Dr. L. Castellano", date: "2026-06-18 11:20", duration: "06:30", questions: 3, comp: "Needs review", compTone: "yellow", followup: "Materials sent" },
-  { id: "SX-4462", hcp: "Dr. R. Nguyen", date: "2026-06-17 16:48", duration: "05:32", questions: 3, comp: "AE routed", compTone: "pink", followup: "PV routing" },
-  { id: "SX-4459", hcp: "Dr. P. Andersson", date: "2026-06-17 10:15", duration: "02:14", questions: 1, comp: "Blocked + escalated", compTone: "red", followup: "MSL follow-up" },
-  { id: "SX-4455", hcp: "Dr. S. Haddad", date: "2026-06-16 13:30", duration: "09:05", questions: 5, comp: "Approved", compTone: "green", followup: "Rep follow-up" },
-];
 
 export interface CrmEventRow {
   id: number;
@@ -207,13 +199,6 @@ export interface CrmEventRow {
   status: string;
 }
 
-export const CRM_EVENTS: CrmEventRow[] = [
-  { id: 0, hcp: "Dr. A. Sharma", reason: "Medical Information follow-up", owner: "J. Rivera", target: "Veeva", status: "Created" },
-  { id: 1, hcp: "Dr. M. Okafor", reason: "MSL follow-up — clinical data request", owner: "L. Wong", target: "Veeva", status: "Sent to CRM" },
-  { id: 2, hcp: "Dr. L. Castellano", reason: "Program materials", owner: "M. Johnson", target: "Salesforce", status: "Needs mapping" },
-  { id: 3, hcp: "Dr. P. Andersson", reason: "Human rep callback — re-engage", owner: "A. Hassan", target: "Veeva", status: "Failed" },
-  { id: 4, hcp: "Dr. R. Nguyen", reason: "Pharmacovigilance — AE capture", owner: "Safety desk", target: "IQVIA", status: "Sent to CRM" },
-];
 
 export const ANALYTICS_TABS = [
   { key: "targeting", label: "Targeting" },

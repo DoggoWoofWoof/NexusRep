@@ -231,9 +231,11 @@ export function scoreHcp(f: HCPFeatures, cfg?: TargetingConfig): HCPOpportunityS
  * for the demo). Business logic only — no store, no vendor payloads.
  */
 export class TargetingService {
-  private readonly cfg?: TargetingConfig;
+  private cfg?: TargetingConfig;
+  private features: HCPFeatures[];
 
-  constructor(private readonly features: HCPFeatures[], cfg?: TargetingConfig) {
+  constructor(features: HCPFeatures[], cfg?: TargetingConfig) {
+    this.features = features;
     // Resolve cohort-effective weights ONCE: uniform pre-launch signals renormalize away,
     // so scores rank by what actually differs (and the rationale says so).
     const { weights, uniform } = effectiveWeights(features, cfg?.densityRef);
@@ -243,6 +245,20 @@ export class TargetingService {
   /** The signals that were uniform across this cohort (surfaced by the audience API). */
   uniformSignals(): (keyof ScoreWeights)[] {
     return [...(this.cfg?.uniformSignals ?? [])];
+  }
+
+  /**
+   * Swap the cohort IN PLACE (weights, uniform signals and density reference recomputed) —
+   * used when the live claims source recovers after a boot-time fallback. Every service
+   * holding this instance (analytics, identity checks, npi resolution) sees the new cohort
+   * without being rebuilt.
+   */
+  replaceCohort(features: HCPFeatures[]): void {
+    this.features = features;
+    const maxDensity = features.reduce((m, f) => Math.max(m, f.eligiblePatients), 0);
+    const densityRef = maxDensity > 0 ? maxDensity : this.cfg?.densityRef;
+    const { weights, uniform } = effectiveWeights(features, densityRef);
+    this.cfg = { ...this.cfg, densityRef, weights, uniformSignals: uniform };
   }
 
   /** All HCPs, highest opportunity first. */

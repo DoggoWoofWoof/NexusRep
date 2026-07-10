@@ -35,7 +35,8 @@ export async function POST(req: Request): Promise<Response> {
         }
         send({ type: "done", metrics: { ttftMs: ttft < 0 ? 0 : ttft, totalMs: Date.now() - t0, chars } });
       } catch (e) {
-        send({ type: "error", message: e instanceof Error ? e.message : String(e) });
+        console.error("[arena/stream]", e);
+        send({ type: "error", message: "provider error — check the server logs" });
       } finally {
         controller.close();
       }

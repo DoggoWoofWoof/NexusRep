@@ -49,7 +49,7 @@ type AudienceSummary = {
   cohortSize: number;
   segments: { no_rep: number; under_covered: number; no_see: number };
 };
-type AudienceResponse = { source: string; summary: AudienceSummary; rows: HCPOpportunityScore[] };
+type AudienceResponse = { source: string; degraded?: boolean; summary: AudienceSummary; rows: HCPOpportunityScore[] };
 
 const WHITESPACE_MAP: Record<HCPOpportunityScore["whitespace"], { segment: string; segTone: SegTone }> = {
   no_rep: { segment: "No-rep whitespace", segTone: "green" },
@@ -84,12 +84,15 @@ function mapHcp(r: HCPOpportunityScore, i: number): Hcp {
   };
 }
 
-function useAudience(): { rows: Hcp[]; summary: AudienceSummary | null; live: boolean } {
+function useAudience(): { rows: Hcp[]; summary: AudienceSummary | null; live: boolean; degraded: boolean } {
   const [rows, setRows] = useState<Hcp[]>(HCPS);
   const [summary, setSummary] = useState<AudienceSummary | null>(null);
   // false → the fixture list is showing (API failed / not yet loaded). Screens surface this
   // as a "sample data" banner so canned doctors are never mistaken for the real cohort.
   const [live, setLive] = useState(false);
+  // true → the server itself fell back to the MODELED cohort (live claims unreachable at
+  // boot). The API retries automatically; the banner keeps the degradation visible.
+  const [degraded, setDegraded] = useState(false);
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -102,6 +105,7 @@ function useAudience(): { rows: Hcp[]; summary: AudienceSummary | null; live: bo
           setRows(json.rows.map(mapHcp));
           setLive(true);
         }
+        setDegraded(Boolean(json.degraded) || String(json.source ?? "").includes("fallback"));
         if (json.summary) setSummary(json.summary);
       } catch {
         /* keep static fallback — labeled as sample data by the caller */
@@ -109,11 +113,11 @@ function useAudience(): { rows: Hcp[]; summary: AudienceSummary | null; live: bo
     })();
     return () => { alive = false; };
   }, []);
-  return { rows, summary, live };
+  return { rows, summary, live, degraded };
 }
 
 function Audience({ app }: { app: AppState }) {
-  const { rows: hcps, summary: apiSummary, live } = useAudience();
+  const { rows: hcps, summary: apiSummary, live, degraded } = useAudience();
   const [showAll, setShowAll] = useState(false);
   const [search, setSearch] = useState("");
   const [spec, setSpec] = useState("all");
@@ -147,6 +151,11 @@ function Audience({ app }: { app: AppState }) {
       {!live && (
         <div style={{ display: "flex", alignItems: "center", gap: 9, margin: "0 0 14px", padding: "9px 13px", background: "var(--dn-accent-yellow-bg)", border: "1px solid #fcd34d", borderRadius: 9, font: "500 12px/1.4 var(--dn-font-sans)", color: "#92400e" }}>
           ⚠ Showing sample doctors — the live claims cohort hasn&apos;t loaded. These rows are illustrative, not your targeting data.
+        </div>
+      )}
+      {live && degraded && (
+        <div style={{ display: "flex", alignItems: "center", gap: 9, margin: "0 0 14px", padding: "9px 13px", background: "var(--dn-accent-yellow-bg)", border: "1px solid #fcd34d", borderRadius: 9, font: "500 12px/1.4 var(--dn-font-sans)", color: "#92400e" }}>
+          ⚠ Live claims cohort unreachable — showing the modeled sample cohort. The server retries automatically; reload in a minute to pick up the real doctors.
         </div>
       )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 18 }}>
@@ -335,12 +344,24 @@ function Launch({ app }: { app: AppState }) {
   const rows = hcps.filter((h) => listIds.includes(h.id));
   // Real readiness from the Studio (not hardcoded): whether the rep is trained + approved.
   const [repReady, setRepReady] = useState<boolean | null>(null);
+  // Every checklist row is COMPUTED (knowledge/ISI from the content store, persona from the
+  // studio sections) — two of these used to be hardcoded "Ready", implying checks that never ran.
+  const [knowledgeReady, setKnowledgeReady] = useState<boolean | null>(null);
+  const [personaReady, setPersonaReady] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
-    fetch("/api/studio").then((r) => (r.ok ? r.json() : null)).then((d: { readiness?: { canLaunch?: boolean }; activation?: { hcpIds: string[]; launchedAt: string | null } | null } | null) => {
+    fetch("/api/studio").then((r) => (r.ok ? r.json() : null)).then((d: { readiness?: { canLaunch?: boolean }; sections?: { key: string; status: string }[]; activation?: { hcpIds: string[]; launchedAt: string | null } | null } | null) => {
       if (!alive) return;
       setRepReady(d?.readiness?.canLaunch ?? null);
+      if (d?.sections) {
+        const ok = (k: string) => d.sections!.some((sec) => sec.key === k && sec.status === "complete");
+        setPersonaReady(ok("profile") && ok("conversation_rules"));
+      }
       if (d?.activation) setActivation(d.activation);
+    }).catch(() => {});
+    fetch("/api/content/knowledge").then((r) => (r.ok ? r.json() : null)).then((d: { totals?: { activeChunks?: number; activeSafetyStatements?: number } } | null) => {
+      if (!alive || !d?.totals) return;
+      setKnowledgeReady((d.totals.activeChunks ?? 0) > 0 && (d.totals.activeSafetyStatements ?? 0) > 0);
     }).catch(() => {});
     return () => { alive = false; };
   }, []);
@@ -359,9 +380,11 @@ function Launch({ app }: { app: AppState }) {
     }
   };
   const hasAudience = app.activation.length > 0;
+  const checkRow = (label: string, state: boolean | null, notReady: string) =>
+    ({ label, value: state == null ? "Checking…" : state ? "Ready" : notReady, color: state ? "var(--dn-success)" : "var(--dn-warning)", ok: !!state });
   const readiness = [
-    { label: "Approved knowledge", value: "Ready", color: "var(--dn-success)", ok: true },
-    { label: "Persona & disclosure", value: "Ready", color: "var(--dn-success)", ok: true },
+    checkRow("Approved knowledge", knowledgeReady, "Approve content + ISI first"),
+    checkRow("Persona & disclosure", personaReady, "Finish setup sections"),
     { label: "Rep trained & approved", value: repReady == null ? "Checking…" : repReady ? "Ready" : "Finish in Studio", color: repReady ? "var(--dn-success)" : "var(--dn-warning)", ok: !!repReady },
     { label: "Audience selected", value: `${app.activation.length} HCPs`, color: hasAudience ? "var(--dn-success)" : "var(--dn-warning)", ok: hasAudience },
   ];
@@ -502,6 +525,8 @@ function Analytics() {
   const [cat, setCat] = useState("targeting");
   const [tabs, setTabs] = useState<AnalyticsTab[]>(ANALYTICS_TABS as AnalyticsTab[]);
   const [data, setData] = useState<Record<string, Metric[]>>(ANALYTICS_KPIS as Record<string, Metric[]>);
+  // false → the fixture KPIs are showing (loading/failed); banner below labels them.
+  const [liveKpis, setLiveKpis] = useState(false);
   const [funnel, setFunnel] = useState<{ label: string; count: number | string; pct: number }[]>([
     { label: "Target HCPs", count: "—", pct: 100 }, { label: "Sessions started", count: "—", pct: 0 },
     { label: "Completed detail", count: "—", pct: 0 }, { label: "Follow-up created", count: "—", pct: 0 },
@@ -516,7 +541,7 @@ function Analytics() {
         const json = (await res.json()) as { tabs?: AnalyticsTab[]; data?: Record<string, Metric[]>; funnel?: typeof funnel; statusBreakdown?: typeof statusBreakdown };
         if (!alive) return;
         if (json.tabs && json.tabs.length) setTabs(json.tabs);
-        if (json.data) setData(json.data);
+        if (json.data) { setData(json.data); setLiveKpis(true); }
         if (json.funnel) setFunnel(json.funnel);
         if (json.statusBreakdown) setStatusBreakdown(json.statusBreakdown);
       } catch {
@@ -532,6 +557,11 @@ function Analytics() {
       <div style={eyebrow}>Analytics</div>
       <h1 style={{ ...h1, marginBottom: 4 }}>Campaign Analytics</h1>
       <p style={{ font: "400 13px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "0 0 16px" }}>Targeting, engagement, content, compliance, CRM, and realtime performance.</p>
+      {!liveKpis && (
+        <div style={{ display: "flex", alignItems: "center", gap: 9, margin: "0 0 14px", padding: "9px 13px", background: "var(--dn-accent-yellow-bg)", border: "1px solid #fcd34d", borderRadius: 9, font: "500 12px/1.4 var(--dn-font-sans)", color: "#92400e" }}>
+          ⚠ Showing sample metrics — live analytics haven&apos;t loaded yet. These numbers are illustrative, not your campaign data.
+        </div>
+      )}
       <div style={{ display: "flex", gap: 6, marginBottom: 18, borderBottom: "1px solid var(--dn-border)", flexWrap: "wrap" }}>
         {tabs.map((t) => (
           <div key={t.key} onClick={() => setCat(t.key)} style={{ padding: "10px 14px", font: `${cat === t.key ? 600 : 500} 12.5px/1 var(--dn-font-sans)`, color: cat === t.key ? "var(--dn-brand-base)" : "var(--dn-fg-muted)", borderBottom: `2px solid ${cat === t.key ? "var(--dn-brand-base)" : "transparent"}`, cursor: "pointer", marginBottom: -1 }}>{t.label}</div>
@@ -805,7 +835,7 @@ function SessionDetail({ app }: { app: AppState }) {
                 const playing = !!s.recordingUrl && nowSec >= off && nowSec < next;
                 const isSel = sel === i;
                 return (
-                  <div key={i} onClick={() => seekTo(off, i)} style={{ display: "grid", gridTemplateColumns: "46px 1fr", gap: 10, padding: "9px 16px", borderBottom: "1px solid var(--dn-surface-2)", cursor: "pointer", background: isSel ? "rgba(6,73,172,.06)" : playing ? "var(--dn-surface-2)" : "transparent", borderLeft: `3px solid ${playing ? "var(--dn-brand-base)" : "transparent"}` }}>
+                  <div key={`${t.at ?? ""}:${t.speaker}:${i}`} onClick={() => seekTo(off, i)} style={{ display: "grid", gridTemplateColumns: "46px 1fr", gap: 10, padding: "9px 16px", borderBottom: "1px solid var(--dn-surface-2)", cursor: "pointer", background: isSel ? "rgba(6,73,172,.06)" : playing ? "var(--dn-surface-2)" : "transparent", borderLeft: `3px solid ${playing ? "var(--dn-brand-base)" : "transparent"}` }}>
                     <span style={{ fontFamily: "var(--dn-font-mono)", fontSize: 11, color: "var(--dn-brand-light)", paddingTop: 2 }}>{mmss(Math.round(off))}</span>
                     <span>
                       <span style={{ display: "block", font: "700 9px/1 var(--dn-font-sans)", letterSpacing: ".06em", textTransform: "uppercase", color: t.speaker === "hcp" ? "var(--dn-fg-subtle)" : "var(--dn-brand-base)", marginBottom: 3 }}>{t.speaker === "hcp" ? "HCP" : "AI rep"}</span>

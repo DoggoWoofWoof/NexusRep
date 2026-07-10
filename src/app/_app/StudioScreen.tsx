@@ -181,8 +181,9 @@ export function StudioScreen({ app }: { app: AppState }) {
   const repName = snap?.rep.displayName ?? `${brand?.displayName ?? "AI"} AI Specialist`;
   const rules: UiRule[] = snap?.rules ?? fallbackRules();
   const readyPctNum = snap?.readiness.pct;
-  const readyPct = readyPctNum != null ? `${readyPctNum}%` : "68%";
-  const itemsLeft = snap ? snap.readiness.items.filter((i) => !i.done).length : 2;
+  // While the snapshot loads, show an honest placeholder — never a made-up percent.
+  const readyPct = readyPctNum != null ? `${readyPctNum}%` : "…";
+  const itemsLeft = snap ? String(snap.readiness.items.filter((i) => !i.done).length) : "…";
 
   const submit = async () => {
     setSubmitState("pending");
@@ -889,8 +890,10 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     void loadOverviewPlan();
   }, []);
 
+  const [planSaving, setPlanSaving] = useState(false);
   const persistOverviewPlan = async (plan = overviewPlan?.plan, message = "Pitch saved.") => {
     if (!plan) return;
+    setPlanSaving(true);
     setPlanMsg("Saving pitch…");
     try {
       const res = await fetch("/api/presentation/plan", {
@@ -905,6 +908,8 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
       setPlanMsg(message);
     } catch (e) {
       setPlanMsg(`Could not save: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setPlanSaving(false);
     }
   };
 
@@ -939,8 +944,10 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
   };
 
   // Reorder pitch sections (the arrows in the card) — reorder client-side, persist the plan.
+  // Guarded while a save is in flight: two rapid moves could otherwise interleave and the
+  // first server response would briefly clobber the second reorder.
   const movePlanStep = (stepId: string, dir: -1 | 1) => {
-    if (!overviewPlan) return;
+    if (!overviewPlan || planSaving) return;
     const steps = [...overviewPlan.plan.steps];
     const i = steps.findIndex((st) => st.id === stepId);
     const j = i + dir;
@@ -1324,8 +1331,9 @@ function ModelLab() {
         <div style={{ padding: "0 14px 13px", display: "flex", flexDirection: "column", gap: 9 }}>
           <div style={{ font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Same question through two providers, streamed with latency. Free-generated benchmark for picking a model — <strong>not</strong> the compliant rep answer, and nothing here is logged.</div>
           <div style={{ display: "flex", gap: 7 }}>
-            <select value={modelA} onChange={(e) => setModelA(e.target.value)} style={sel}>{models.map((m) => <option key={m.name} value={m.name} disabled={!m.available}>{m.label}{m.available ? "" : " — add key"}</option>)}</select>
-            <select value={modelB} onChange={(e) => setModelB(e.target.value)} style={sel}>{models.map((m) => <option key={m.name} value={m.name} disabled={!m.available}>{m.label}{m.available ? "" : " — add key"}</option>)}</select>
+            {/* Disabled until the REAL provider list loads — never selectable placeholder models. */}
+            <select value={modelA} onChange={(e) => setModelA(e.target.value)} disabled={!models.length} style={{ ...sel, opacity: models.length ? 1 : 0.6 }}>{models.length ? models.map((m) => <option key={m.name} value={m.name} disabled={!m.available}>{m.label}{m.available ? "" : " — add key"}</option>) : <option>Loading models…</option>}</select>
+            <select value={modelB} onChange={(e) => setModelB(e.target.value)} disabled={!models.length} style={{ ...sel, opacity: models.length ? 1 : 0.6 }}>{models.length ? models.map((m) => <option key={m.name} value={m.name} disabled={!m.available}>{m.label}{m.available ? "" : " — add key"}</option>) : <option>Loading models…</option>}</select>
           </div>
           <div style={{ display: "flex", gap: 7 }}>
             <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void runAB(); }} placeholder="Question to compare…" style={{ flex: 1, minWidth: 0, padding: "8px 10px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 11.5px/1.2 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />

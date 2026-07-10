@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { env } from "@lib/env";
 import { TavusRealtimeProvider } from "@modules/vendors";
 import { getRealtimeProvider } from "@modules/vendors";
 import { POST as llmCompletions } from "@/app/api/tavus/llm/chat/completions/route";
@@ -76,12 +77,33 @@ describe("Tavus realtime adapter", () => {
 });
 
 describe("Tavus custom-LLM endpoint preserves the compliance gate", () => {
-  const call = (userText: string) =>
+  // The bearer is MANDATORY now (audit fix: an unset key must fail CLOSED, not open).
+  // Give the route a key for the gated-reply tests and authenticate like Tavus does.
+  beforeAll(() => {
+    (env as { tavusLlmKey: string }).tavusLlmKey = "test-llm-key";
+  });
+  afterAll(() => {
+    (env as { tavusLlmKey: string }).tavusLlmKey = "";
+  });
+  const call = (userText: string, auth: string | null = "Bearer test-llm-key") =>
     llmCompletions(new Request("http://localhost/api/tavus/llm/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(auth ? { authorization: auth } : {}) },
       body: JSON.stringify({ messages: [{ role: "user", content: userText }], stream: true }),
     }));
+
+  it("refuses unauthenticated calls (401), and refuses when no key is configured at all", async () => {
+    expect((await call("What is Milvexian?", null)).status).toBe(401);
+    expect((await call("What is Milvexian?", "Bearer wrong-key")).status).toBe(401);
+    const saved = (env as { tavusLlmKey: string }).tavusLlmKey;
+    (env as { tavusLlmKey: string }).tavusLlmKey = "";
+    try {
+      // No key configured -> fail CLOSED (this used to skip the check entirely).
+      expect((await call("What is Milvexian?", null)).status).toBe(401);
+    } finally {
+      (env as { tavusLlmKey: string }).tavusLlmKey = saved;
+    }
+  });
 
   it("answers a public product-info question with approved text", async () => {
     const content = (await readSse(await call("What is Milvexian and how does it work?"))).toLowerCase();

@@ -72,12 +72,16 @@ export class DocNexusAudienceProvider implements AudienceProvider {
       offset: 0,
     };
 
+    // Resolve auth headers BEFORE arming the timeout: headers() can run the token-refresh
+    // script (up to 2 minutes on a cold boot), and with the timer already running the fetch
+    // aborted mid-refresh — silently dropping the live cohort for the modeled fallback.
+    const headers = await this.headers();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 5000);
+    const timer = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 15000);
     try {
       const res = await fetch(`${this.config.baseUrl.replace(/\/$/, "")}/api/query`, {
         method: "POST",
-        headers: await this.headers(),
+        headers,
         body: JSON.stringify(body),
         signal: controller.signal,
       });

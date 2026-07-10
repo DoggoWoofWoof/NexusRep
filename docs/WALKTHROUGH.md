@@ -27,9 +27,43 @@ behind them. Implemented stage-by-stage with review gates.
 | 10 — Integration + hardening, demo + handover | ✅ done | Brand generalization (any brand = a `BrandProfile`, no code edits) + self-serve setup/upload, humanlike conversation, clean demo recording, full E2E (functional + visual) green end-to-end |
 
 **Test status:** `typecheck` clean · **189 unit/integration tests** pass (1 guarded live test skipped) ·
-**20 Playwright E2E pass** (17 functional incl. the blank-slate self-serve journey + 3 visual).
+**26 Playwright E2E pass** (19 functional incl. the blank-slate self-serve journey + 7 visual baselines).
 
-### Latest — Knowledge transparency + Train UX round (2026-07-10)
+### Latest — Full audit + fix round (2026-07-10)
+
+Six parallel code auditors (screens, routes, compliance core, platform modules, tests/config/docs)
+plus a live screen-by-screen pass. Every confirmed finding fixed:
+
+- **Live cohort resilience (the big one).** The DocNexus fetch armed its abort timer BEFORE
+  resolving auth headers — a cold-boot token refresh (up to 2 min) ate the window and the fetch
+  aborted mid-refresh, silently swapping the 39 real cardiologists for the 8-doctor modeled
+  sample for the process lifetime. Fixed (headers resolve first), plus: one retry at boot,
+  a **self-healing runtime** (`c.audienceRuntime.refresh()`, throttled 60s, swaps the live
+  cohort back into the SAME TargetingService via `replaceCohort` — analytics/identity/NPI all
+  see it), a `degraded` flag on `/api/audience`, and an explicit Audience banner while degraded.
+- **Tavus callback auth is now mandatory** — `/api/tavus/llm` refuses with 401 when
+  `TAVUS_LLM_KEY` is unset instead of falling open (an unset key on Render would have exposed
+  the compliance endpoint).
+- **ISI dedup re-unified** — the orchestrator kept a private un-normalized copy of the
+  delivered-ISI check; whitespace variance could have re-delivered ISI. It now calls the one
+  shared `isiAlreadyDelivered`.
+- **Honest chrome:** the sidebar "AI Rep 68%" badge and header "Campaign live" chip are now
+  computed from live studio readiness/rep state (draft/in-review/ready/live); the two hardcoded
+  "Ready" rows on the Launch checklist are computed from the content store (active passages +
+  ISI) and setup sections; Analytics gained the same sample-data banner as the other screens;
+  the Studio header shows "…" instead of a made-up percent while loading.
+- **Route hygiene:** presentation/plan caps feedback at 500 chars and returns generic 500s
+  (details server-side); studio validates `repState` against the enum and ignores
+  `appliesToHcpId` on non-HCP scopes; arena stream no longer echoes provider internals.
+- **Cosmetics:** model-lab selects disabled until the real provider list loads; pitch reorder
+  arrows guarded while a save is in flight; session-transcript keys stabilized; dead
+  `SESSIONS`/`CRM_EVENTS` fixtures deleted.
+- **Coverage:** visual baselines added for Build / Train / Audience (7 total);
+  `tests/audit-round2.test.ts` covers ISI whitespace parity, `replaceCohort` recovery, and CRM
+  payload shape. Audit verdicts on everything else: clean (gate on every output path, no
+  patient-level data at any vendor boundary, module boundaries intact, secrets never echoed).
+
+### Knowledge transparency + Train UX round (2026-07-10)
 
 - **Source library is honest and self-serve.** Document badges derive from their passages
   (an upload whose passages were all rejected shows **Rejected**, not a stale "In Mlr");

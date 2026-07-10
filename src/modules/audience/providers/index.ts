@@ -50,15 +50,22 @@ export interface LoadedCohort {
   source: string;
 }
 
-/** Load the targeting cohort, falling back to the modeled cohort on any failure. */
-export async function loadCohort(query: AudienceQuery = MILVEXIAN_AUDIENCE_QUERY): Promise<LoadedCohort> {
+/** Load the targeting cohort, falling back to the modeled cohort on any failure.
+ *  One retry before giving up: a cold-boot timeout or token refresh shouldn't silently
+ *  swap the live claims cohort for sample data for the rest of the process lifetime. */
+export async function loadCohort(query: AudienceQuery = MILVEXIAN_AUDIENCE_QUERY, attempts = 2): Promise<LoadedCohort> {
   const provider = getAudienceProvider();
-  try {
-    const cohort = await provider.fetchCohort(query);
-    if (cohort.length) return { cohort, source: provider.name };
-    return { cohort: MILVEXIAN_COHORT, source: `${provider.name}(fallback:empty)` };
-  } catch (e) {
-    console.warn("[audience] provider failed, using modeled cohort:", e instanceof Error ? e.message : e);
-    return { cohort: MILVEXIAN_COHORT, source: "modeled-cardiology(fallback:error)" };
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= Math.max(1, attempts); attempt++) {
+    try {
+      const cohort = await provider.fetchCohort(query);
+      if (cohort.length) return { cohort, source: provider.name };
+      return { cohort: MILVEXIAN_COHORT, source: `${provider.name}(fallback:empty)` };
+    } catch (e) {
+      lastError = e;
+      console.warn(`[audience] provider attempt ${attempt} failed:`, e instanceof Error ? e.message : e);
+    }
   }
+  console.warn("[audience] provider failed after retries, using modeled cohort:", lastError instanceof Error ? lastError.message : lastError);
+  return { cohort: MILVEXIAN_COHORT, source: "modeled-cardiology(fallback:error)" };
 }

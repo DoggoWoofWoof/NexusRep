@@ -98,7 +98,9 @@ export async function GET(): Promise<NextResponse> {
   try {
     return NextResponse.json(await snapshot());
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e), slides: [], plan: { steps: [] } }, { status: 500 });
+    // Details stay server-side — raw error messages can leak internals to the client.
+    console.error("[presentation/plan]", e);
+    return NextResponse.json({ error: "internal error — check server logs", slides: [], plan: { steps: [] } }, { status: 500 });
   }
 }
 
@@ -126,7 +128,8 @@ export async function POST(req: Request): Promise<NextResponse> {
       if (typeof body.feedback !== "string" || !body.feedback.trim()) {
         return NextResponse.json({ error: "feedback required" }, { status: 400 });
       }
-      const applied = applyFeedback(plan, slides, body.feedback, typeof body.stepId === "string" ? body.stepId : undefined);
+      // Bounded like every other coaching input (the note lands in a stored instruction).
+      const applied = applyFeedback(plan, slides, body.feedback.slice(0, 500), typeof body.stepId === "string" ? body.stepId : undefined);
       plan = applied.plan;
       warning = applied.warning;
     } else if (body.action === "reset") {
@@ -138,6 +141,8 @@ export async function POST(req: Request): Promise<NextResponse> {
     const savedPlan = await saveGuidedOverview(c, plan);
     return NextResponse.json({ slides, plan: savedPlan, ...(warning ? { warning } : {}) });
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e), slides: [], plan: { steps: [] } }, { status: 500 });
+    // Details stay server-side — raw error messages can leak internals to the client.
+    console.error("[presentation/plan]", e);
+    return NextResponse.json({ error: "internal error — check server logs", slides: [], plan: { steps: [] } }, { status: 500 });
   }
 }

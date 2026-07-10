@@ -27,12 +27,16 @@ function textOf(content: unknown): string {
 
 export async function POST(req: Request): Promise<Response> {
   // Authenticate Tavus against the shared key we set in the persona's llm layer.
-  if (env.tavusLlmKey) {
-    const auth = req.headers.get("authorization") ?? "";
-    if (auth !== `Bearer ${env.tavusLlmKey}`) {
+  // The bearer is MANDATORY: without it this endpoint would hand out gated content and
+  // log fake turns to anyone who finds the URL. No key configured -> refuse (fail safe),
+  // never fall open. Set TAVUS_LLM_KEY wherever Tavus is deployed.
+  if (!env.tavusLlmKey) {
+    return new Response(JSON.stringify({ error: "TAVUS_LLM_KEY is not configured — refusing unauthenticated compliance traffic" }), { status: 401, headers: { "Content-Type": "application/json" } });
+  }
+  const auth = req.headers.get("authorization") ?? "";
+  if (auth !== `Bearer ${env.tavusLlmKey}`) {
       return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
     }
-  }
 
   const body = (await req.json().catch(() => ({}))) as { messages?: ChatMessage[]; stream?: boolean };
   const messages = Array.isArray(body.messages) ? body.messages : [];

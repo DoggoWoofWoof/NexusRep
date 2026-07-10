@@ -28,10 +28,28 @@ export type Screen =
   | "crm"
   | "admin";
 
+// The AI Rep badge is COMPUTED from live studio readiness (see useStudioMeta) — never static.
 const NAV_PLAN: { id: Screen; label: string; badge?: string }[] = [
-  { id: "studio", label: "AI Rep", badge: "68%" },
+  { id: "studio", label: "AI Rep" },
   { id: "overview", label: "Overview" },
 ];
+
+/** Live studio meta for the shell chrome: readiness % (nav badge) + rep state (header chip).
+ *  Refetches on navigation so the chrome tracks what the user just changed in the Studio. */
+function useStudioMeta(nav: Screen): { pct: number | null; repState: string | null } {
+  const [meta, setMeta] = useState<{ pct: number | null; repState: string | null }>({ pct: null, repState: null });
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/studio")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { readiness?: { pct?: number }; rep?: { state?: string } } | null) => {
+        if (alive && d) setMeta({ pct: d.readiness?.pct ?? null, repState: d.rep?.state ?? null });
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [nav]);
+  return meta;
+}
 const NAV_GOVERN: { id: Screen; label: string }[] = [
   { id: "targeting", label: "Audience" },
   { id: "outreach", label: "Launch" },
@@ -68,6 +86,7 @@ export function NexusRepApp() {
   const [activation, setActivation] = useState<string[]>([]);
   const [sessionHcpId, setSessionHcpId] = useState(""); // no fake default identity
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const studioMeta = useStudioMeta(nav);
   const [attnOpen, setAttnOpen] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const brand = useBrand();
@@ -123,7 +142,7 @@ export function NexusRepApp() {
           )}
         </div>
         <nav style={{ flex: 1, overflowY: "auto", padding: navCollapsed ? "10px 8px" : 10, display: "flex", flexDirection: "column", gap: 1 }}>
-          {NAV_PLAN.map((item) => <NavRow key={item.id} item={item} active={nav === item.id} collapsed={navCollapsed} onClick={() => setNav(item.id)} />)}
+          {NAV_PLAN.map((item) => <NavRow key={item.id} item={item.id === "studio" && studioMeta.pct != null ? { ...item, badge: `${studioMeta.pct}%` } : item} active={nav === item.id} collapsed={navCollapsed} onClick={() => setNav(item.id)} />)}
           <div style={{ height: 1, background: "rgba(255,255,255,.08)", margin: navCollapsed ? "12px 6px 4px" : "12px 8px 4px" }} />
           {!navCollapsed && <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".12em", color: "rgba(255,255,255,.38)", padding: "8px 12px 7px" }}>ACTIVITY</div>}
           {NAV_GOVERN.map((item) => <NavRow key={item.id} item={item} active={nav === item.id} collapsed={navCollapsed} onClick={() => setNav(item.id)} />)}
@@ -154,7 +173,13 @@ export function NexusRepApp() {
             <span style={{ font: "500 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)", paddingLeft: 16 }}>{brand?.campaign.subtitle ?? ""}</span>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 6, font: "600 11px/1 var(--dn-font-sans)", color: "#166534", background: "var(--dn-accent-green-bg)", padding: "6px 11px", borderRadius: 20 }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--dn-success)" }} />Campaign live</span>
+            {/* Rep/campaign state is COMPUTED from the studio (live = launched); never a static chip. */}
+            {studioMeta.repState != null && (
+              <span style={{ display: "flex", alignItems: "center", gap: 6, font: "600 11px/1 var(--dn-font-sans)", color: studioMeta.repState === "live" ? "#166534" : "var(--dn-fg-muted)", background: studioMeta.repState === "live" ? "var(--dn-accent-green-bg)" : "var(--dn-surface-2)", padding: "6px 11px", borderRadius: 20 }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: studioMeta.repState === "live" ? "var(--dn-success)" : "var(--dn-fg-subtle)" }} />
+                {studioMeta.repState === "live" ? "Campaign live" : studioMeta.repState === "ready" ? "Ready to launch" : studioMeta.repState === "in_review" ? "In review" : "Draft — not launched"}
+              </span>
+            )}
             {attention.length > 0 && (
               <span style={{ position: "relative" }}>
                 <span onClick={() => setAttnOpen((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, font: "600 11px/1 var(--dn-font-sans)", color: "#92400e", background: "var(--dn-accent-yellow-bg)", padding: "6px 11px", borderRadius: 20, cursor: "pointer" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--dn-warning)" }} />Needs attention: {attention.length}</span>

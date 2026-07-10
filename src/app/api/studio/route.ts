@@ -112,7 +112,9 @@ export async function POST(req: Request): Promise<NextResponse> {
     case "rule": {
       if (!body.feedback) return bad("feedback required");
       const scope = body.scope ? UI_SCOPE[body.scope] : undefined;
-      const appliesToHcpId = scope === "hcp_specific" ? body.appliesToHcpId ?? c.demo.hcpId : body.appliesToHcpId;
+      // An HCP binding only makes sense on hcp_specific rules — a stray id on a global/persona
+      // rule would silently narrow it. Ignore it for other scopes.
+      const appliesToHcpId = scope === "hcp_specific" ? body.appliesToHcpId ?? c.demo.hcpId : undefined;
       return done(await c.studio.addRule(id, { feedback: body.feedback, scope, appliesToHcpId, topic: body.topic, sourceMessage: body.sourceMessage }));
     }
     case "acceptCoaching": {
@@ -124,7 +126,9 @@ export async function POST(req: Request): Promise<NextResponse> {
         : [];
       if (coachings.length === 0) return done(await c.studio.get(id)); // nothing to persist
       const scope = body.scope ? UI_SCOPE[body.scope] : undefined;
-      const appliesToHcpId = scope === "hcp_specific" ? body.appliesToHcpId ?? c.demo.hcpId : body.appliesToHcpId;
+      // An HCP binding only makes sense on hcp_specific rules — a stray id on a global/persona
+      // rule would silently narrow it. Ignore it for other scopes.
+      const appliesToHcpId = scope === "hcp_specific" ? body.appliesToHcpId ?? c.demo.hcpId : undefined;
       const { sensitive, style } = partitionCoaching(coachings);
       const compacted = style.length ? (await compactCoaching(style, { question: body.question ?? "", answer: body.answer ?? "" })).instruction : undefined;
       return done(await c.studio.acceptCoaching(id, { sensitive, style, compactedInstruction: compacted, scope, appliesToHcpId, sourceMessage: body.question }));
@@ -148,9 +152,11 @@ export async function POST(req: Request): Promise<NextResponse> {
     case "ruleStatus":
       if (!body.ruleId || !body.status) return bad("ruleId and status required");
       return done(await c.studio.setRuleStatus(id, body.ruleId, body.status as RuleStatus));
-    case "repState":
-      if (!body.repState) return bad("repState required");
-      return done(await c.studio.setRepState(id, body.repState));
+    case "repState": {
+      const allowed = ["draft", "in_review", "ready", "live"] as const;
+      if (!allowed.includes(body.repState as never)) return bad(`repState must be one of ${allowed.join(", ")}`);
+      return done(await c.studio.setRepState(id, body.repState as (typeof allowed)[number]));
+    }
     default:
       return bad("unknown action");
   }
