@@ -17,6 +17,10 @@ services:
     name: nexusrep
     runtime: node
     plan: starter # bump if the embedded model (Transformers.js) needs more memory
+    # MUST stay a single instance: the app keeps per-process state (embedded PGlite store,
+    # the active Tavus call slot, per-session write serialization). Scaling out would split
+    # sessions across processes. Multi-instance needs a managed Postgres + shared call registry.
+    numInstances: 1
     buildCommand: npm ci && npm run build
     startCommand: npm run start
     healthCheckPath: /api/brand
