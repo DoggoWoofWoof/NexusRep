@@ -39,12 +39,12 @@ export async function GET(): Promise<NextResponse> {
   const seats = [
     seat(
       "Realtime / conversation",
-      realtime.name === "tavus" ? "Tavus CVI" : "Mock realtime",
+      realtime.name === "tavus" ? "DocNexus Agent" : "Mock realtime",
       realtime.name === "tavus" ? "connected" : "simulated",
       realtime.name === "tavus" ? "Replies produced by the NexusRep compliance endpoint" : "Set TAVUS_API_KEY for the live video rep",
     ),
     seat("Voice — TTS / ASR", voice.name === "mock" ? "Browser speech (built-in)" : voice.name, voice.name === "mock" ? "simulated" : "connected"),
-    seat("Avatar", avatar.name === "mock" ? "TalkingHead 3D (built-in) · Tavus replica" : avatar.name, env.tavusApiKey ? "connected" : "simulated"),
+    seat("Avatar", avatar.name === "mock" ? "TalkingHead 3D (built-in) · DocNexus Agent" : avatar.name, env.tavusApiKey ? "connected" : "simulated"),
     seat(
       "Retrieval index",
       env.retrievalProvider === "pgvector"

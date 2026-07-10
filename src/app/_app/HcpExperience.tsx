@@ -292,7 +292,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
                   <button onClick={() => request("human")} style={ghostMd}>Request human rep</button>
                   <button onClick={() => request("msl")} style={ghostMd}>Request MSL</button>
                   <button onClick={() => request("ae")} style={{ ...ghostMd, color: "var(--dn-accent-orange)" }}>Report side effect</button>
-                  <button onClick={() => setVideoOn((v) => !v)} title="Live video representative (Tavus)" style={{ ...ghostMd, color: videoOn ? "#fff" : "var(--dn-fg)", background: videoOn ? "var(--dn-brand-base)" : "#fff" }}>{videoOn ? "🎥 Video on" : "🎥 Video rep"}</button>
+                  <button onClick={() => setVideoOn((v) => !v)} title="Live video representative (DocNexus Agent)" style={{ ...ghostMd, color: videoOn ? "#fff" : "var(--dn-fg)", background: videoOn ? "var(--dn-brand-base)" : "#fff" }}>{videoOn ? "🎥 Video on" : "🎥 Video rep"}</button>
                   {!videoOn && <button onClick={() => setThreeD((v) => !v)} style={{ ...ghostMd, color: threeD ? "#fff" : "var(--dn-fg)", background: threeD ? "var(--dn-brand-base)" : "#fff" }}>{threeD ? "🧑 3D: on" : "🧑 3D avatar"}</button>}
                   {!videoOn && <button onClick={() => { if (voiceOn) voiceRef.current?.cancel(); setVoiceOn((v) => !v); }} style={ghostMd}>{voiceOn ? "🔊 Sound on" : "🔇 Sound off"}</button>}
                   <button onClick={() => setScr("complete")} style={{ marginLeft: "auto", padding: "10px 16px", background: "var(--dn-brand-dark)", color: "#fff", border: "none", borderRadius: 9, font: "600 12px/1 var(--dn-font-sans)", cursor: "pointer" }}>End session →</button>

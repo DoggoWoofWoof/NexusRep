@@ -285,7 +285,7 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
       {stage !== "live" && (
         <div style={{ color: "#cfe0f6", textAlign: "center", padding: 20, fontSize: 13, maxWidth: 420 }}>
           {stage === "loading" && "Starting the video rep…"}
-          {stage === "joining" && "Connecting to the Tavus replica…"}
+          {stage === "joining" && "Connecting to the DocNexus Agent…"}
           {stage === "unconfigured" && note}
           {stage === "error" && `Couldn't start the video rep: ${note}`}
         </div>

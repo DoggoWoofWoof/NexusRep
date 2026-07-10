@@ -172,7 +172,7 @@ export const VENDOR_STACK = [
   { role: "Realtime / conversation", vendor: "GPT Realtime (adapter)" },
   { role: "Voice — TTS", vendor: "Browser / ElevenLabs (adapter)" },
   { role: "Voice — ASR", vendor: "Whisper (adapter)" },
-  { role: "Avatar", vendor: "TalkingHead · Tavus (adapter)" },
+  { role: "Avatar", vendor: "TalkingHead · DocNexus Agent (adapter)" },
   { role: "Retrieval", vendor: "pgvector (adapter)" },
 ];
 

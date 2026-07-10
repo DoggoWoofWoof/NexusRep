@@ -98,7 +98,7 @@ async function startConversation(req: Request): Promise<NextResponse> {
           return NextResponse.json({
             provider: provider.name, configured: false, conversationUrl: null, token: null, sessionId: hist.id,
             reachableLlm: !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl),
-            note: `Tavus could not start this conversation: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
+            note: `The DocNexus Agent could not start: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
           });
         }
       }
@@ -107,7 +107,7 @@ async function startConversation(req: Request): Promise<NextResponse> {
       return NextResponse.json({
         provider: provider.name, configured: false, conversationUrl: null, token: null, sessionId: hist.id,
         reachableLlm: !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl),
-        note: `Tavus could not start this conversation: ${message}`,
+        note: `The DocNexus Agent could not start: ${message}`,
       });
     }
   }
@@ -141,9 +141,9 @@ async function startConversation(req: Request): Promise<NextResponse> {
     sessionId: hist.id,
     reachableLlm,
     note: !session.transportUrl
-      ? "Set TAVUS_API_KEY (and TAVUS_REPLICA_ID) to enable the live Tavus avatar; using the built-in 3D avatar meanwhile."
+      ? "The DocNexus Agent isn't configured yet — using the built-in avatar meanwhile."
       : reachableLlm
-        ? "Live Tavus replica — replies produced by our compliance endpoint."
+        ? "Live DocNexus Agent — replies produced by our compliance endpoint."
         : "Replica renders and greets, but replies won't flow: the public URL isn't reachable (dead tunnel?). Restart the tunnel and update NEXUSREP_PUBLIC_URL.",
   });
 }
