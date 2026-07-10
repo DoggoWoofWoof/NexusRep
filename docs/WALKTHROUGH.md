@@ -31,7 +31,10 @@ behind them. Implemented stage-by-stage with review gates.
 
 ### Latest — Studio redesign: Pitch & Script mode + slim Train & Preview (2026-07-10)
 
-The Studio now separates SCRIPT work from CONVERSATION work:
+The Studio now separates SCRIPT work from CONVERSATION work. (Follow-up refinement: the
+Rules card lives in **Training & Preview** — that's where Accept creates rules. Script
+coaching in Pitch & Script is a PERMANENT plan change the moment it's applied: no rules,
+no accept step; only locked approved text goes through the MLR revision flow.)
 
 - **New "Pitch & Script" mode** (between Build and Training) — the Train skeleton with the
   PPT where the video was. Left: the big slide (follows the selected line), **Deck sources**

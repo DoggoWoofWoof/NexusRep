@@ -222,8 +222,8 @@ export function StudioScreen({ app }: { app: AppState }) {
       </div>
 
       {mode === "setup" && <BuildMode repName={repName} snap={snap} post={post} app={app} refresh={refresh} />}
-      {mode === "pitch" && <PitchMode rules={rules} post={post} app={app} />}
-      {mode === "train" && <TrainMode post={post} repName={repName} app={app} />}
+      {mode === "pitch" && <PitchMode />}
+      {mode === "train" && <TrainMode rules={rules} post={post} repName={repName} app={app} />}
       {mode === "rules" && <RulesMode rules={rules} post={post} />}
       {mode === "readiness" && <ReadinessMode snap={snap} submitState={submitState} onSubmit={submit} />}
     </div>
@@ -823,14 +823,12 @@ function splitIsi(text: string): [string, string | null] {
  * source deck on the left, the knowledge base drafts the script, the middle column is the script
  * line by line (coach any line in place), and the right column edits sections. Rules live below
  * the deck. Nothing here creates sessions — it is all rehearsal against the compliance graph. */
-function PitchMode({ rules, post, app }: { rules: UiRule[]; post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; app: AppState }) {
+function PitchMode() {
   const {
     overviewPlan, activePlanStepId, setActivePlanStepId, activePlanSlideId,
     planNote, setPlanNote, planMsg, persistOverviewPlan, updatePlanStep,
     applyPlanNote, movePlanStep, resetOverviewPlan,
   } = useOverviewPlan();
-
-  const coachingRules = rules.filter((r) => r.source === "feedback");
 
   // ── The script: what the rep actually SAYS, slide by slide (compliance graph, no sessions).
   const [script, setScript] = useState<OverviewSegment[] | null>(null);
@@ -956,14 +954,6 @@ function PitchMode({ rules, post, app }: { rules: UiRule[]; post: (body: Record<
           {uploadNote && <div style={{ font: "500 10px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginTop: 8 }}>{uploadNote}</div>}
         </div>
 
-        {/* Rules from coaching — below the deck, as requested. */}
-        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
-          <div style={{ padding: "12px 14px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--dn-border)" }}><span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Rules from your coaching</span><span onClick={() => app.setStudioMode("rules")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>See all →</span></div>
-          <div style={{ padding: "11px 14px", display: "flex", flexDirection: "column", gap: 9, maxHeight: 230, overflowY: "auto" }}>
-            {coachingRules.length === 0 && <div style={{ textAlign: "center", padding: "14px 8px", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Accept a coached answer in Training and the rules behind it land here for review.</div>}
-            {coachingRules.map((r) => <RuleCard key={r.id} r={r} onAccept={() => void post({ action: "ruleStatus", ruleId: r.id, status: "active" })} onReject={() => void post({ action: "ruleStatus", ruleId: r.id, status: "rejected" })} compact />)}
-          </div>
-        </div>
       </div>
 
       {/* ── MIDDLE: the script, line by line — coach any line in place ── */}
@@ -1018,7 +1008,7 @@ function PitchMode({ rules, post, app }: { rules: UiRule[]; post: (body: Record<
           {scriptMsg && script !== null && script.length > 0 && <div style={{ font: "500 10.5px/1.4 var(--dn-font-sans)", color: "#991b1b" }}>{scriptMsg}</div>}
         </div>
         <div style={{ padding: "10px 16px", borderTop: "1px solid var(--dn-border)", font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
-          Coach a line and the change lands on that section&apos;s notes (saved). The approved medical text itself is locked — revise it via <strong>✎ Propose a revision</strong> on the right, which goes through MLR.
+          Coaching a line here IS the change — it saves permanently into the script (no rules, no accept step). Only the locked approved medical text needs review: revise it via <strong>✎ Propose a revision</strong> on the right, which goes through MLR.
         </div>
       </div>
 
@@ -1165,7 +1155,7 @@ function useOverviewPlan() {
   };
 }
 
-function TrainMode({ post, repName, app }: { post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; repName: string; app: AppState }) {
+function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; repName: string; app: AppState }) {
   const brand = useBrand();
   // Rehydrate the coaching thread from localStorage so it survives tab switches / reload.
   const [exchanges, setExchanges] = useState<Exchange[]>(() => loadTrainState().exchanges ?? []);
@@ -1189,6 +1179,8 @@ function TrainMode({ post, repName, app }: { post: (body: Record<string, unknown
     const el = threadRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [exchanges, busyIdx]);
+
+  const coachingRules = rules.filter((r) => r.source === "feedback");
 
   const greetingExchange = (): Exchange => ({ q: "", kind: "greeting", answers: [{ text: brand?.greeting ?? "", route: "greeting", isi: false, detailAidSlideId: null, usedLlm: true }], coachings: [], scope: "persona", accepted: false });
 
@@ -1330,6 +1322,15 @@ function TrainMode({ post, repName, app }: { post: (body: Record<string, unknown
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 11, borderTop: "1px solid var(--dn-surface-2)" }}>
             <span style={{ font: "400 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Coach a line → the rep tries again</span>
             <span onClick={() => { setExchanges([greetingExchange()]); setCoachDraft({}); setPreviewSessionId(makePreviewSessionId()); }} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>↺ Restart</span>
+          </div>
+        </div>
+        {/* Rules from coaching — HERE, because Train's Accept is what creates them.
+            (Script coaching in Pitch & Script saves permanently into the plan — no rules.) */}
+        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+          <div style={{ padding: "12px 14px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--dn-border)" }}><span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Rules from your coaching</span><span onClick={() => app.setStudioMode("rules")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>See all →</span></div>
+          <div style={{ padding: "11px 14px", display: "flex", flexDirection: "column", gap: 9, maxHeight: 230, overflowY: "auto" }}>
+            {coachingRules.length === 0 && <div style={{ textAlign: "center", padding: "14px 8px", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Accept a coached answer and the rules behind it land here for review.</div>}
+            {coachingRules.map((r) => <RuleCard key={r.id} r={r} onAccept={() => void post({ action: "ruleStatus", ruleId: r.id, status: "active" })} onReject={() => void post({ action: "ruleStatus", ruleId: r.id, status: "rejected" })} compact />)}
           </div>
         </div>
         <ModelLab />
