@@ -55,5 +55,14 @@ services:
         sync: false
       - key: DOCNEXUS_ADVANCED_SEARCH_URL # live HCP cohort (optional — modeled without it)
         sync: false
-      - key: DOCNEXUS_ID_TOKEN
+      - key: DOCNEXUS_ID_TOKEN # short-lived; prefer the refresh trio below
+        sync: false
+      # Browserless live-cohort auth (~30 days per login): run
+      # `node scripts/docnexus-platform-token.mjs` locally once and copy
+      # refreshToken/clientId/region from .docnexus-id-token.json.
+      - key: DOCNEXUS_REFRESH_TOKEN
+        sync: false
+      - key: DOCNEXUS_COGNITO_CLIENT_ID
+        sync: false
+      - key: DOCNEXUS_COGNITO_REGION
         sync: false

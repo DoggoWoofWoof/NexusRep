@@ -29,7 +29,25 @@ behind them. Implemented stage-by-stage with review gates.
 **Test status:** `typecheck` clean · **189 unit/integration tests** pass (1 guarded live test skipped) ·
 **26 Playwright E2E pass** (19 functional incl. the blank-slate self-serve journey + 7 visual baselines).
 
-### Latest — Studio redesign: Pitch & Script mode + slim Train & Preview (2026-07-10)
+### Latest — Browserless DocNexus auth: the live cohort works on Render (2026-07-10)
+
+DocNexus advanced-search has no static API key (auth is account-based), and the local token
+refresh drives a headless-browser login that can't run on a server. Now:
+
+- `scripts/docnexus-platform-token.mjs` also captures the Cognito **refresh token** (a
+  5-segment JWE the old JWT regex could never match) + app **clientId** + **region** from
+  browser storage.
+- `refreshCognitoTokens()` in the DocNexus provider mints fresh access tokens from that
+  refresh token via plain HTTPS `REFRESH_TOKEN_AUTH` — no browser, no SDK. `loadIdToken`
+  prefers it over the Playwright script (works on Render; ~300ms), caches in memory, and
+  best-effort persists back to the token file locally.
+- Env for servers: `DOCNEXUS_REFRESH_TOKEN` / `DOCNEXUS_COGNITO_CLIENT_ID` /
+  `DOCNEXUS_COGNITO_REGION` (render.yaml lists them, sync:false). Refresh tokens last
+  ~30 days; re-run the script once and update the env to renew.
+- Verified: refresh token captured live, and ONE real browserless mint against Cognito
+  produced a fresh 24h access token. Unit tests cover the mint + fail-safe fallbacks.
+
+### Studio redesign: Pitch & Script mode + slim Train & Preview (2026-07-10)
 
 The Studio now separates SCRIPT work from CONVERSATION work. (Follow-up refinement: the
 Rules card lives in **Training & Preview** — that's where Accept creates rules. Script

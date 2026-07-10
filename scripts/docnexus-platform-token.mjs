@@ -281,19 +281,39 @@ async function captureFromBrowserStorage(page, source) {
       sourceEntry ??= entry;
       Object.assign(platformTokens, tokens);
     }
+    // Cognito/Amplify keeps the REFRESH token under a storage key like
+    // CognitoIdentityServiceProvider.<clientId>.<user>.refreshToken — a 5-segment JWE,
+    // invisible to the JWT regex above. With it (+ clientId + region) a server can mint
+    // fresh access tokens via plain HTTPS for ~30 days: no browser, no static API key.
+    const refreshKey = entry.key.match(/CognitoIdentityServiceProvider\.([^.]+)\..*\.refreshToken$/i);
+    if (refreshKey && entry.value) {
+      platformTokens.refreshToken = entry.value;
+      platformTokens.clientId = refreshKey[1];
+    } else if (!platformTokens.refreshToken && /"refreshToken"\s*:\s*"/.test(entry.value ?? "")) {
+      const m = entry.value.match(/"refreshToken"\s*:\s*"([^"]+)"/);
+      if (m) platformTokens.refreshToken = m[1];
+      const cid = entry.value.match(/"clientId"\s*:\s*"([^"]+)"/) ?? entry.key.match(/CognitoIdentityServiceProvider\.([^.]+)\./i);
+      if (cid) platformTokens.clientId ??= cid[1];
+    }
   }
   if (platformTokens.accessToken || platformTokens.idToken) {
     const token = platformTokens.accessToken ?? platformTokens.idToken;
+    const claims = decodeJwt(token);
+    // Region comes from the token issuer: https://cognito-idp.<region>.amazonaws.com/<pool>
+    const region = String(claims.issuer ?? "").match(/cognito-idp\.([a-z0-9-]+)\.amazonaws\.com/)?.[1];
     return {
       token,
       accessToken: platformTokens.accessToken,
       idToken: platformTokens.idToken,
+      ...(platformTokens.refreshToken ? { refreshToken: platformTokens.refreshToken } : {}),
+      ...(platformTokens.clientId ? { clientId: platformTokens.clientId } : {}),
+      ...(region ? { region } : {}),
       authHeaderName: platformTokens.accessToken ? "Authorization" : "x-id-token",
       headerName: platformTokens.accessToken ? "Authorization" : "x-id-token",
       capturedAt: new Date().toISOString(),
       capturedFrom: `${source} ${sourceEntry.storeName}:${sourceEntry.key}`,
       source,
-      ...decodeJwt(token),
+      ...claims,
     };
   }
   return undefined;
@@ -368,6 +388,7 @@ function decodeJwt(token) {
       expiresAt,
       email: typeof claims.email === "string" ? claims.email : undefined,
       tokenUse: typeof claims.token_use === "string" ? claims.token_use : undefined,
+      issuer: typeof claims.iss === "string" ? claims.iss : undefined,
     };
   } catch {
     return {};

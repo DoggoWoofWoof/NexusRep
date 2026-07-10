@@ -94,6 +94,10 @@ export const env = {
   docnexusBearer,
   // Claims aggregates can take ~8s; default 20s so real queries don't abort.
   docnexusTimeoutMs: Number(process.env.DOCNEXUS_TIMEOUT_MS ?? 20000),
+  // Browserless Cognito refresh (server deploys): captured once by the token script.
+  docnexusRefreshToken: process.env.DOCNEXUS_REFRESH_TOKEN ?? "",
+  docnexusCognitoClientId: process.env.DOCNEXUS_COGNITO_CLIENT_ID ?? "",
+  docnexusCognitoRegion: process.env.DOCNEXUS_COGNITO_REGION ?? "",
 
   // ── Tavus Conversational Video Interface (avatar / realtime) ────────────────
   // Real Tavus CVI lights up when TAVUS_API_KEY is set. The rep's replies are

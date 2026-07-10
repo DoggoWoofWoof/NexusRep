@@ -146,3 +146,30 @@ function makeUnsignedJwt(payload: Record<string, unknown>): string {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
   return `${encode({ alg: "none" })}.${encode(payload)}.sig`;
 }
+
+// ── Browserless Cognito refresh (how the live cohort authenticates on a server) ──
+import { refreshCognitoTokens } from "@modules/audience/providers/docnexus";
+
+describe("refreshCognitoTokens", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("mints a fresh access token via REFRESH_TOKEN_AUTH (no browser)", async () => {
+    vi.stubGlobal("fetch", (async (url: string, init?: RequestInit) => {
+      expect(String(url)).toBe("https://cognito-idp.us-east-9.amazonaws.com/");
+      const body = JSON.parse(String(init?.body)) as { AuthFlow: string; ClientId: string; AuthParameters: { REFRESH_TOKEN: string } };
+      expect(body.AuthFlow).toBe("REFRESH_TOKEN_AUTH");
+      expect(body.ClientId).toBe("client123");
+      expect(body.AuthParameters.REFRESH_TOKEN).toBe("rt-abc");
+      return new Response(JSON.stringify({ AuthenticationResult: { AccessToken: "fresh-at", IdToken: "fresh-id" } }), { status: 200 });
+    }) as typeof fetch);
+    const r = await refreshCognitoTokens({ refreshToken: "rt-abc", clientId: "client123", region: "us-east-9" });
+    expect(r).toEqual({ accessToken: "fresh-at", idToken: "fresh-id" });
+  });
+
+  it("fails safe (null) on HTTP errors and network failures — caller falls back", async () => {
+    vi.stubGlobal("fetch", (async () => new Response("{}", { status: 400 })) as typeof fetch);
+    expect(await refreshCognitoTokens({ refreshToken: "x", clientId: "y", region: "us-east-1" })).toBeNull();
+    vi.stubGlobal("fetch", (async () => { throw new Error("offline"); }) as typeof fetch);
+    expect(await refreshCognitoTokens({ refreshToken: "x", clientId: "y", region: "us-east-1" })).toBeNull();
+  });
+});

@@ -12,7 +12,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { asId } from "@lib/ids";
@@ -48,6 +48,12 @@ export interface DocNexusConfig {
   tokenRefreshTimeoutMs?: number;
   bearer?: string;
   timeoutMs?: number;
+  /** Browserless Cognito refresh (works on servers with no browser, e.g. Render):
+   *  a long-lived refresh token + app client id + region mint fresh access tokens
+   *  via plain HTTPS. Captured once by scripts/docnexus-platform-token.mjs. */
+  refreshToken?: string;
+  cognitoClientId?: string;
+  cognitoRegion?: string;
 }
 
 export class DocNexusAudienceProvider implements AudienceProvider {
@@ -107,18 +113,114 @@ export class DocNexusAudienceProvider implements AudienceProvider {
   }
 }
 
+// One in-memory refreshed token per process (Render has no token file to cache into).
+let refreshedInMemory: { token: string; expMs: number } | null = null;
+
+/**
+ * Mint a fresh access token from a long-lived Cognito REFRESH token — plain HTTPS to
+ * cognito-idp, no browser, no SDK. This is what lets the live claims cohort work on a
+ * server: the account has no static API key, but the refresh token is valid ~30 days.
+ */
+export async function refreshCognitoTokens(input: { refreshToken: string; clientId: string; region: string }): Promise<{ accessToken: string; idToken?: string } | null> {
+  try {
+    const res = await fetch(`https://cognito-idp.${input.region}.amazonaws.com/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-amz-json-1.1",
+        "X-Amz-Target": "AWSCognitoIdentityProviderService.InitiateAuth",
+      },
+      body: JSON.stringify({
+        AuthFlow: "REFRESH_TOKEN_AUTH",
+        ClientId: input.clientId,
+        AuthParameters: { REFRESH_TOKEN: input.refreshToken },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      console.warn(`[audience] cognito refresh failed: HTTP ${res.status}`);
+      return null;
+    }
+    const json = (await res.json()) as { AuthenticationResult?: { AccessToken?: string; IdToken?: string } };
+    const accessToken = json.AuthenticationResult?.AccessToken;
+    if (!accessToken) return null;
+    return { accessToken, idToken: json.AuthenticationResult?.IdToken };
+  } catch (e) {
+    console.warn("[audience] cognito refresh failed:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+/** Refresh creds from env OR the captured token file (whichever provides all three parts). */
+async function cognitoCreds(
+  config: Pick<DocNexusConfig, "refreshToken" | "cognitoClientId" | "cognitoRegion" | "idTokenFile">,
+): Promise<{ refreshToken: string; clientId: string; region: string } | undefined> {
+  if (config.refreshToken && config.cognitoClientId && config.cognitoRegion) {
+    return { refreshToken: config.refreshToken, clientId: config.cognitoClientId, region: config.cognitoRegion };
+  }
+  const file = config.idTokenFile?.trim();
+  if (!file) return undefined;
+  try {
+    const raw = await readFile(resolve(process.cwd(), file), "utf8");
+    const parsed = JSON.parse(raw) as { refreshToken?: unknown; clientId?: unknown; region?: unknown };
+    if (typeof parsed.refreshToken === "string" && typeof parsed.clientId === "string" && typeof parsed.region === "string") {
+      return { refreshToken: parsed.refreshToken, clientId: parsed.clientId, region: parsed.region };
+    }
+  } catch {
+    /* no file / not json — fall through */
+  }
+  return undefined;
+}
+
 async function loadIdToken(
-  config: Pick<DocNexusConfig, "idToken" | "idTokenFile" | "autoRefreshToken" | "tokenRefreshScript" | "tokenRefreshTimeoutMs">,
+  config: Pick<DocNexusConfig, "idToken" | "idTokenFile" | "autoRefreshToken" | "tokenRefreshScript" | "tokenRefreshTimeoutMs" | "refreshToken" | "cognitoClientId" | "cognitoRegion">,
 ): Promise<LoadedDocNexusToken | undefined> {
   const inline = config.idToken?.trim();
   if (inline) return { token: inline, header: tokenHeader(inline) };
+
   const file = config.idTokenFile?.trim();
-  if (!file) return undefined;
+  if (file) {
+    const cached = await readFreshToken(file);
+    if (cached) return cached;
+  }
+  if (refreshedInMemory && refreshedInMemory.expMs > Date.now() + 60_000) {
+    return { token: refreshedInMemory.token, header: tokenHeader(refreshedInMemory.token) };
+  }
 
-  const cached = await readFreshToken(file);
-  if (cached) return cached;
+  // Browserless first: works everywhere (including Render), takes ~300ms.
+  const creds = await cognitoCreds(config);
+  if (creds) {
+    if (!tokenRefreshPromise) {
+      tokenRefreshPromise = (async () => {
+        const minted = await refreshCognitoTokens(creds);
+        if (minted) {
+          refreshedInMemory = { token: minted.accessToken, expMs: jwtExpMs(minted.accessToken) ?? Date.now() + 50 * 60_000 };
+          // Best-effort: persist back so the file stays fresh for other processes/tools.
+          if (file) {
+            try {
+              const raw = JSON.parse(await readFile(resolve(process.cwd(), file), "utf8")) as Record<string, unknown>;
+              raw.token = minted.accessToken;
+              raw.accessToken = minted.accessToken;
+              if (minted.idToken) raw.idToken = minted.idToken;
+              raw.capturedAt = new Date().toISOString();
+              raw.source = "cognito-refresh";
+              await writeFile(resolve(process.cwd(), file), JSON.stringify(raw, null, 2), "utf8");
+            } catch {
+              /* file may not exist on a server — the in-memory cache carries it */
+            }
+          }
+        }
+      })().finally(() => {
+        tokenRefreshPromise = null;
+      });
+    }
+    await tokenRefreshPromise;
+    if (refreshedInMemory && refreshedInMemory.expMs > Date.now() + 60_000) {
+      return { token: refreshedInMemory.token, header: tokenHeader(refreshedInMemory.token) };
+    }
+  }
 
-  if (config.autoRefreshToken) {
+  // Last resort: the browser-login script (local dev only — needs Playwright + a display stack).
+  if (file && config.autoRefreshToken) {
     await refreshTokenFile(file, config);
     return readFreshToken(file);
   }

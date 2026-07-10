@@ -58,7 +58,15 @@ filesystem between requests), so the durable store runs as-is. The repo ships a 
    `render.yaml` and creates the `nexusrep` web service (`npm ci && npm run build` / `npm run start`).
 2. Fill the secret env vars in the Render dashboard (they are `sync: false` in the blueprint —
    values are never committed): `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY`, `TAVUS_API_KEY` +
-   `TAVUS_LLM_KEY` (+ set `NEXUSREP_REALTIME_PROVIDER=tavus`), and the DocNexus cohort creds if used.
+   `TAVUS_LLM_KEY` (a shared secret YOU invent — Tavus sends it back as the Bearer when calling
+   our compliance endpoint; set `NEXUSREP_REALTIME_PROVIDER=tavus` for the video rep).
+   **Live DocNexus cohort on a server (no static API key exists — auth is account-based):** run
+   `node scripts/docnexus-platform-token.mjs` locally once; it captures a ~30-day Cognito
+   REFRESH token into `.docnexus-id-token.json`. Copy `refreshToken` / `clientId` / `region`
+   from that file into `DOCNEXUS_REFRESH_TOKEN` / `DOCNEXUS_COGNITO_CLIENT_ID` /
+   `DOCNEXUS_COGNITO_REGION` — the server then mints fresh access tokens itself via plain
+   HTTPS (no browser needed). Re-run the script + update the env when the refresh token
+   eventually expires.
 3. After the first deploy, set `NEXUSREP_PUBLIC_URL=https://<service>.onrender.com` and redeploy —
    Tavus calls back through it for every gated reply, so this must be the real public URL.
 4. **Storage**: the blueprint attaches a 1 GB persistent disk (`/var/data`) and points

@@ -37,6 +37,9 @@ export function getAudienceProvider(): AudienceProvider {
       tokenRefreshScript: env.docnexusTokenRefreshScript,
       tokenRefreshTimeoutMs: env.docnexusTokenRefreshTimeoutMs,
       bearer: env.docnexusBearer || undefined,
+      refreshToken: env.docnexusRefreshToken || undefined,
+      cognitoClientId: env.docnexusCognitoClientId || undefined,
+      cognitoRegion: env.docnexusCognitoRegion || undefined,
       // Real claims aggregates over multiple specialties + indications take several
       // seconds; give generous headroom so we don't abort into the modeled fallback.
       timeoutMs: env.docnexusTimeoutMs,
