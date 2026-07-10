@@ -39,6 +39,11 @@ services:
         value: postgres
       - key: PGLITE_DATA_DIR
         value: /var/data/nexusrep # on the persistent disk — survives deploys/restarts
+      # Starter instances have 512MB — the neural embeddings model (Transformers.js)
+      # OOMs at boot when the retrieval index builds. Lexical retrieval runs through the
+      # exact same validation + compliance gate; flip to "auto" on a >=2GB instance.
+      - key: NEXUSREP_EMBEDDINGS
+        value: lexical
       # Flip to "tavus" once TAVUS_* secrets are set to enable the live video rep.
       - key: NEXUSREP_REALTIME_PROVIDER
         value: mock

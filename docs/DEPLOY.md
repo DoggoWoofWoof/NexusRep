@@ -74,9 +74,9 @@ filesystem between requests), so the durable store runs as-is. The repo ships a 
    survive deploys and restarts (~$0.25/GB/mo on top of the instance). Remove the `disk:` block
    only if you want an ephemeral reset-on-deploy demo. The retrieval index rebuilds itself from
    the durable store on every boot.
-5. Free-tier instances sleep after idle; the first request after sleep takes ~30–60s (cold boot +
-   PGlite init + model warmup). The embedded MiniLM embedding model downloads on first use — the
-   `starter` plan's memory is enough, but expect the first retrieval to be slower.
+5. **Memory**: Starter (512MB) cannot hold the neural embeddings model — the blueprint sets
+   `NEXUSREP_EMBEDDINGS=lexical` (same validation + gate, lexical ranking). For neural
+   retrieval in production, use a >=2GB instance and set it to `auto`.
 6. Open `https://<service>.onrender.com/hcp` for the doctor view; the brand console is at `/`.
 
 ## Notes
