@@ -9,6 +9,7 @@ import { MemoryRepositoryFactory, type Repository, type RepositoryFactory } from
 import { newId, type AuditEventId, type SessionId, type TurnId } from "@lib/ids";
 
 export type AuditEventType =
+  | "content_removed"
   | "classification"
   | "retrieval"
   | "source_validation"

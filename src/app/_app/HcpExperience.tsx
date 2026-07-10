@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AppState } from "./NexusRepApp";
 import { createRecognizer, BrowserVoiceProvider, type ClientRecognizer } from "@lib/browser-speech";
-import { streamArena } from "@lib/arena-client";
 import { LiveAvatar, type LiveAvatarHandle } from "../_components/LiveAvatar";
 import { TavusStage, type TavusStageHandle } from "../_components/TavusStage";
 import { SlideView } from "../_components/SlideView";
@@ -16,10 +15,7 @@ import { isOverviewPrompt } from "./overviewPrompt";
 const SLIDE_CUE_DELAY_MS = 1100;
 
 type HcpScreen = "invite" | "convo" | "complete";
-interface Msg { role: "hcp" | "rep"; text: string; provider?: string; latencyMs?: number }
-interface ModelInfo { name: string; label: string; available: boolean }
-interface ABSide { provider: string; label: string; text: string; ttftMs?: number; totalMs?: number; running: boolean; error?: string }
-interface ABRun { question: string; a: ABSide; b: ABSide }
+interface Msg { role: "hcp" | "rep"; text: string }
 interface OverviewSegment { response: string; detailAidSlideId?: string | null; sourceIds?: string[]; isiDelivered?: boolean }
 
 export function HcpExperience({ app }: { app?: AppState }) {
@@ -38,12 +34,6 @@ export function HcpExperience({ app }: { app?: AppState }) {
   const [voiceOn, setVoiceOn] = useState(true);
   const [videoOn, setVideoOn] = useState(false);
   const [deckFocus, setDeckFocus] = useState<string>(""); // "" → SlideView shows the first slide (title)
-  const [lab, setLab] = useState(false);
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [modelA, setModelA] = useState("keyword");
-  const [modelB, setModelB] = useState("mock");
-  const [ab, setAb] = useState(false);
-  const [abRun, setAbRun] = useState<ABRun | null>(null);
   const [fs, setFs] = useState(false);
   const [listening, setListening] = useState(false);
   const [micSupported, setMicSupported] = useState(false);
@@ -72,19 +62,8 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setMicSupported(rec.supported());
     const onFs = () => setFs(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", onFs);
-    fetch("/api/models")
-      .then((r) => r.json())
-      .then((d: { providers: ModelInfo[] }) => {
-        setModels(d.providers);
-        const avail = d.providers.filter((p) => p.available);
-        if (avail[0]) setModelA(avail[0].name);
-        setModelB(d.providers.find((p) => p.name !== (avail[0]?.name ?? "mock"))?.name ?? "mock");
-      })
-      .catch(() => {});
     return () => { voiceRef.current?.cancel(); document.removeEventListener("fullscreenchange", onFs); if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current); };
   }, []);
-
-  const labelOf = (name: string) => models.find((m) => m.name === name)?.label ?? name;
 
   async function speak(text: string) {
     if (!voiceOn) return;
@@ -93,18 +72,6 @@ export function HcpExperience({ app }: { app?: AppState }) {
       if (threeD && liveRef.current?.isReady()) await liveRef.current.speak(text);
       else await voiceRef.current?.speak(text, { voiceHint: "en" });
     } finally { setSpeaking(false); }
-  }
-
-  async function runAB(q: string) {
-    const mk = (provider: string): ABSide => ({ provider, label: labelOf(provider), text: "", running: true });
-    setAbRun({ question: q, a: mk(modelA), b: mk(modelB) });
-    const onToken = (side: "a" | "b") => (t: string) =>
-      setAbRun((prev) => (prev ? { ...prev, [side]: { ...prev[side], text: prev[side].text + t } } : prev));
-    const runSide = async (side: "a" | "b", provider: string) => {
-      const r = await streamArena({ provider, text: q, onToken: onToken(side) });
-      setAbRun((prev) => (prev ? { ...prev, [side]: { ...prev[side], running: false, ttftMs: r.ttftMs, totalMs: r.totalMs, error: r.error } } : prev));
-    };
-    await Promise.all([runSide("a", modelA), runSide("b", modelB)]);
   }
 
   function slideCueDelay(text?: string): number {
@@ -167,7 +134,6 @@ export function HcpExperience({ app }: { app?: AppState }) {
     const text = q.trim();
     if (!text || pending) return;
     setInput("");
-    if (lab && ab) { setPending(true); try { await runAB(text); } finally { setPending(false); } return; }
     setPending(true);
     setMsgs((m) => [...m, { role: "hcp", text }]);
     try {
@@ -177,7 +143,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
       const videoSession = videoOn ? (window as unknown as { __nexusrep?: { sessionId?: string } }).__nexusrep?.sessionId : undefined;
       const openNew = !videoOn && !chatSessionRef.current;
       const sessionId = videoSession ?? chatSessionRef.current ?? undefined;
-      if (!lab && isOverviewPrompt(text, { productTerms: brand?.productTerms ?? [] })) {
+      if (isOverviewPrompt(text, { productTerms: brand?.productTerms ?? [] })) {
         const res = await fetch("/api/presentation/overview", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined, hcpId: inviteHcpId || undefined }),
@@ -193,11 +159,11 @@ export function HcpExperience({ app }: { app?: AppState }) {
       }
       const res = await fetch("/api/conversation/turn", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, classifier: lab ? modelA : undefined, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined, hcpId: inviteHcpId || undefined }),
+        body: JSON.stringify({ text, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined, hcpId: inviteHcpId || undefined }),
       });
       const data = (await res.json()) as { response: string; isiDelivered: boolean; followUp: string | null; detailAid: { title: string; label: string } | null; detailAidSlideId?: string | null; provider: string; latencyMs: number; sessionId?: string };
       if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
-      setMsgs((m) => [...m, { role: "rep", text: data.response, provider: lab ? labelOf(modelA) : undefined, latencyMs: lab ? data.latencyMs : undefined }]);
+      setMsgs((m) => [...m, { role: "rep", text: data.response }]);
       // The rep "shows" the detail-aid slide the answer surfaced (source-driven, not guessed),
       // but a beat LATER — as it says "…you can see this on the X slide" — so the deck follows
       // the rep mid-answer instead of jump-cutting on word one. Routed answers (no slide) keep
@@ -271,25 +237,6 @@ export function HcpExperience({ app }: { app?: AppState }) {
       {tryQuestions.map((q) => <span key={q} onClick={() => void ask(q)} style={{ padding: "7px 11px", background: "var(--dn-surface-2)", border: "1px solid var(--dn-border)", borderRadius: 20, font: "500 11.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)", cursor: "pointer" }}>{q.replace("What's the ", "").replace("Tell me about the ", "").replace(/\?$/, "")}</span>)}
     </div>
   );
-  const modelStrip = (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12, fontSize: 12 }}>
-      <button onClick={() => setLab((v) => !v)} style={{ ...ghostSm, padding: "6px 11px", fontSize: 11.5, background: lab ? "var(--dn-brand-base)" : "var(--dn-surface)", color: lab ? "#fff" : "var(--dn-fg-muted)" }}>⚙ Test models {lab ? "on" : "off"}</button>
-      {lab && (
-        <>
-          <label style={{ color: "var(--dn-fg-muted)" }}>Model{ab ? " A" : ""}:{" "}
-            <select value={modelA} onChange={(e) => setModelA(e.target.value)} style={sel}>{models.map((m) => <option key={m.name} value={m.name} disabled={!m.available}>{m.label}{m.available ? "" : " — add key"}</option>)}</select>
-          </label>
-          <label style={{ color: "var(--dn-fg-muted)", display: "inline-flex", alignItems: "center", gap: 5 }}><input type="checkbox" checked={ab} onChange={(e) => setAb(e.target.checked)} /> A/B compare</label>
-          {ab && (
-            <label style={{ color: "var(--dn-fg-muted)" }}>Model B:{" "}
-              <select value={modelB} onChange={(e) => setModelB(e.target.value)} style={sel}>{models.map((m) => <option key={m.name} value={m.name} disabled={!m.available}>{m.label}{m.available ? "" : " — add key"}</option>)}</select>
-            </label>
-          )}
-        </>
-      )}
-    </div>
-  );
-
   return (
     <div ref={rootRef} style={{ height: "100vh", overflowY: "auto", background: "var(--dn-bg)", fontFamily: "var(--dn-font-sans)", color: "var(--dn-fg)" }}>
       <header style={{ height: 56, background: "#fff", borderBottom: "1px solid var(--dn-border)", display: "flex", alignItems: "center", padding: "0 24px", gap: 12, position: "sticky", top: 0, zIndex: 10 }}>
@@ -327,29 +274,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
       {scr === "convo" && (
         <div style={{ maxWidth: 1180, margin: "0 auto", padding: 24 }}>
           {notice && <Notice text={notice} onClose={() => setNotice("")} />}
-          {/* Model-testing is an INTERNAL brand tool — shown only in the in-app brand preview
-              (app present), never to a real HCP on the shared /hcp link (doctor-view jargon rule). */}
-          {app && modelStrip}
-
-          {lab && ab ? (
-            /* ── A/B benchmark — symmetric two columns, no captions ── */
-            <div>
-              <div style={{ maxWidth: 620, margin: "0 auto 16px" }}>{askBar("A/B")}{tryChips}</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                {([abRun?.a, abRun?.b] as (ABSide | undefined)[]).map((s, i) => (
-                  <div key={i} style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", minHeight: 200, display: "flex", flexDirection: "column" }}>
-                    <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--dn-border)", display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <span style={{ fontWeight: 600, fontSize: 12.5, color: "var(--dn-brand-base)" }}>{s?.label ?? (i === 0 ? labelOf(modelA) : labelOf(modelB))}</span>
-                      <span style={{ fontSize: 11, color: "var(--dn-fg-muted)" }}>{s ? (s.running ? "streaming…" : s.error ? "error" : `${s.ttftMs}ms → ${s.totalMs}ms`) : "idle"}</span>
-                    </div>
-                    <div style={{ padding: "14px 16px", fontSize: 13.5, lineHeight: 1.55, whiteSpace: "pre-wrap", color: s?.error ? "var(--dn-danger)" : "var(--dn-fg)" }}>{s?.error ? s.error : s?.text || (s?.running ? "…" : "Ask a question to compare.")}</div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ textAlign: "center", marginTop: 12, fontSize: 11, color: "var(--dn-fg-subtle)" }}>Internal benchmark — free-generated, not the compliant rep answer.</div>
-            </div>
-          ) : (
-            /* ── Compliant rep conversation ── */
+          {/* The compliant rep conversation (model testing lives in AI Rep Studio → Training). */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 18, alignItems: "start" }}>
               {/* LEFT — the rep (live Tavus video OR the 3D/2D avatar) + one ask bar */}
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -385,7 +310,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
                     {msgs.length === 0 && <div style={{ textAlign: "center", color: "var(--dn-fg-subtle)", font: "400 12px/1.5 var(--dn-font-sans)", padding: "24px 10px" }}>Ask a question or pick a topic to begin.</div>}
                     {msgs.map((m, i) => (
                       <div key={i} style={{ alignSelf: m.role === "hcp" ? "flex-end" : "flex-start", maxWidth: "85%" }}>
-                        <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", marginBottom: 4, textAlign: m.role === "hcp" ? "right" : "left" }}>{m.role === "hcp" ? "You" : "AI rep"}{m.provider ? ` · ${m.provider} · ${m.latencyMs}ms` : ""}</div>
+                        <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", marginBottom: 4, textAlign: m.role === "hcp" ? "right" : "left" }}>{m.role === "hcp" ? "You" : "AI rep"}</div>
                         <div style={{ padding: "9px 12px", borderRadius: 11, font: "400 12.5px/1.5 var(--dn-font-sans)", whiteSpace: "pre-wrap", background: m.role === "hcp" ? "var(--dn-brand-base)" : "var(--dn-surface-2)", color: m.role === "hcp" ? "#fff" : "var(--dn-fg)", border: m.role === "hcp" ? "none" : "1px solid var(--dn-border)" }}>{m.text}</div>
                       </div>
                     ))}
@@ -394,7 +319,6 @@ export function HcpExperience({ app }: { app?: AppState }) {
                 </div>
               </div>
             </div>
-          )}
         </div>
       )}
 
@@ -404,7 +328,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
             <div style={{ width: 56, height: 56, borderRadius: "50%", background: "var(--dn-accent-green-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 26, color: "#166534" }}>✓</div>
             <h1 style={{ font: "600 21px/1.25 var(--dn-font-sans)", margin: 0, color: "var(--dn-fg)" }}>Thanks for your time</h1>
             <p style={{ font: "400 13px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "10px 0 20px" }}>Request a follow-up and we&apos;ll send approved {displayName} information or connect you with our team.</p>
-            <button onClick={() => { if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current); setScr("invite"); setMsgs([]); setNotice(""); setDeckFocus(""); setVideoOn(false); setAbRun(null); chatSessionRef.current = null; }} style={{ width: "100%", padding: 12, background: "var(--dn-surface-2)", color: "var(--dn-fg-muted)", border: "1px solid var(--dn-border)", borderRadius: 10, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Close session</button>
+            <button onClick={() => { if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current); setScr("invite"); setMsgs([]); setNotice(""); setDeckFocus(""); setVideoOn(false); chatSessionRef.current = null; }} style={{ width: "100%", padding: 12, background: "var(--dn-surface-2)", color: "var(--dn-fg-muted)", border: "1px solid var(--dn-border)", borderRadius: 10, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Close session</button>
           </div>
         </div>
       )}
@@ -442,4 +366,3 @@ function wait(ms: number): Promise<void> {
 
 const ghostSm: React.CSSProperties = { padding: "8px 13px", background: "#fff", color: "var(--dn-fg)", border: "1px solid var(--dn-border)", borderRadius: 8, font: "600 12px/1 var(--dn-font-sans)", cursor: "pointer" };
 const ghostMd: React.CSSProperties = { padding: "10px 14px", background: "#fff", color: "var(--dn-fg)", border: "1px solid var(--dn-border)", borderRadius: 9, font: "600 12px/1 var(--dn-font-sans)", cursor: "pointer" };
-const sel: React.CSSProperties = { padding: "5px 8px", border: "1px solid var(--dn-border)", borderRadius: 7, fontSize: 12, background: "#fff", color: "var(--dn-fg)" };

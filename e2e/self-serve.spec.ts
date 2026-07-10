@@ -86,7 +86,7 @@ test.describe("Self-serve setup (chat + UI only)", () => {
     // The new MLR review queue lists the passages — approve them from the UI. (Scoped by
     // testid: the ISI section has its own Approve buttons, and parallel specs share the server.)
     // Each click refreshes the queue, so a button can vanish mid-loop — tolerate that.
-    await expect(page.getByText(/Pending review · \d+ passage/i)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/MLR review · \d+ pending passage/i)).toBeVisible({ timeout: 10_000 });
     for (let i = 0; i < 8 && (await page.getByTestId("mlr-approve").count()) > 0; i++) {
       await page.getByTestId("mlr-approve").first().click({ timeout: 3_000 }).catch(() => {});
       await page.waitForTimeout(600); // let the queue refresh settle

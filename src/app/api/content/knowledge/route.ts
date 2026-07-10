@@ -23,12 +23,22 @@ export async function GET(): Promise<NextResponse> {
   const documents = assets.map((asset) => {
     const chunks = answers.filter((a) => a.contentAssetId === asset.id);
     const docSlides = slides.filter((s) => s.contentAssetId === asset.id).sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+    // The DOCUMENT's status is derived from its passages — the asset record keeps the
+    // stamp it was ingested with ("in_mlr"), which goes stale the moment reviewers act:
+    // any active passage -> active; any still pending -> in_mlr; all rejected -> rejected.
+    const derivedStatus = chunks.some((a) => a.mlr.status === "active")
+      ? "active"
+      : chunks.some((a) => a.mlr.status === "in_mlr")
+        ? "in_mlr"
+        : chunks.length > 0 && chunks.every((a) => a.mlr.status === "retired" || a.mlr.status === "expired")
+          ? "retired"
+          : asset.mlr.status;
     return {
       id: asset.id,
       title: asset.title,
       kind: asset.kind,
       sourceFile: asset.mlr.sourceFile,
-      status: asset.mlr.status,
+      status: derivedStatus,
       chunks: chunks.map((a) => ({
         id: a.id,
         topic: a.topic,

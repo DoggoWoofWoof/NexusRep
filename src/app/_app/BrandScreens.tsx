@@ -960,7 +960,7 @@ function Admin() {
       <p style={{ font: "400 13px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "0 0 16px", maxWidth: 720 }}>Not visible to brand teams. The runtime vendor stack is swappable without changing governance — brand users only configure persona, content, targeting and outreach.</p>
       <div style={{ marginBottom: 22, font: "500 12px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>
         Model A/B testing (Claude / OpenAI / Thinking Machines, latency + streaming) lives inside the AI rep
-        conversation — open the HCP preview and toggle <strong>⚙ Test models</strong>.
+        conversation — open <strong>AI Rep → Training &amp; Preview → ⚙ Model lab</strong>.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div style={{ ...card, padding: "20px 22px" }}>

@@ -53,6 +53,26 @@ export class ContentService {
     return this.assets.list();
   }
 
+  /**
+   * Remove an uploaded source document and everything parsed from it (answers + slides).
+   * FAIL-SAFE: refuses when any of its passages is ACTIVE — live rep knowledge can only be
+   * retired through MLR (reject), never silently deleted out from under the compliance gate.
+   * Returns what was removed, or an error string.
+   */
+  async removeAsset(id: ContentAssetId): Promise<{ removed: { answers: number; slides: number } } | { error: string }> {
+    const asset = await this.assets.get(id);
+    if (!asset) return { error: "asset not found" };
+    const answers = (await this.answers.list()).filter((a) => a.contentAssetId === id);
+    if (answers.some((a) => a.mlr.status === "active")) {
+      return { error: "asset has ACTIVE approved passages — reject them in MLR review first" };
+    }
+    const slides = (await this.slides.list()).filter((sl) => sl.contentAssetId === id);
+    for (const a of answers) await this.answers.delete(String(a.id));
+    for (const sl of slides) await this.slides.delete(String(sl.id));
+    await this.assets.delete(String(id));
+    return { removed: { answers: answers.length, slides: slides.length } };
+  }
+
   async addAnswer(answer: ApprovedAnswer): Promise<ApprovedAnswer> {
     return this.answers.insert(answer);
   }

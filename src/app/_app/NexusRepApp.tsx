@@ -95,7 +95,7 @@ export function NexusRepApp() {
     <div style={{ height: "100vh", overflow: "hidden", display: "flex", background: "var(--dn-bg)", color: "var(--dn-fg)", fontFamily: "var(--dn-font-sans)" }}>
       {/* LEFT NAV RAIL */}
       <aside style={{ width: navCollapsed ? 64 : 236, flexShrink: 0, background: "var(--dn-brand-dark)", color: "#fff", display: "flex", flexDirection: "column", borderRight: "1px solid rgba(255,255,255,.07)", transition: "width .18s ease" }}>
-        <div style={{ padding: navCollapsed ? "14px 10px" : "17px 14px 15px 18px", borderBottom: "1px solid rgba(255,255,255,.08)", display: "flex", alignItems: "center", justifyContent: navCollapsed ? "center" : "space-between", gap: 10 }}>
+        <div style={{ padding: navCollapsed ? "14px 10px" : "16px 12px 14px 14px", borderBottom: "1px solid rgba(255,255,255,.08)", display: "flex", alignItems: "center", justifyContent: navCollapsed ? "center" : "space-between", gap: 8 }}>
           {navCollapsed ? (
             <button
               onClick={() => setNavCollapsed(false)}
@@ -107,15 +107,15 @@ export function NexusRepApp() {
             </button>
           ) : (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                <img src="/assets/docnexus-logo.png" alt="DocNexus" style={{ height: 21 }} />
-                <span style={{ font: "700 12.5px/1 var(--dn-font-sans)", padding: "3px 7px", background: "rgba(96,165,250,.2)", color: "#bfdbfe", borderRadius: 5 }}>NexusRep</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <img src="/assets/docnexus-logo.png" alt="DocNexus" style={{ height: 17, flexShrink: 0 }} />
+                <span style={{ flexShrink: 0, whiteSpace: "nowrap", font: "700 11px/1 var(--dn-font-sans)", padding: "4px 7px", background: "rgba(96,165,250,.22)", color: "#dbeafe", borderRadius: 6, border: "1px solid rgba(96,165,250,.35)" }}>NexusRep</span>
               </div>
               <button
                 onClick={() => setNavCollapsed(true)}
                 title="Collapse menu"
                 aria-label="Collapse menu"
-                style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid rgba(255,255,255,.16)", background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.72)", font: "700 15px/1 var(--dn-font-sans)", cursor: "pointer" }}
+                style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 7, border: "1px solid rgba(255,255,255,.16)", background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.72)", font: "700 14px/1 var(--dn-font-sans)", cursor: "pointer" }}
               >
                 ‹
               </button>

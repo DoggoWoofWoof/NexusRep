@@ -29,7 +29,28 @@ behind them. Implemented stage-by-stage with review gates.
 **Test status:** `typecheck` clean · **189 unit/integration tests** pass (1 guarded live test skipped) ·
 **20 Playwright E2E pass** (17 functional incl. the blank-slate self-serve journey + 3 visual).
 
-### Latest — Audience & scoring: explainable score, real engagement, attribution fix (2026-07-10)
+### Latest — Knowledge transparency + Train UX round (2026-07-10)
+
+- **Source library is honest and self-serve.** Document badges derive from their passages
+  (an upload whose passages were all rejected shows **Rejected**, not a stale "In Mlr");
+  non-active documents get a **× Remove** control backed by `ContentService.removeAsset`
+  (fail-safe: documents with LIVE approved passages refuse deletion — retire via MLR first,
+  verified 409). The two Cardiozan TEST uploads from autofill verification were removed.
+  New copy explains the model: the launch deck ships MLR-approved (brand baseline);
+  everything uploaded starts In MLR review; the queue header now says exactly that.
+- **"View the N passages"** — the Live-rep-knowledge counts are expandable: every retrievable
+  passage listed by document with topic, live/in-review status, and its text. Nothing hidden
+  behind an aggregate number.
+- **Train thread autoscrolls** to the newest message (new questions, re-answers, and the
+  session-review "Coach this exchange" handoff land in view — no manual scrolling).
+- **Rules from your coaching moved** from below the tall pitch card (where nobody scrolled)
+  to the left column next to the thread that creates them.
+- **Model lab moved to Training** (from the HCP preview): same A/B streamed comparison with
+  TTFT/total latency, collapsed card, clearly labeled internal + not-the-compliant-answer.
+  The HCP preview no longer carries any model-testing UI at all; Admin copy updated.
+- **Sidebar header fixed** — the NexusRep pill no longer collides with the collapse control.
+
+### Audience & scoring: explainable score, real engagement, attribution fix (2026-07-10)
 
 - **Bug fixed — stripped ids silently misattributed sessions.** The Audience drawer's
   "Preview AI rep" (and invite links) pass ids without the canonical `hcp_` prefix; the cohort

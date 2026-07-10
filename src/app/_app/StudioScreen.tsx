@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import type { AppState } from "./NexusRepApp";
 import { btnGhost, btnPrimary } from "./NexusRepApp";
+import { streamArena } from "@lib/arena-client";
 import { DEFAULT_RULES, KNOWLEDGE_ASSETS, TRAIN_SEED_KEY, setupTopicsFor } from "./data";
 import { isOverviewPrompt } from "./overviewPrompt";
 import { SlideView } from "../_components/SlideView";
@@ -333,6 +334,22 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
     }
   };
 
+  // Remove a non-active source document (module fail-safe blocks docs with live passages).
+  const removeSourceDoc = async (id: string, title: string) => {
+    try {
+      const res = await fetch(`/api/content/asset?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      const d = (await res.json()) as { error?: string };
+      setUploadMsg(res.ok ? `Removed "${title}" and its parsed passages.` : `Couldn't remove: ${d.error ?? res.status}`);
+      if (res.ok) {
+        setSourceDocs((docs) => (docs ?? []).filter((x) => x.id !== id));
+        void loadKnowledge();
+        void loadPendingBlocks();
+      }
+    } catch (e) {
+      setUploadMsg(`Couldn't remove: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const loadKnowledge = async () => {
     try {
       const res = await fetch("/api/content/knowledge");
@@ -577,11 +594,33 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
                         <span style={{ font: "600 9.5px/1 var(--dn-font-sans)", padding: "5px 8px", borderRadius: 6, background: "rgba(6,73,172,.08)", color: "var(--dn-brand-base)" }}>NexusRep RAG</span>
                       </div>
                     )}
+                    {/* The passages themselves — every retrievable block the rep can cite, by document.
+                        This is exactly what "N retrievable passages" counts; nothing hidden. */}
+                    {knowledge && knowledge.totals.chunks > 0 && (
+                      <details style={{ marginBottom: 13 }}>
+                        <summary style={{ cursor: "pointer", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", padding: "2px 0", listStyle: "none" }}>▸ View the {knowledge.totals.chunks} passage(s) behind these counts</summary>
+                        <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 10 }}>
+                          {knowledge.documents.filter((doc) => doc.chunks.length > 0).map((doc) => (
+                            <div key={doc.id} style={{ border: "1px solid var(--dn-surface-2)", borderRadius: 9, padding: "9px 11px" }}>
+                              <div style={{ font: "600 11px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", marginBottom: 7 }}>{doc.title} <span style={{ font: "400 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>· {doc.chunks.length} passage(s)</span></div>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                {doc.chunks.map((ch) => (
+                                  <div key={ch.id} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                                    <span style={{ flexShrink: 0, font: "600 9px/1.4 var(--dn-font-sans)", padding: "2px 6px", borderRadius: 4, background: ch.status === "active" ? "var(--dn-accent-green-bg)" : ch.status === "in_mlr" ? "var(--dn-accent-yellow-bg)" : "var(--dn-surface-2)", color: ch.status === "active" ? "#166534" : ch.status === "in_mlr" ? "#92400e" : "var(--dn-fg-subtle)", textTransform: "uppercase", letterSpacing: ".03em" }}>{ch.status === "active" ? "live" : ch.status === "in_mlr" ? "in review" : ch.status}</span>
+                                    <span style={{ minWidth: 0, font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}><strong style={{ color: "var(--dn-fg)" }}>{ch.topic.replace(/[_-]+/g, " ")}</strong> — {ch.preview}{ch.preview.length >= 220 ? "…" : ""}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                     {/* MLR review queue for uploaded passages — approve here and the block goes live
                         (retrievable + its slide joins the on-screen deck). Fully self-serve. */}
                     {pendingBlocks.length > 0 && (
                       <div style={{ border: "1px solid #fcd34d", background: "#fffbeb", borderRadius: 9, padding: "10px 12px", marginBottom: 13 }}>
-                        <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "#92400e", marginBottom: 8 }}>Pending review · {pendingBlocks.length} passage{pendingBlocks.length > 1 ? "s" : ""}</div>
+                        <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "#92400e", marginBottom: 8 }}>MLR review · {pendingBlocks.length} pending passage{pendingBlocks.length > 1 ? "s" : ""} — approve to make them live rep knowledge</div>
                         <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
                           {pendingBlocks.map((p) => (
                             <div key={p.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center", padding: "8px 10px", background: "#fff", borderRadius: 8, border: "1px solid var(--dn-surface-2)" }}>
@@ -629,17 +668,27 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
                       ) : null}
                       {isiMsg && <div style={{ font: "500 10.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginTop: 8 }}>{isiMsg}</div>}
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline", marginBottom: 4 }}>
                       <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)" }}>Source library</span>
                       <span style={{ font: "400 10.5px/1.35 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{sourceDocs === null ? "Sample list — live library loading" : "Uploaded assets and MLR status"}</span>
                     </div>
+                    <div style={{ font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 8 }}>The launch deck ships already MLR-approved (the brand baseline). Everything you upload starts <strong>In MLR review</strong> — approve or reject each passage in the queue above; rejected documents can be removed.</div>
                     {/* REAL uploaded/seeded assets from the content module; fixture only while loading. */}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
                       {(sourceDocs ?? KNOWLEDGE_ASSETS.map((c) => ({ id: c.mlrId, title: c.name, kind: c.kind, status: c.status.toLowerCase() }))).map((c) => (
                         <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 11px", border: "1px solid var(--dn-surface-2)", borderRadius: 9 }}>
                           <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 7, background: "var(--dn-surface-2)", display: "flex", alignItems: "center", justifyContent: "center", font: "700 10px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)", textTransform: "uppercase" }}>{c.kind.slice(0, 3)}</span>
                           <span style={{ flex: 1, minWidth: 0, lineHeight: 1.3 }}><span style={{ display: "block", font: "600 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.title}</span><span style={{ display: "block", font: "400 10px/1.2 var(--dn-font-mono)", color: "var(--dn-fg-subtle)", marginTop: 2 }}>{c.id}</span></span>
-                          <span style={{ font: "600 9.5px/1 var(--dn-font-sans)", padding: "3px 7px", borderRadius: 5, background: c.status === "active" ? "var(--dn-accent-green-bg)" : "var(--dn-accent-yellow-bg)", color: c.status === "active" ? "#166534" : "#92400e", textTransform: "capitalize" }}>{c.status.replace(/_/g, " ")}</span>
+                          <span style={{ font: "600 9.5px/1 var(--dn-font-sans)", padding: "3px 7px", borderRadius: 5, background: c.status === "active" ? "var(--dn-accent-green-bg)" : c.status === "retired" ? "var(--dn-surface-2)" : "var(--dn-accent-yellow-bg)", color: c.status === "active" ? "#166534" : c.status === "retired" ? "var(--dn-fg-subtle)" : "#92400e" }}>{c.status === "active" ? "MLR-approved" : c.status === "retired" ? "Rejected" : c.status === "in_mlr" ? "In MLR review" : c.status.replace(/_/g, " ")}</span>
+                          {sourceDocs !== null && c.status !== "active" && (
+                            <span
+                              onClick={() => void removeSourceDoc(c.id, c.title)}
+                              title="Remove this document and its parsed passages (documents with live approved passages can't be removed)"
+                              style={{ flexShrink: 0, width: 20, height: 20, borderRadius: 6, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--dn-fg-subtle)", border: "1px solid var(--dn-border)", font: "600 11px/1 var(--dn-font-sans)" }}
+                            >
+                              ×
+                            </span>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -781,6 +830,13 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
   // Inline per-section coaching on a rehearsed pitch segment ({exchange, segment} being coached).
   const [segCoach, setSegCoach] = useState<{ exIdx: number; segIdx: number } | null>(null);
   const [segNote, setSegNote] = useState("");
+  // Keep the coaching thread pinned to the newest message (new questions, re-answers,
+  // seeded "Coach this exchange" handoffs) — no manual scrolling to find the latest.
+  const threadRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = threadRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [exchanges, busyIdx]);
   const [planNote, setPlanNote] = useState("");
   const [planMsg, setPlanMsg] = useState("");
 
@@ -1020,6 +1076,16 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
             <span onClick={() => { setExchanges([greetingExchange()]); setCoachDraft({}); setPreviewSessionId(makePreviewSessionId()); }} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>↺ Restart</span>
           </div>
         </div>
+        {/* Rules from your coaching — next to the thread that creates them (it used to sit
+            below the tall pitch card where nobody scrolled). */}
+        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+          <div style={{ padding: "12px 14px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--dn-border)" }}><span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Rules from your coaching</span><span onClick={() => app.setStudioMode("rules")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>See all →</span></div>
+          <div style={{ padding: "11px 14px", display: "flex", flexDirection: "column", gap: 9, maxHeight: 230, overflowY: "auto" }}>
+            {coachingRules.length === 0 && <div style={{ textAlign: "center", padding: "14px 8px", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Accept a coached answer and the rules behind it land here for review.</div>}
+            {coachingRules.map((r) => <RuleCard key={r.id} r={r} onAccept={() => void post({ action: "ruleStatus", ruleId: r.id, status: "active" })} onReject={() => void post({ action: "ruleStatus", ruleId: r.id, status: "rejected" })} compact />)}
+          </div>
+        </div>
+        <ModelLab />
         <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)" }}>
           <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", marginBottom: 5 }}>How this works</div>
           <div style={{ font: "400 11px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>The <strong>brand pitch</strong> (right) is what the rep opens doctor conversations with — DocNexus drafted it from your approved deck. <strong>Rehearse</strong> it here, coach any line, and when you <strong>Accept</strong>, the pitch and the rep&apos;s rules update. The first card is the rep&apos;s <strong>opening line</strong> — coach that too.</div>
@@ -1029,7 +1095,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
       {/* Coaching thread */}
       <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", display: "flex", flexDirection: "column", height: 604 }}>
         <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--dn-border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}><span style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Coach the rep</span><span style={{ font: "500 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Refine each answer, then accept</span></div>
-        <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 18 }}>
+        <div ref={threadRef} style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 18 }}>
           {exchanges.length === 0 && <div style={{ textAlign: "center", color: "var(--dn-fg-subtle)", font: "400 12px/1.6 var(--dn-font-sans)", padding: "40px 14px" }}>Ask the rep a question on the left. Then coach any answer and it will try again — until you accept it.</div>}
           {exchanges.map((ex, idx) => {
             const latest = ex.answers[ex.answers.length - 1]!;
@@ -1192,15 +1258,94 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
           onMove={movePlanStep}
         />
 
-        {/* Rules from feedback */}
-        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
-          <div style={{ padding: "14px 16px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--dn-border)" }}><span style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Rules from your coaching</span><span onClick={() => app.setStudioMode("rules")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>See all →</span></div>
-          <div style={{ padding: "13px 16px", display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto" }}>
-            {coachingRules.length === 0 && <div style={{ textAlign: "center", padding: "22px 8px", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Accept a coached answer and the rules behind it land here for review.</div>}
-            {coachingRules.map((r) => <RuleCard key={r.id} r={r} onAccept={() => void post({ action: "ruleStatus", ruleId: r.id, status: "active" })} onReject={() => void post({ action: "ruleStatus", ruleId: r.id, status: "rejected" })} compact />)}
-          </div>
-        </div>
       </div>
+    </div>
+  );
+}
+
+/* ---------- MODEL LAB (moved here from the HCP preview — an internal brand tool) ---------- */
+interface LabModel { name: string; label: string; available: boolean }
+interface LabSide { label: string; text: string; ttftMs?: number; totalMs?: number; running: boolean; error?: string }
+
+/** Same question through two model providers, streamed side-by-side with latency.
+ *  Free-generated benchmark for MODEL selection only — NOT the compliant rep answer
+ *  (rehearse that in the coach thread; the gate doesn't run here and none of this logs). */
+function ModelLab() {
+  const [open, setOpen] = useState(false);
+  const [models, setModels] = useState<LabModel[]>([]);
+  const [modelA, setModelA] = useState("keyword");
+  const [modelB, setModelB] = useState("mock");
+  const [q, setQ] = useState("");
+  const [run, setRun] = useState<{ a: LabSide; b: LabSide } | null>(null);
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    if (!open || models.length) return;
+    fetch("/api/models")
+      .then((r) => r.json())
+      .then((d: { providers: LabModel[] }) => {
+        setModels(d.providers);
+        const avail = d.providers.filter((m) => m.available);
+        if (avail[0]) setModelA(avail[0].name);
+        setModelB(d.providers.find((m) => m.name !== (avail[0]?.name ?? "mock"))?.name ?? "mock");
+      })
+      .catch(() => {});
+  }, [open, models.length]);
+
+  const labelOf = (name: string) => models.find((m) => m.name === name)?.label ?? name;
+
+  const runAB = async () => {
+    const question = q.trim();
+    if (!question || running) return;
+    setRunning(true);
+    const mk = (name: string): LabSide => ({ label: labelOf(name), text: "", running: true });
+    setRun({ a: mk(modelA), b: mk(modelB) });
+    const onToken = (side: "a" | "b") => (t: string) => setRun((prev) => (prev ? { ...prev, [side]: { ...prev[side], text: prev[side].text + t } } : prev));
+    const side = async (key: "a" | "b", provider: string) => {
+      const r = await streamArena({ provider, text: question, onToken: onToken(key) });
+      setRun((prev) => (prev ? { ...prev, [key]: { ...prev[key], running: false, ttftMs: r.ttftMs, totalMs: r.totalMs, error: r.error } } : prev));
+    };
+    try {
+      await Promise.all([side("a", modelA), side("b", modelB)]);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const sel: React.CSSProperties = { flex: 1, minWidth: 0, padding: "6px 8px", border: "1px solid var(--dn-border)", borderRadius: 7, font: "500 11px/1.2 var(--dn-font-sans)", background: "#fff", color: "var(--dn-fg)" };
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+      <div onClick={() => setOpen((v) => !v)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}>
+        <span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>⚙ Model lab <span style={{ font: "500 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>· internal</span></span>
+        <span style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)" }}>{open ? "Hide" : "Open"}</span>
+      </div>
+      {open && (
+        <div style={{ padding: "0 14px 13px", display: "flex", flexDirection: "column", gap: 9 }}>
+          <div style={{ font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Same question through two providers, streamed with latency. Free-generated benchmark for picking a model — <strong>not</strong> the compliant rep answer, and nothing here is logged.</div>
+          <div style={{ display: "flex", gap: 7 }}>
+            <select value={modelA} onChange={(e) => setModelA(e.target.value)} style={sel}>{models.map((m) => <option key={m.name} value={m.name} disabled={!m.available}>{m.label}{m.available ? "" : " — add key"}</option>)}</select>
+            <select value={modelB} onChange={(e) => setModelB(e.target.value)} style={sel}>{models.map((m) => <option key={m.name} value={m.name} disabled={!m.available}>{m.label}{m.available ? "" : " — add key"}</option>)}</select>
+          </div>
+          <div style={{ display: "flex", gap: 7 }}>
+            <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void runAB(); }} placeholder="Question to compare…" style={{ flex: 1, minWidth: 0, padding: "8px 10px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 11.5px/1.2 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
+            <button onClick={() => void runAB()} disabled={running || !q.trim()} style={{ ...btnPrimary, padding: "8px 11px", font: "600 11px/1 var(--dn-font-sans)", opacity: running || !q.trim() ? 0.55 : 1 }}>{running ? "…" : "Run A/B"}</button>
+          </div>
+          {run && (
+            <div style={{ display: "grid", gap: 8 }}>
+              {([run.a, run.b] as LabSide[]).map((sideRun, i) => (
+                <div key={i} style={{ border: "1px solid var(--dn-surface-2)", borderRadius: 9, overflow: "hidden" }}>
+                  <div style={{ padding: "7px 10px", background: "var(--dn-surface-2)", display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>{sideRun.label}</span>
+                    <span style={{ font: "500 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{sideRun.running ? "streaming…" : sideRun.error ? "error" : `${sideRun.ttftMs}ms → ${sideRun.totalMs}ms`}</span>
+                  </div>
+                  <div style={{ padding: "8px 10px", font: "400 11px/1.5 var(--dn-font-sans)", whiteSpace: "pre-wrap", color: sideRun.error ? "var(--dn-danger)" : "var(--dn-fg)", maxHeight: 140, overflowY: "auto" }}>{sideRun.error ? sideRun.error : sideRun.text || (sideRun.running ? "…" : "")}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
