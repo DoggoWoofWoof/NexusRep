@@ -47,7 +47,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   useImperativeHandle(ref, () => ({
     speak: (text: string) => { speakAgent(text); },
     setMuted: (m: boolean) => { applyMuted(m); },
-    setMicEnabled: (on: boolean) => { setMicOn(on); transportRef.current?.setMicEnabled(on); },
+    setMicEnabled: (on: boolean) => { transportRef.current?.setMicEnabled(on); },
   }));
   // Guards React StrictMode's double-invoke of effects in dev — without it the
   // component opens TWO vendor conversations (wasted minutes + a concurrent-slot clash).
@@ -55,7 +55,6 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   const [stage, setStage] = useState<Stage>("loading");
   const [note, setNote] = useState("");
   const [muted, setMuted] = useState(false);
-  const [micOn, setMicOn] = useState(true);
   // join() resolves before the agent publishes media — keep the connecting status up
   // until the first real frame instead of showing an empty black pane.
   const [hasVideo, setHasVideo] = useState(false);
