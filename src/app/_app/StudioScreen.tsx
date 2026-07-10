@@ -1703,14 +1703,13 @@ function OverviewPlanCard({
   const slides = snap?.slides ?? [];
   const step = steps.find((s) => s.id === activeStepId) ?? steps[0];
   const stepIndex = Math.max(0, steps.findIndex((s) => s.id === step?.id));
-  const slideLabelOf = (slideId?: string) => slides.find((s) => s.id === slideId)?.label ?? "no slide";
 
   return (
     <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
       <div style={{ padding: "13px 16px 11px", borderBottom: "1px solid var(--dn-border)", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Brand pitch</div>
-          <div style={{ font: "500 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 4 }}>Drafted by DocNexus from your approved deck. The rep opens doctor conversations with it, slide by slide — edit a section or rehearse and coach it.</div>
+          <div style={{ font: "500 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 4 }}>Drafted from your approved deck — click a section to edit.</div>
         </div>
         <button onClick={onRehearse} disabled={rehearsing} title="Run the pitch in the coaching thread on the left" style={{ ...btnPrimary, flexShrink: 0, padding: "7px 10px", font: "600 10.5px/1 var(--dn-font-sans)", opacity: rehearsing ? 0.6 : 1 }}>{rehearsing ? "…" : rehearseLabel}</button>
       </div>
@@ -1739,7 +1738,6 @@ function OverviewPlanCard({
                   >
                     <span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 6, display: "inline-flex", alignItems: "center", justifyContent: "center", font: "700 9.5px/1 var(--dn-font-sans)", color: active ? "#fff" : "var(--dn-fg-muted)", background: active ? "var(--dn-brand-base)" : "var(--dn-surface-2)" }}>{i + 1}</span>
                     <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", font: `600 11px/1.3 var(--dn-font-sans)`, color: active ? "var(--dn-brand-base)" : "var(--dn-fg)" }}>{s.title}</span>
-                    <span style={{ flexShrink: 0, font: "500 9.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{slideLabelOf(s.slideId)}</span>
                     <span style={{ flexShrink: 0, display: "inline-flex", gap: 2 }}>
                       <span onClick={(e) => { e.stopPropagation(); onMove(s.id, -1); }} title="Move this section earlier" style={{ width: 16, textAlign: "center", color: i === 0 ? "var(--dn-border)" : "var(--dn-fg-subtle)", cursor: i === 0 ? "default" : "pointer", font: "600 10px/1.4 var(--dn-font-sans)" }}>↑</span>
                       <span onClick={(e) => { e.stopPropagation(); onMove(s.id, 1); }} title="Move this section later" style={{ width: 16, textAlign: "center", color: i === steps.length - 1 ? "var(--dn-border)" : "var(--dn-fg-subtle)", cursor: i === steps.length - 1 ? "default" : "pointer", font: "600 10px/1.4 var(--dn-font-sans)" }}>↓</span>
@@ -1751,11 +1749,11 @@ function OverviewPlanCard({
 
             {slides.length > steps.length && (
               <div style={{ font: "500 10.5px/1.45 var(--dn-font-sans)", color: "#92400e", background: "var(--dn-accent-yellow-bg)", borderRadius: 8, padding: "7px 10px" }}>
-                {slides.length - steps.length} approved slide(s) aren&apos;t in this pitch yet (they still answer questions, and the walkthrough appends them at the end). <span onClick={onReset} style={{ cursor: "pointer", textDecoration: "underline" }}>Re-draft from deck</span> to include them as sections.
+                {slides.length - steps.length} approved slide(s) aren&apos;t sections yet (they still answer questions). <span onClick={onReset} style={{ cursor: "pointer", textDecoration: "underline" }}>Re-draft from deck</span> to add them.
               </div>
             )}
             <div style={{ display: "grid", gap: 8, borderTop: "1px solid var(--dn-surface-2)", paddingTop: 10 }}>
-              <span style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-brand-base)" }}>Edit section {stepIndex + 1} — saves when you click away</span>
+              <span style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)" }}>Section {stepIndex + 1} · auto-saves</span>
               <label style={{ display: "grid", gap: 4 }}>
                 <span style={{ font: "600 8.5px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)" }}>Section title</span>
                 <input
