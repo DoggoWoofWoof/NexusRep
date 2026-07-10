@@ -147,7 +147,7 @@ function Audience({ app }: { app: AppState }) {
           <button onClick={() => app.setNav("outreach")} style={{ ...btnGhost, color: "var(--dn-brand-base)", border: "1px solid var(--dn-brand-base)" }}>Go to launch →</button>
         </div>
       </div>
-      <p style={{ font: "400 13px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "8px 0 18px", maxWidth: 820 }}>Ranked by opportunity score from HCP-level aggregate claims signals. The table stays concise; click a row for the full rationale, then add selected HCPs to launch.</p>
+      <p style={{ font: "400 13px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "8px 0 18px", maxWidth: 820 }}>Ranked by opportunity score from HCP-level aggregate claims signals. Click a row for the full rationale, then add selected HCPs to launch.</p>
       {!live && (
         <div style={{ display: "flex", alignItems: "center", gap: 9, margin: "0 0 14px", padding: "9px 13px", background: "var(--dn-accent-yellow-bg)", border: "1px solid #fcd34d", borderRadius: 9, font: "500 12px/1.4 var(--dn-font-sans)", color: "#92400e" }}>
           ⚠ Showing sample doctors — the live claims cohort hasn&apos;t loaded. These rows are illustrative, not your targeting data.
@@ -495,7 +495,7 @@ function Sessions({ app }: { app: AppState }) {
         </div>
         {loaded && rows.length === 0 && (
           <div style={{ padding: "28px 18px", textAlign: "center", font: "400 13px/1.6 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>
-            No sessions yet. Start one in <strong style={{ color: "var(--dn-fg)" }}>Preview HCP experience</strong> (Text, Voice, or Video) — completed conversations appear here with their full transcript and compliance evidence.
+            No sessions yet — start one in <strong style={{ color: "var(--dn-fg)" }}>Preview HCP experience</strong> (Text, Voice, or Video).
           </div>
         )}
         {rows.map((s) => (
@@ -579,8 +579,7 @@ function Analytics() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div style={{ ...card, padding: "18px 20px" }}>
           <div style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)", marginBottom: 4 }}>Engagement funnel</div>
-          <div style={{ font: "400 11px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 16 }}>Outreach → session start → completed detail → follow-up</div>
-          {funnel.map((f) => (
+                    {funnel.map((f) => (
             <div key={f.label} style={{ marginBottom: 11 }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}><span style={{ font: "500 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{f.label}</span><span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>{f.count} · {f.pct}%</span></div>
               <div style={{ height: 22, borderRadius: 6, background: "var(--dn-surface-2)", overflow: "hidden" }}><div style={{ height: "100%", borderRadius: 6, background: "var(--dn-gradient-primary)", width: `${f.pct}%` }} /></div>
@@ -863,7 +862,7 @@ function SessionDetail({ app }: { app: AppState }) {
       <div style={eyebrow}>Session Detail</div>
       <h1 style={{ ...h1, marginBottom: 6 }}>{detail?.session.hcp ?? "Session"} — session review</h1>
       <div style={{ ...card, padding: "26px 24px", maxWidth: 760, marginBottom: 14, font: "400 13px/1.6 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>
-        This session has no recorded turns yet. Start a conversation in <strong style={{ color: "var(--dn-fg)" }}>Preview HCP experience</strong> (Text, Voice, or Video) — every turn is logged here with its approved sources and compliance decision, and video calls attach a synced recording.
+        No recorded turns yet — start a conversation in <strong style={{ color: "var(--dn-fg)" }}>Preview HCP experience</strong>. Every turn logs here with its sources and compliance decision.
       </div>
       <div style={{ ...card, overflow: "hidden", maxWidth: 760 }}>{traceBox}</div>
     </div>
@@ -903,7 +902,7 @@ function FollowUps() {
     <div style={{ padding: "24px 30px 40px", maxWidth: 1400 }}>
       <div style={eyebrow}>Follow-ups</div>
       <h1 style={{ ...h1, marginBottom: 6 }}>Who needs follow-up?</h1>
-      <p style={{ font: "400 13px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "0 0 20px" }}>Follow-ups are created automatically after each session and synced to your CRM in the background. You just watch the status — the technical payload stays out of your way.</p>
+      <p style={{ font: "400 13px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "0 0 20px" }}>Follow-ups are created automatically after each session and synced to your CRM in the background.</p>
       <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: 14, alignItems: "start" }}>
         <div style={{ ...card, overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 16px", borderBottom: "1px solid var(--dn-border)" }}>

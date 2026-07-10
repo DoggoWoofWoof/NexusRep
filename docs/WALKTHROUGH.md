@@ -31,6 +31,24 @@
 - Tests: catalog parsing (merge/dedupe/status), appearance persistence, e2e agent-gallery
   functional flow (fixture-backed select + search) + `studio-agent.png` visual baseline.
 
+### Declutter round (same day): one fact, one place
+
+- **Approved source collapsed**: the Pitch panel's "What the rep says here — approved text"
+  paragraph (the third copy of a section's content) now sits behind a "▸ View approved source"
+  toggle; the MLR-revision control lives inside it.
+- **Slide chips are conditional**: script/transcript cards show the "▤ slide" chip only when the
+  slide differs from the section name (the auto-drafted pitch names sections after slides, so
+  the chip was pure duplication by default).
+- **Cross-screen redundancy audit applied** (agent-swept every screen): Build's triple
+  "answer→draft→review" explainer cut to one, Rules caption de-duplicated from the header,
+  Train's 4-sentence "How this works" cut to one line, Readiness's doubled "automatic on
+  approval" trimmed, knowledge-card walls halved, Agent-mode voice fact stated once,
+  Train deck caption + Analytics funnel caption (both restated adjacent content) deleted,
+  Follow-ups/Sessions/Audience intros trimmed. Brand pitch panel: one-line blurb, rows show
+  number + full title only, "Section N · auto-saves".
+- Layout: Training's coaching-rules card moved below the deck panel.
+
+
 
 NexusRep is a real, runnable **Next.js (App Router) + TypeScript modular monolith**.
 The full brand console + HCP doctor experience are built and match the original

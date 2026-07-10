@@ -216,7 +216,7 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
                   {active?.name ?? data.selectedName ?? (activeId ? activeId : "Default agent")}
                   <span style={{ font: "500 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginLeft: 7 }}>{data.selected ? "your pick" : "deployment default"}</span>
                 </div>
-                <div style={hint}>This is the face doctors see on video calls. The agent&apos;s <strong>voice comes with them</strong> — picking a different agent from the gallery changes the voice too.</div>
+                <div style={hint}>This is the face doctors see on video calls.</div>
                 {data.selected && (
                   <span onClick={() => { if (!busy) void clearSelection(); }} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>
                     {busy === "clear" ? "Resetting…" : "↺ Use the default agent instead"}

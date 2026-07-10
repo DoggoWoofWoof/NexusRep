@@ -219,7 +219,7 @@ export function StudioScreen({ app }: { app: AppState }) {
           ))}
         </div>
         <span style={{ font: "500 12px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", flex: 1, minWidth: 220 }}>
-          {mode === "setup" ? "Answer DocNexus's questions on the left — it drafts each section on the right." : mode === "agent" ? "Pick who your rep is on video — face and voice. Browse the gallery or train your own from footage." : mode === "pitch" ? "Pick the deck, perfect the slide-by-slide script. Coach any line — approved text changes go through MLR." : mode === "train" ? "Free-flow practice: ask anything a doctor might, coach the answers. The deck follows the conversation." : mode === "rules" ? "Guardrails are locked. Drafts from coaching need review before they go live." : "Resolve the checklist, then submit for approval."}
+          {mode === "setup" ? "Answer DocNexus's questions on the left — it drafts each section on the right." : mode === "agent" ? "Pick who your rep is on video — face and voice. Browse the gallery or train your own from footage." : mode === "pitch" ? "Pick the deck, perfect the slide-by-slide script. Coach any line — approved text changes go through MLR." : mode === "train" ? "Free-flow practice: ask anything a doctor might, coach the answers. The deck follows the conversation." : mode === "rules" ? "Locked guardrails + the rules your coaching creates." : "Resolve the checklist, then submit for approval."}
         </span>
       </div>
 
@@ -517,7 +517,7 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
       <div style={{ position: "sticky", top: 14, background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 14, boxShadow: "var(--dn-shadow-card)", display: "flex", flexDirection: "column", overflow: "hidden", height: 620 }}>
         <div style={{ padding: "15px 17px", borderBottom: "1px solid var(--dn-border)", display: "flex", alignItems: "center", gap: 11, background: "linear-gradient(120deg, rgba(6,73,172,.05), rgba(124,58,237,.05))" }}>
           <div style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 10, background: "var(--dn-gradient-ai)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700 }}>✦</div>
-          <div style={{ lineHeight: 1.3 }}><div style={{ font: "600 13.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>DocNexus Setup Assistant</div><div style={{ font: "400 11px/1.2 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 3 }}>Drafts your rep — review on the right</div></div>
+          <div style={{ lineHeight: 1.3 }}><div style={{ font: "600 13.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>DocNexus Setup Assistant</div></div>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           {messages.map((m, i) => (
@@ -567,7 +567,7 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
 
       {/* Sections */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <span style={{ font: "600 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-muted)", padding: "2px 2px 4px" }}>DocNexus drafts each section as you answer. Open one to edit, then confirm.</span>
+        <span style={{ font: "600 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-muted)", padding: "2px 2px 4px" }}>Open a section to edit, then confirm it.</span>
         {SECTIONS.map((sec) => (
           <div key={sec.key} style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
             <div onClick={() => setOpen((o) => (o === sec.key ? null : sec.key))} style={{ padding: "14px 17px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}>
@@ -584,7 +584,7 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
                 )}
                 {sec.key === "knowledge" && (
                   <div style={{ paddingTop: 14 }}>
-                    <div style={{ font: "400 11.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 13 }}>Source files and live rep knowledge are separate. MLR approves documents and safety blocks; NexusRep splits active documents into retrievable passages for the rep.</div>
+                    <div style={{ font: "400 11.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 13 }}>MLR approves documents and safety blocks; approved passages become the rep&apos;s live knowledge.</div>
                     <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 13px", border: "1px dashed var(--dn-border)", borderRadius: 9, marginBottom: 13, cursor: "pointer", background: "var(--dn-surface-2)" }}>
                       <span style={{ font: "600 11.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>↑ Add source file</span>
                       <span style={{ font: "400 11px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Parsed into MLR review blocks before it can enter live knowledge</span>
@@ -678,7 +678,7 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
                       <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)" }}>Source library</span>
                       <span style={{ font: "400 10.5px/1.35 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{sourceDocs === null ? "Sample list — live library loading" : "Uploaded assets and MLR status"}</span>
                     </div>
-                    <div style={{ font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 8 }}>The launch deck ships already MLR-approved (the brand baseline). Everything you upload starts <strong>In MLR review</strong> — approve or reject each passage in the queue above; rejected documents can be removed.</div>
+                    <div style={{ font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 8 }}>The launch deck ships pre-approved. Uploads start <strong>In MLR review</strong> — approve or reject each passage in the queue above; rejected documents can be removed.</div>
                     {/* REAL uploaded/seeded assets from the content module; fixture only while loading. */}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
                       {(sourceDocs ?? KNOWLEDGE_ASSETS.map((c) => ({ id: c.mlrId, title: c.name, kind: c.kind, status: c.status.toLowerCase() }))).map((c) => (
@@ -1020,7 +1020,7 @@ function PitchMode() {
           {scriptMsg && script !== null && script.length > 0 && <div style={{ font: "500 10.5px/1.4 var(--dn-font-sans)", color: "#991b1b" }}>{scriptMsg}</div>}
         </div>
         <div style={{ padding: "10px 16px", borderTop: "1px solid var(--dn-border)", font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
-          Coaching a line here IS the change — it saves permanently into the script (no rules, no accept step). Only the locked approved medical text needs review: revise it via <strong>✎ Propose a revision</strong> on the right, which goes through MLR.
+          Coaching a line saves straight into the script — no approval step. Locked medical text is separate: <strong>View approved source</strong> on the right to check it or propose an MLR revision.
         </div>
       </div>
 
@@ -1339,7 +1339,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
         <ModelLab />
         <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)" }}>
           <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", marginBottom: 5 }}>How this works</div>
-          <div style={{ font: "400 11px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>This is <strong>free-flow practice</strong>: ask anything a doctor might, coach the answer, and <strong>Accept</strong> to save your coaching as rules. The deck (right) follows the conversation like it does for a doctor. Perfecting the slide-by-slide script lives in <strong onClick={() => app.setStudioMode("pitch")} style={{ color: "var(--dn-brand-light)", cursor: "pointer" }}>Pitch &amp; Script</strong>. The first card is the rep&apos;s <strong>opening line</strong> — coach that too.</div>
+          <div style={{ font: "400 11px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>Coach an answer and <strong>Accept</strong> — it becomes a rule. The slide-by-slide script lives in <strong onClick={() => app.setStudioMode("pitch")} style={{ color: "var(--dn-brand-light)", cursor: "pointer" }}>Pitch &amp; Script</strong>.</div>
         </div>
       </div>
 
@@ -1507,8 +1507,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
               <div style={{ height: 200, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "1px solid var(--dn-border)", background: "var(--dn-surface-2)" }}>
                 <SlideView focusId={followSlideId ?? activePlanSlideId} compact fill />
               </div>
-              <div style={{ font: "400 10px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 7 }}>Ask a question or click any rep line — the slide the doctor would see appears here.</div>
-            </div>
+                          </div>
           )}
         </div>
         {/* Rules from coaching — below the deck, next to the thread whose Accept creates them.
@@ -1708,6 +1707,8 @@ function OverviewPlanCard({
   showSlide?: boolean;
   rehearseLabel?: string;
 }) {
+  // Approved-source panel starts collapsed — see the comment at its render site.
+  const [showSource, setShowSource] = useState(false);
   const steps = snap?.plan.steps ?? [];
   const slides = snap?.slides ?? [];
   const step = steps.find((s) => s.id === activeStepId) ?? steps[0];
@@ -1795,12 +1796,20 @@ function OverviewPlanCard({
                   style={{ width: "100%", minHeight: 68, resize: "vertical", padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 11.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg)", background: "var(--dn-surface-2)" }}
                 />
               </label>
+              {/* The approved source passage the script is grounded in — collapsed by default:
+                  a faithful script line paraphrases its source, so showing both permanently
+                  reads as the same text twice. Expand to verify grounding or propose an MLR
+                  revision of the approved text itself. */}
               <div style={{ display: "grid", gap: 4 }}>
-                <span style={{ font: "600 8.5px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)" }}>What the rep says here — approved text (locked, changes go through MLR)</span>
-                <div style={{ padding: "8px 9px", borderRadius: 8, background: "#f8fafc", border: "1px dashed var(--dn-border)", font: "400 10.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
-                  {slides.find((s) => s.id === step.slideId)?.preview ?? "Select an approved slide to anchor this section."}
-                </div>
-                <ReviseApprovedText answerId={slides.find((s) => s.id === step.slideId)?.sourceId} />
+                <span onClick={() => setShowSource((v) => !v)} style={{ font: "600 8.5px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-brand-light)", cursor: "pointer" }}>{showSource ? "▾ Approved source — locked, changes go through MLR" : "▸ View approved source"}</span>
+                {showSource && (
+                  <>
+                    <div style={{ padding: "8px 9px", borderRadius: 8, background: "#f8fafc", border: "1px dashed var(--dn-border)", font: "400 10.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
+                      {slides.find((s) => s.id === step.slideId)?.preview ?? "Select an approved slide to anchor this section."}
+                    </div>
+                    <ReviseApprovedText answerId={slides.find((s) => s.id === step.slideId)?.sourceId} />
+                  </>
+                )}
               </div>
             </div>
 
@@ -1909,7 +1918,7 @@ function ReadinessMode({ snap, submitState, onSubmit }: { snap: StudioSnap | nul
           <div style={{ width: 92, height: 92, borderRadius: "50%", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", font: "700 26px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{pct}%</div>
         </div>
         <div style={{ font: "600 14px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Launch readiness</div>
-        <div style={{ font: "400 12px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", margin: "6px 0 18px" }}>{itemsLeft} items left. Launch and CRM sync run automatically on approval.</div>
+        <div style={{ font: "400 12px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", margin: "6px 0 18px" }}>{itemsLeft} items left.</div>
         {(() => {
           // Disabled unless launch-ready; and never re-submittable while submitting or once approved
           // (the old `!canLaunch && submitState !== "approved"` re-enabled the button after the 1st click).
