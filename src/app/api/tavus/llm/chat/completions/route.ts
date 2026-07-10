@@ -45,12 +45,18 @@ export async function POST(req: Request): Promise<Response> {
 
   // Run the HCP turn through our compliance-gated orchestrator.
   let reply = "I can only share approved information. Let me connect you with someone who can help.";
+  // ASR silence/noise artifacts ("[BLANK_AUDIO]", "[inaudible]", …) are not speech — the
+  // doctor said nothing. Answering them makes the agent reply to nobody and pollutes the
+  // transcript with a fallback turn. Stay silent and log nothing.
+  const isAsrArtifact = !text || /^\s*[[(]\s*(?:blank[_ ]?audio|inaudible|silence|no[_ ]?speech|noise|music|applause|laughter)\s*[\])]\s*$/i.test(text);
   // Tavus fires a warm-up "connectivity check" at conversation start — answer it
   // so the check passes, but do NOT log it as an HCP turn (keeps the transcript clean).
   const isProbe = /connectivity check|automated .*check|test message/i.test(text);
-  if (text && isProbe) {
+  if (isAsrArtifact) {
+    reply = "";
+  } else if (isProbe) {
     reply = "Connection confirmed.";
-  } else if (text) {
+  } else {
     const c = await getContainer();
     // Tavus supplies ASR + avatar transport only. The actual turn goes through the same
     // ConversationService used by typed chat, so mic and chat share one NexusRep path:

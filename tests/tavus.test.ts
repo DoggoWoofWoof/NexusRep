@@ -3,6 +3,7 @@ import { env } from "@lib/env";
 import { TavusRealtimeProvider } from "@modules/vendors";
 import { getRealtimeProvider } from "@modules/vendors";
 import { POST as llmCompletions } from "@/app/api/tavus/llm/chat/completions/route";
+import { getContainer } from "@lib/container";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -205,5 +206,38 @@ describe("Tavus agent catalog (vendor replicas -> canonical AgentSummary)", () =
     const created = await tavus.createAgent({ name: "Dr. Patel", trainVideoUrl: "https://cdn/train.mp4" });
     expect(sent).toEqual({ replica_name: "Dr. Patel", train_video_url: "https://cdn/train.mp4" });
     expect(created).toMatchObject({ id: "rnew1", kind: "personal", status: "training" });
+  });
+});
+
+// ── ASR artifacts: silence tokens never reach the pipeline or the transcript ──
+describe("Tavus LLM endpoint ignores ASR artifacts", () => {
+  beforeAll(() => {
+    (env as { tavusLlmKey: string }).tavusLlmKey = "test-llm-key";
+  });
+  afterAll(() => {
+    (env as { tavusLlmKey: string }).tavusLlmKey = "";
+  });
+  const call = (userText: string) =>
+    llmCompletions(new Request("http://localhost/api/tavus/llm/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", authorization: "Bearer test-llm-key" },
+      body: JSON.stringify({ messages: [{ role: "user", content: userText }], stream: false }),
+    }));
+
+  it("[BLANK_AUDIO] gets an EMPTY reply (the agent stays quiet) and logs nothing", async () => {
+    const c = await getContainer();
+    const before = (await c.sessions.list()).reduce((n, s) => n + s.turns.length, 0);
+    const res = await call("[BLANK_AUDIO]");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { choices: { message: { content: string } }[] };
+    expect(json.choices[0]!.message.content).toBe("");
+    const after = (await c.sessions.list()).reduce((n, s) => n + s.turns.length, 0);
+    expect(after).toBe(before); // no HCP/rep turns logged for silence
+  });
+
+  it("real speech still flows through the pipeline", async () => {
+    const res = await call("What is Milvexian?");
+    const json = (await res.json()) as { choices: { message: { content: string } }[] };
+    expect(json.choices[0]!.message.content.length).toBeGreaterThan(0);
   });
 });

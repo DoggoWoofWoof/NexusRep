@@ -45,6 +45,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   const startedRef = useRef(false);
   const [stage, setStage] = useState<Stage>("loading");
   const [note, setNote] = useState("");
+  const [muted, setMuted] = useState(false);
 
   useEffect(() => {
     onRepTurnRef.current = onRepTurn;
@@ -254,7 +255,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   return (
     <div style={container}>
       <video ref={videoRef} autoPlay playsInline muted={false} style={{ width: "100%", height: "100%", objectFit: "cover", display: stage === "live" ? "block" : "none" }} />
-      <audio ref={audioRef} autoPlay />
+      <audio ref={audioRef} autoPlay muted={muted} />
       {stage !== "live" && (
         <div style={{ color: "#cfe0f6", textAlign: "center", padding: 20, fontSize: 13, maxWidth: 420 }}>
           {stage === "loading" && "Starting the video rep…"}
@@ -267,7 +268,12 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
         <div style={{ position: "absolute", top: 8, left: 8, right: 8, background: "rgba(180,83,9,.9)", color: "#fff", fontSize: 11, padding: "5px 9px", borderRadius: 7 }}>{note}</div>
       )}
       {!bare && (
-        <button onClick={onClose} style={{ position: "absolute", top: 8, right: 8, background: "rgba(255,255,255,.15)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>End video</button>
+        <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6 }}>
+          {stage === "live" && (
+            <button onClick={() => setMuted((m) => !m)} aria-label={muted ? "Unmute" : "Mute"} title={muted ? "Unmute the agent" : "Mute the agent"} style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>{muted ? "🔇" : "🔊"}</button>
+          )}
+          <button onClick={onClose} style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>End video</button>
+        </div>
       )}
     </div>
   );

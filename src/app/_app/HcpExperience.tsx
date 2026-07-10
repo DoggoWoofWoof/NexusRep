@@ -123,6 +123,11 @@ export function HcpExperience({ app }: { app?: AppState }) {
     cueSlide(turn.detailAidSlideId, text);
   }
 
+  // Monotonic playback generation: each new ask bumps it, so an in-flight multi-segment
+  // playback (or a long spoken answer) stops deferring to a stale turn. This is what lets
+  // the doctor type MID-ANSWER — the send button no longer waits out the speech.
+  const playGenRef = useRef(0);
+
   async function playRepSegment(text: string) {
     if (videoOn) {
       videoAgentRef.current?.speak(text);
@@ -135,6 +140,10 @@ export function HcpExperience({ app }: { app?: AppState }) {
   async function ask(q: string) {
     const text = q.trim();
     if (!text || pending) return;
+    // Barge-in: a new question interrupts whatever the rep is still saying.
+    const gen = ++playGenRef.current;
+    voiceRef.current?.cancel();
+    setSpeaking(false);
     setInput("");
     setPending(true);
     setMsgs((m) => [...m, { role: "hcp", text }]);
@@ -152,7 +161,9 @@ export function HcpExperience({ app }: { app?: AppState }) {
         });
         const data = (await res.json()) as { sessionId?: string; segments?: OverviewSegment[] };
         if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
+        setPending(false); // input is live again — playback below is interruptible
         for (const segment of data.segments ?? []) {
+          if (playGenRef.current !== gen) return; // superseded by a newer question
           setMsgs((m) => [...m, { role: "rep", text: segment.response }]);
           cueSlide(segment.detailAidSlideId, segment.response);
           await playRepSegment(segment.response);
@@ -172,9 +183,12 @@ export function HcpExperience({ app }: { app?: AppState }) {
       // the current slide up, like a person.
       cueSlide(data.detailAidSlideId, data.response);
       if (data.followUp) setNotice(followUpNotice(data.followUp));
-      // Voice: the live replica speaks it (echo) when on video; otherwise browser/3D TTS.
-      if (videoOn) await playRepSegment(data.response);
-      else void speak(data.response);
+      setPending(false); // the answer is on screen — speech should never block the input
+      // Voice: the live agent speaks it (echo) when on video; otherwise browser/3D TTS.
+      if (playGenRef.current === gen) {
+        if (videoOn) void playRepSegment(data.response);
+        else void speak(data.response);
+      }
     } finally { setPending(false); }
   }
 
@@ -196,7 +210,8 @@ export function HcpExperience({ app }: { app?: AppState }) {
       if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
       setMsgs((m) => [...m, { role: "rep", text: data.response }]);
       cueSlide(data.detailAidSlideId, data.response);
-      if (videoOn) await playRepSegment(data.response);
+      setPending(false);
+      if (videoOn) void playRepSegment(data.response);
       else void speak(data.response);
     } finally {
       setPending(false);
@@ -227,8 +242,14 @@ export function HcpExperience({ app }: { app?: AppState }) {
   const askBar = (label: string) => (
     <div style={{ display: "flex", gap: 8, marginBottom: 11 }}>
       <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void ask(input); }} placeholder={listening ? "Listening…" : videoOn ? "Type, or talk to the rep…" : "Type or tap the mic to talk…"} style={{ flex: 1, padding: "11px 13px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 13px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
-      {micSupported && !videoOn && (
-        <button type="button" onClick={toggleMic} aria-label="Talk" title="Ask by voice" style={{ padding: "11px 13px", background: listening ? "var(--dn-danger)" : "#fff", color: listening ? "#fff" : "var(--dn-fg)", border: "1px solid var(--dn-border)", borderRadius: 9, fontSize: 15, cursor: "pointer" }}>🎤</button>
+      {micSupported && (
+        <button
+          type="button"
+          onClick={videoOn ? undefined : toggleMic}
+          aria-label="Talk"
+          title={videoOn ? "The video call is already listening — just speak" : "Ask by voice"}
+          style={{ padding: "11px 13px", background: listening ? "var(--dn-danger)" : "#fff", color: listening ? "#fff" : videoOn ? "var(--dn-fg-subtle)" : "var(--dn-fg)", border: "1px solid var(--dn-border)", borderRadius: 9, fontSize: 15, cursor: videoOn ? "default" : "pointer", opacity: videoOn ? 0.6 : 1 }}
+        >🎤</button>
       )}
       <button onClick={() => void ask(input)} disabled={pending} style={{ padding: "11px 18px", background: "var(--dn-brand-base)", color: "#fff", border: "none", borderRadius: 9, font: "600 13px/1 var(--dn-font-sans)", cursor: "pointer" }}>{pending ? "…" : label}</button>
     </div>
