@@ -316,7 +316,7 @@ export class TargetingService {
 
 export {
   getAudienceProvider,
-  loadCohort,
+  loadCohort, audienceQueryFor,
   MILVEXIAN_COHORT,
   MILVEXIAN_AUDIENCE_QUERY,
   DocNexusAudienceProvider,

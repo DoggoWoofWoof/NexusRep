@@ -26,6 +26,10 @@ export interface BrandClinicalContext {
   market: string;
   /** Investigational compound → clinical specifics route to Medical Information. */
   investigational: boolean;
+  /** Targeting inputs for the audience query — a brand that declares these never
+   *  inherits another brand's specialties/indications. */
+  specialties?: string[];
+  diagnosisCodes?: string[];
 }
 
 /** The colours a brand's slides/chrome render with. */
@@ -89,7 +93,7 @@ export interface BrandProfile {
   deck: DeckSlide[];
   deckPptxUrl: string;
   /** Campaign chrome copy for the brand console header. */
-  campaign: { title: string; subtitle: string };
+  campaign: BrandCampaign;
   clinical: BrandClinicalContext;
   /** Seed approved answers (demo). In production these come from content ingestion. */
   approvedAnswers: BrandApprovedAnswer[];
@@ -121,13 +125,31 @@ export interface PublicBrand {
   greeting: string;
   deck: DeckSlide[];
   deckPptxUrl: string;
-  campaign: { title: string; subtitle: string };
+  campaign: BrandCampaign;
+  /** Persona language word ("english") — drives the doctor view's ASR/TTS locale. */
+  language: string;
   tryQuestions: string[];
   talkingPoints: string[];
   indication: string;
   investigational: boolean;
   /** Brand product/program names — client-side overview detection + copy. */
   productTerms: string[];
+}
+
+export interface BrandCampaign {
+  title: string;
+  subtitle: string;
+  /** When set, "Day N of M" is COMPUTED from the clock and appended to the subtitle —
+   *  a frozen day counter in copy rots. NEXUSREP_DEMO_DATE pins "today" (demos, visual tests). */
+  startDate?: string;
+  lengthDays?: number;
+}
+
+function withCampaignProgress(c: BrandCampaign): BrandCampaign {
+  if (!c.startDate || !c.lengthDays) return c;
+  const today = process.env.NEXUSREP_DEMO_DATE ? new Date(process.env.NEXUSREP_DEMO_DATE) : new Date();
+  const day = Math.min(Math.max(Math.floor((today.getTime() - new Date(c.startDate).getTime()) / 86_400_000) + 1, 1), c.lengthDays);
+  return { ...c, subtitle: `${c.subtitle} · Day ${day} of ${c.lengthDays}` };
 }
 
 export function toPublicBrand(p: BrandProfile): PublicBrand {
@@ -139,7 +161,8 @@ export function toPublicBrand(p: BrandProfile): PublicBrand {
     greeting: p.greeting,
     deck: p.deck,
     deckPptxUrl: p.deckPptxUrl,
-    campaign: p.campaign,
+    campaign: withCampaignProgress(p.campaign),
+    language: p.persona.language,
     tryQuestions: p.tryQuestions,
     talkingPoints: p.talkingPoints,
     indication: p.clinical.indication,
@@ -181,9 +204,18 @@ export const MILVEXIAN_PROFILE: BrandProfile = {
   deckPptxUrl: "/decks/milvexian.pptx",
   campaign: {
     title: "Milvexian — LIBREXIA Whitespace Activation",
-    subtitle: "Factor XIa inhibitor · cardiology · US LIBREXIA campaign · Day 18 of 92",
+    subtitle: "Factor XIa inhibitor · cardiology · US LIBREXIA campaign", startDate: "2026-06-23", lengthDays: 92,
   },
-  clinical: { audience: "cardiology", indication: "anticoagulation", market: "US", investigational: true },
+  clinical: {
+    audience: "cardiology",
+    indication: "anticoagulation",
+    market: "US",
+    investigational: true,
+    // LIBREXIA targeting: cardiology-family specialties treating ACS (I21/I24),
+    // atrial fibrillation (I48) and ischemic stroke (I63).
+    specialties: ["Cardiology", "Interventional Cardiology", "Cardiac Electrophysiology", "Vascular Neurology"],
+    diagnosisCodes: ["I48", "I21", "I24", "I63"],
+  },
   approvedAnswers: [
     {
       id: "ans_title",

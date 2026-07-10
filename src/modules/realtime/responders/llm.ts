@@ -5,6 +5,7 @@
  * the user can barge in. Available only when keys/base URLs are configured.
  */
 
+import { env } from "@lib/env";
 import { RESPONDER_SYSTEM, type Responder } from "./types";
 
 function anthropicModel(): string {
@@ -23,7 +24,7 @@ export const claudeResponder: Responder = {
     const stream = client.messages.stream(
       {
         model: anthropicModel(),
-        max_tokens: 400,
+        max_tokens: env.composerMaxTokens,
         system: RESPONDER_SYSTEM,
         messages: [{ role: "user", content: prompt }],
       },
@@ -63,7 +64,7 @@ function makeOpenAiCompatibleResponder(cfg: CompatCfg): Responder {
         body: JSON.stringify({
           model: cfg.model(),
           stream: true,
-          max_tokens: 400,
+          max_tokens: env.composerMaxTokens,
           messages: [
             { role: "system", content: RESPONDER_SYSTEM },
             { role: "user", content: prompt },

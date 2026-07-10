@@ -26,6 +26,16 @@ export const MILVEXIAN_AUDIENCE_QUERY: AudienceQuery = {
   limit: 50,
 };
 
+/** Build the targeting query from the brand's clinical context. The Milvexian query is
+ *  the fallback ONLY for profiles that don't declare their own targeting — a brand with
+ *  specialties/diagnosisCodes set never inherits another brand's audience. */
+export function audienceQueryFor(clinical?: { specialties?: string[]; diagnosisCodes?: string[] }): AudienceQuery {
+  if (clinical?.specialties?.length || clinical?.diagnosisCodes?.length) {
+    return { specialties: clinical.specialties ?? [], diagnosisCodes: clinical.diagnosisCodes ?? [], limit: 50 };
+  }
+  return MILVEXIAN_AUDIENCE_QUERY;
+}
+
 export function getAudienceProvider(): AudienceProvider {
   if (env.audienceProvider === "docnexus") {
     return new DocNexusAudienceProvider({

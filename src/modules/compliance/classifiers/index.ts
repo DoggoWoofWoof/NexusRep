@@ -110,11 +110,15 @@ export function mergeWithKeywordSignals(llm: RiskClassification, keyword: RiskCl
   }
 
   if (!hasHighSafetyRisk(merged) && keyword.intent === "product_info" && keyword.confidence >= 0.7) {
-    const recovered = { ...merged, medicalInfoRisk: Math.min(merged.medicalInfoRisk, 0.3) };
-    if (merged.intent === "other" || merged.confidence < 0.6 || merged.medicalInfoRisk >= 0.6) {
-      return { ...recovered, intent: "product_info", confidence: Math.max(recovered.confidence, keyword.confidence), isiRequired: true };
+    // Recovery exists for LLM FAILURES (low-confidence "other" fallbacks) — the keyword
+    // lexicon recognizing the drug name must never lower a CONFIDENT LLM's deliberate
+    // medical-information escalation, or deep clinical questions get answered directly
+    // instead of routed to Medical Information.
+    const llmUnreliable = merged.intent === "other" || merged.confidence < 0.6;
+    if (llmUnreliable) {
+      return { ...merged, medicalInfoRisk: Math.min(merged.medicalInfoRisk, 0.3), intent: "product_info", confidence: Math.max(merged.confidence, keyword.confidence), isiRequired: true };
     }
-    return recovered;
+    return merged;
   }
 
   return merged;

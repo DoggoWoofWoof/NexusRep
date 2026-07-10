@@ -35,9 +35,24 @@ export interface AuditRecord {
 export class AuditService {
   private readonly log: Repository<AuditRecord>;
   private seq = 0;
+  /** seq must continue from the DURABLE store's max — a restart used to reset it to 0,
+   *  interleaving new events with old ones when forSession sorts by seq. */
+  private seqSeeded: Promise<void> | null = null;
 
   constructor(repos: RepositoryFactory = new MemoryRepositoryFactory()) {
     this.log = repos.createAppendOnly<AuditRecord>("audit");
+  }
+
+  private ensureSeq(): Promise<void> {
+    if (!this.seqSeeded) {
+      this.seqSeeded = this.log
+        .list()
+        .then((rows) => {
+          for (const r of rows) if (typeof r.seq === "number" && r.seq >= this.seq) this.seq = r.seq + 1;
+        })
+        .catch(() => undefined); // empty/new store — start at 0
+    }
+    return this.seqSeeded;
   }
 
   async record(
@@ -47,6 +62,7 @@ export class AuditService {
     turnId?: TurnId,
     seed?: string,
   ): Promise<AuditRecord> {
+    await this.ensureSeq();
     const rec: AuditRecord = {
       id: newId<"audit_event_id">("aud", seed) as AuditEventId,
       sessionId,

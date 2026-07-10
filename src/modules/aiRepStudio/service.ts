@@ -90,6 +90,27 @@ function sameRule(a: TrainingRule, b: TrainingRule): boolean {
 
 export class StudioService {
   private readonly states: Repository<StudioState>;
+  /** Per-rep write chains. Every mutator is read-modify-write on the same StudioState
+   *  (rules array, draft, plan), so two concurrent studio POSTs could read the same
+   *  state and silently drop each other's write — including a compliance guardrail.
+   *  Same hazard + fix as SessionService. Internal composite ops call the *Core
+   *  variants so a serialized op never re-enters the chain (deadlock). */
+  private readonly writeChains = new Map<string, Promise<unknown>>();
+
+  private serialize<T>(aiRepId: AiRepId, op: () => Promise<T>): Promise<T> {
+    const key = String(aiRepId);
+    const prev = this.writeChains.get(key) ?? Promise.resolve();
+    const next = prev.then(op, op); // run even if the prior op failed
+    const tail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.writeChains.set(key, tail);
+    void tail.then(() => {
+      if (this.writeChains.get(key) === tail) this.writeChains.delete(key);
+    });
+    return next;
+  }
 
   constructor(repos: RepositoryFactory = new MemoryRepositoryFactory()) {
     this.states = repos.create<StudioState>("studio");
@@ -120,12 +141,14 @@ export class StudioService {
 
   /** Persist the Studio's video-agent selection (Agent gallery). null clears back to default. */
   async setAppearance(aiRepId: AiRepId, appearance: { agentId: string | null; agentName?: string | null }): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, async () => {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
     const updated = await this.states.update(aiRepId, {
       appearance: { agentId: appearance.agentId, agentName: appearance.agentName ?? null },
     });
     return updated ? snapshot(updated) : null;
+    });
   }
 
   async get(aiRepId: AiRepId): Promise<StudioSnapshot | null> {
@@ -134,10 +157,12 @@ export class StudioService {
   }
 
   async setGuidedOverviewPlan(aiRepId: AiRepId, plan: PresentationPlan): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, async () => {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
     const updated = await this.states.update(aiRepId, { guidedOverview: cleanPlan(plan) });
     return updated ? snapshot(updated) : null;
+    });
   }
 
   /**
@@ -146,6 +171,7 @@ export class StudioService {
    * doctor's shareable /hcp?hcp=<id> link from it. Fails safe: cannot launch unready.
    */
   async launch(aiRepId: AiRepId, hcpIds: string[]): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, async () => {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
     if (!snapshot(s).readiness.canLaunch) return snapshot(s);
@@ -153,10 +179,12 @@ export class StudioService {
     if (!unique.length) return snapshot(s);
     const updated = await this.states.update(aiRepId, { activation: { hcpIds: unique, launchedAt: new Date().toISOString() } });
     return updated ? snapshot(updated) : null;
+    });
   }
 
   /** Apply a setup answer and persist. Some keys also drive BEHAVIOR (not just the draft). */
   async answer(aiRepId: AiRepId, questionKey: string, value: string): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, async () => {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
     // voice_style is persona config, not just a draft field.
@@ -170,7 +198,7 @@ export class StudioService {
       let snap: StudioSnapshot | null = snapshot(updated);
       for (const topic of value.split(/[,;\n]+/).map((t) => t.trim()).filter(Boolean).slice(0, 20)) {
         snap =
-          (await this.addGuardrail(aiRepId, {
+          (await this.addGuardrailCore(aiRepId, {
             type: "blocked_topic",
             scope: "campaign",
             topic,
@@ -181,6 +209,7 @@ export class StudioService {
       return snap;
     }
     return updated ? snapshot(updated) : null;
+    });
   }
 
   /**
@@ -189,15 +218,21 @@ export class StudioService {
    * as a side effect of a free-text answer.
    */
   async setSectionStatus(aiRepId: AiRepId, section: SectionKey, status: SectionStatus): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, async () => {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
     const draft: SetupDraft = { ...s.draft, sections: s.draft.sections.map((sec) => (sec.key === section ? { ...sec, status } : sec)) };
     const updated = await this.states.update(aiRepId, { draft });
     return updated ? snapshot(updated) : null;
+    });
   }
 
   /** Turn coaching feedback into a persisted (compliance-aware) draft rule. */
   async addRule(aiRepId: AiRepId, input: GenerateRuleInput): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, () => this.addRuleCore(aiRepId, input));
+  }
+
+  private async addRuleCore(aiRepId: AiRepId, input: GenerateRuleInput): Promise<StudioSnapshot | null> {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
     const rule = generateRule(input);
@@ -214,6 +249,13 @@ export class StudioService {
    * DRAFT (persona_style is never compliance-sensitive), so it still needs review before going live.
    */
   async addStyleRule(
+    aiRepId: AiRepId,
+    input: { instruction: string; sourceFeedback: string; scope?: RuleScope; appliesToHcpId?: string; sourceMessage?: string; seed?: string },
+  ): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, () => this.addStyleRuleCore(aiRepId, input));
+  }
+
+  private async addStyleRuleCore(
     aiRepId: AiRepId,
     input: { instruction: string; sourceFeedback: string; scope?: RuleScope; appliesToHcpId?: string; sourceMessage?: string; seed?: string },
   ): Promise<StudioSnapshot | null> {
@@ -245,13 +287,14 @@ export class StudioService {
     aiRepId: AiRepId,
     input: { sensitive: string[]; style: string[]; compactedInstruction?: string; scope?: RuleScope; appliesToHcpId?: string; sourceMessage?: string },
   ): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, async () => {
     let snap = await this.get(aiRepId);
     if (!snap) return null;
     for (const note of input.sensitive) {
-      snap = (await this.addRule(aiRepId, { feedback: note, scope: input.scope, appliesToHcpId: input.appliesToHcpId, sourceMessage: input.sourceMessage })) ?? snap;
+      snap = (await this.addRuleCore(aiRepId, { feedback: note, scope: input.scope, appliesToHcpId: input.appliesToHcpId, sourceMessage: input.sourceMessage })) ?? snap;
     }
     if (input.style.length && input.compactedInstruction) {
-      snap = (await this.addStyleRule(aiRepId, {
+      snap = (await this.addStyleRuleCore(aiRepId, {
         instruction: input.compactedInstruction,
         sourceFeedback: input.style.join(" / "),
         scope: input.scope,
@@ -260,10 +303,12 @@ export class StudioService {
       })) ?? snap;
     }
     return snap;
+    });
   }
 
   /** Collapse duplicate coaching rules (same type/topic/feedback), keeping the first. */
   async dedupeRules(aiRepId: AiRepId): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, async () => {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
     const kept: TrainingRule[] = [];
@@ -271,10 +316,18 @@ export class StudioService {
     if (kept.length === s.rules.length) return snapshot(s);
     const updated = await this.states.update(aiRepId, { rules: kept });
     return updated ? snapshot(updated) : null;
+    });
   }
 
   /** Seed a locked compliance guardrail (active, not coaching-derived). */
   async addGuardrail(
+    aiRepId: AiRepId,
+    input: { type: RuleType; scope: RuleScope; instruction: string; appliesToHcpId?: string; topic?: string; seed?: string },
+  ): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, () => this.addGuardrailCore(aiRepId, input));
+  }
+
+  private async addGuardrailCore(
     aiRepId: AiRepId,
     input: { type: RuleType; scope: RuleScope; instruction: string; appliesToHcpId?: string; topic?: string; seed?: string },
   ): Promise<StudioSnapshot | null> {
@@ -300,19 +353,23 @@ export class StudioService {
   }
 
   async setRuleStatus(aiRepId: AiRepId, ruleId: string, status: RuleStatus): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, async () => {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
     const rules = s.rules.map((r) => (r.id === ruleId ? { ...r, status } : r));
     const updated = await this.states.update(aiRepId, { rules });
     return updated ? snapshot(updated) : null;
+    });
   }
 
   /** Transition rep state (draft → in_review → ready → live). Launch requires canLaunch. */
   async setRepState(aiRepId: AiRepId, next: RepState): Promise<StudioSnapshot | null> {
+    return this.serialize(aiRepId, async () => {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
     if (next === "live" && !snapshot(s).readiness.canLaunch) return snapshot(s); // fail safe: cannot launch unready
     const updated = await this.states.update(aiRepId, { rep: { ...s.rep, state: next } });
     return updated ? snapshot(updated) : null;
+    });
   }
 }

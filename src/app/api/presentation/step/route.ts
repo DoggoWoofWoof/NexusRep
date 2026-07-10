@@ -7,7 +7,7 @@
 import { NextResponse } from "next/server";
 import { getContainer } from "@lib/container";
 import { resolveSessionAndHcp } from "@lib/resolve-session";
-import { complianceGate, type PolicyRoute, type RiskClassification } from "@modules/compliance";
+import { complianceGate, type PolicyRoute, type RiskClassification, classify, route as policyRouteFor } from "@modules/compliance";
 import { presentationGuidance } from "@modules/rules";
 import type { PresentationAction } from "@modules/content";
 
@@ -63,8 +63,42 @@ export async function POST(req: Request): Promise<NextResponse> {
   const { sessionId, hcpId } = await resolveSessionAndHcp(c, body);
 
   const requestText = displayText || hcpText(action, query);
-  await c.sessions.appendTurn(sessionId, { speaker: "hcp", text: requestText });
   const t0 = Date.now();
+
+  // The walkthrough must never bypass the policy router: user-supplied text (a typed
+  // jump query or the display text) can carry an adverse-event mention or an off-label
+  // ask even when the client treated it as a deck command. Synthetic action strings
+  // ("Next slide.") stay on the zero-risk constant; anything the HCP actually typed is
+  // classified, and risky turns leave the deck flow for the REAL pipeline (AE→PV,
+  // off-label refusal→MSL, medical info, human handoff — with follow-ups and audit).
+  const supplied = Boolean(displayText || (action === "jump" && query?.trim()));
+  const risk = supplied ? classify(requestText) : PRESENTATION_CLASSIFICATION;
+  const riskPolicy = policyRouteFor(risk);
+  if (riskPolicy !== "approved_answer" && riskPolicy !== "fallback") {
+    const { output } = await c.conversation.turn({
+      sessionId,
+      hcpId,
+      audience: c.demo.audience,
+      indication: c.demo.indication,
+      market: c.demo.market,
+      investigational: c.demo.investigational,
+      text: requestText,
+    });
+    c.metrics.record({ latencyMs: Date.now() - t0, route: output.route });
+    return NextResponse.json({
+      route: output.route,
+      response: output.responseText,
+      isiDelivered: output.isiAttached,
+      detailAidSlideId: output.detailAidSlideId ?? null,
+      sourceIds: (output.sourceIds ?? []).map(String),
+      decision: "approved",
+      reasons: [],
+      sessionId,
+      skill: "nexusrep_presentation",
+      step: null,
+    });
+  }
+  await c.sessions.appendTurn(sessionId, { speaker: "hcp", text: requestText });
 
   const rules = (await c.studio.get(c.demo.aiRepId))?.rules ?? [];
   const guidance = presentationGuidance(rules, { hcpId });
@@ -82,7 +116,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   let detailAidSlideId: string | undefined;
   let isiAttached = false;
   let requiredSafetyText: string | undefined;
-  let classification = PRESENTATION_CLASSIFICATION;
+  let classification = risk;
 
   if (step) {
     route = "approved_answer";
@@ -90,7 +124,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     detailAidSlideId = step.detailAidSlideId ? String(step.detailAidSlideId) : undefined;
     const isi = await c.content.latestActiveSafetyStatement();
     const includesSafetyText = Boolean(isi && normalized(step.text).includes(normalized(isi.text)));
-    classification = { ...PRESENTATION_CLASSIFICATION, isiRequired: includesSafetyText };
+    classification = { ...risk, isiRequired: includesSafetyText };
     requiredSafetyText = includesSafetyText ? isi?.text : undefined;
     isiAttached = includesSafetyText;
     responseText = step.text;

@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import {
   COMMAND_KPIS,
+  DEMO_USER,
   TONE_COLORS,
 } from "./data";
 import { BrandScreens } from "./BrandScreens";
@@ -154,10 +155,10 @@ export function NexusRepApp() {
           </div>
         </div>
         <div style={{ padding: navCollapsed ? "10px 8px" : "11px 14px", borderTop: "1px solid rgba(255,255,255,.08)", display: "flex", alignItems: "center", justifyContent: navCollapsed ? "center" : "flex-start", gap: 10 }}>
-          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "var(--dn-brand-light)", display: "flex", alignItems: "center", justifyContent: "center", font: "600 12px/1 var(--dn-font-sans)", color: "#fff" }}>JR</div>
+          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "var(--dn-brand-light)", display: "flex", alignItems: "center", justifyContent: "center", font: "600 12px/1 var(--dn-font-sans)", color: "#fff" }}>{DEMO_USER.initials}</div>
           {!navCollapsed && <div style={{ lineHeight: 1.3 }}>
-            <div style={{ font: "600 12px/1.2 var(--dn-font-sans)", color: "#fff" }}>J. Rivera</div>
-            <div style={{ font: "400 11px/1.2 var(--dn-font-sans)", color: "rgba(255,255,255,.5)" }}>Brand Lead</div>
+            <div style={{ font: "600 12px/1.2 var(--dn-font-sans)", color: "#fff" }}>{DEMO_USER.shortName}</div>
+            <div style={{ font: "400 11px/1.2 var(--dn-font-sans)", color: "rgba(255,255,255,.5)" }}>{DEMO_USER.role}</div>
           </div>}
         </div>
       </aside>
@@ -276,15 +277,16 @@ function useCommandKpis(): { kpis: CommandKpi[]; live: boolean } {
         if (!alive || !json.data) return;
         const d = json.data;
         const find = (cat: string, key: string) => (d[cat] ?? []).find((m) => m.key === key);
+        const matches = [
+          find("engagement", "completed"),
+          find("targeting", "high_opp"),
+          find("crm_ops", "followups"),
+          find("compliance", "isi"),
+          find("content", "gaps"),
+          find("crm_ops", "crm_success"),
+        ];
         const derived: CommandKpi[] = COMMAND_KPIS.map((fallback, i) => {
-          const m = [
-            find("engagement", "completed"),
-            find("targeting", "high_opp"),
-            find("crm_ops", "followups"),
-            find("compliance", "isi"),
-            find("content", "gaps"),
-            find("crm_ops", "crm_success"),
-          ][i];
+          const m = matches[i];
           const label = [
             "Sessions completed", "Target HCPs", "Follow-ups created",
             "ISI delivery", "Content gaps", "CRM export success",
@@ -294,7 +296,9 @@ function useCommandKpis(): { kpis: CommandKpi[]; live: boolean } {
             : fallback;
         });
         setKpis(derived);
-        setLive(true);
+        // The "sample data" pill must show if ANY tile fell back to the fixture — a
+        // partially-live analytics response otherwise renders fixture numbers as real.
+        setLive(matches.every(Boolean));
       } catch {
         /* keep static fallback — the caller labels it as sample data */
       }
@@ -331,7 +335,7 @@ function OverviewScreen({ app }: { app: AppState }) {
             <span style={{ font: "600 11px/1.2 var(--dn-font-sans)", letterSpacing: ".08em", textTransform: "uppercase", color: "var(--dn-brand-light)" }}>Command Center</span>
             {!kpisLive && samplePill}
           </div>
-          <h1 style={{ font: "600 26px/1.2 var(--dn-font-sans)", letterSpacing: "-0.02em", margin: 0 }}>Good morning, Jordan</h1>
+          <h1 style={{ font: "600 26px/1.2 var(--dn-font-sans)", letterSpacing: "-0.02em", margin: 0 }}>{`Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}, ${DEMO_USER.firstName}`}</h1>
           <div style={{ font: "400 13px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginTop: 5 }}>{brand?.campaign.title ?? "AI Rep Studio"}</div>
         </div>
         <div style={{ display: "flex", gap: 9 }}>

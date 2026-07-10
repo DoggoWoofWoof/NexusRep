@@ -27,6 +27,22 @@ export interface ClientVoiceProvider {
 }
 
 /** Estimate speaking time (~150 wpm) — used for pacing fallback and as a safety cap. */
+/** Session-wide speech locale. The brand persona declares a language word ("english");
+ *  the HCP view maps it here once loaded — recognizers read it at START time, so the
+ *  async brand fetch can never leave a stale locale baked into a constructor. */
+let speechLocale = "en-US";
+const SPEECH_LOCALES: Record<string, string> = {
+  english: "en-US", spanish: "es-ES", french: "fr-FR", german: "de-DE", italian: "it-IT",
+  portuguese: "pt-BR", japanese: "ja-JP", chinese: "zh-CN", hindi: "hi-IN",
+};
+export function setSpeechLanguage(language?: string): void {
+  const l = (language ?? "").trim().toLowerCase();
+  speechLocale = SPEECH_LOCALES[l] ?? (/^[a-z]{2}(-[A-Za-z]{2})?$/.test(l) ? l : "en-US");
+}
+export function speechVoiceHint(): string {
+  return speechLocale.slice(0, 2);
+}
+
 export function estimateSpeechMs(text: string): number {
   const words = text.trim().split(/\s+/).filter(Boolean).length;
   return Math.max(700, Math.round((words / 2.5) * 1000));
@@ -153,7 +169,7 @@ export class BrowserRecognizer implements ClientRecognizer {
       return;
     }
     const rec = new Ctor();
-    rec.lang = "en-US";
+    rec.lang = speechLocale;
     rec.interimResults = false;
     rec.continuous = false;
     rec.onresult = (e) => {

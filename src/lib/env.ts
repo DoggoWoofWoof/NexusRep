@@ -23,6 +23,13 @@ const docnexusPlatformEmail = process.env.DOCNEXUS_PLATFORM_EMAIL ?? "";
 const docnexusPlatformPassword = process.env.DOCNEXUS_PLATFORM_PASSWORD ?? "";
 const docnexusHasPlatformLogin = Boolean(docnexusPlatformEmail && docnexusPlatformPassword);
 const docnexusIdTokenFile = process.env.DOCNEXUS_ID_TOKEN_FILE ?? (docnexusHasPlatformLogin ? ".docnexus-id-token.json" : "");
+/** Parse a numeric env var; a malformed value falls back instead of becoming NaN
+ *  (NaN reached setTimeout as delay 0 and instantly aborted the claims fetch). */
+function numeric(raw: string | undefined, fallback: number): number {
+  const n = Number(raw ?? fallback);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 const tavusApiKey = process.env.TAVUS_API_KEY ?? "";
 
 export const env = {
@@ -90,10 +97,10 @@ export const env = {
   docnexusIdTokenFile,
   docnexusAutoRefreshToken: process.env.DOCNEXUS_AUTO_REFRESH_TOKEN !== "0" && docnexusHasPlatformLogin && Boolean(docnexusIdTokenFile),
   docnexusTokenRefreshScript: process.env.DOCNEXUS_TOKEN_REFRESH_SCRIPT ?? "scripts/docnexus-platform-token.mjs",
-  docnexusTokenRefreshTimeoutMs: Number(process.env.DOCNEXUS_TOKEN_REFRESH_TIMEOUT_MS ?? 120000),
+  docnexusTokenRefreshTimeoutMs: numeric(process.env.DOCNEXUS_TOKEN_REFRESH_TIMEOUT_MS, 120000),
   docnexusBearer,
   // Claims aggregates can take ~8s; default 20s so real queries don't abort.
-  docnexusTimeoutMs: Number(process.env.DOCNEXUS_TIMEOUT_MS ?? 20000),
+  docnexusTimeoutMs: numeric(process.env.DOCNEXUS_TIMEOUT_MS, 20000),
   // Browserless Cognito refresh (server deploys): captured once by the token script.
   docnexusRefreshToken: process.env.DOCNEXUS_REFRESH_TOKEN ?? "",
   docnexusCognitoClientId: process.env.DOCNEXUS_COGNITO_CLIENT_ID ?? "",

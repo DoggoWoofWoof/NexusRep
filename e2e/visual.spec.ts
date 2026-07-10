@@ -11,6 +11,8 @@ import { expect, test } from "@playwright/test";
  */
 
 test("overview screen", async ({ page }) => {
+  // The greeting computes time-of-day from the clock — pin it so the shot is stable.
+  await page.clock.setFixedTime(new Date("2026-07-10T09:30:00"));
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /Good morning/i })).toBeVisible();
   await expect(page).toHaveScreenshot("overview.png", { fullPage: true });

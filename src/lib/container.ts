@@ -22,7 +22,7 @@ import { CrmOutbox } from "@modules/crm";
 import { getCrmAdapter, getRetrievalProvider } from "@modules/vendors";
 import { TurnOrchestrator, ConversationService } from "@modules/realtime";
 import { SessionService } from "@modules/sessions";
-import { TargetingService, loadCohort } from "@modules/audience";
+import { TargetingService, loadCohort, audienceQueryFor } from "@modules/audience";
 import { AnalyticsService, RuntimeMetrics } from "@modules/analytics";
 import { StudioService } from "@modules/aiRepStudio";
 import { activeSteering } from "@modules/rules";
@@ -141,7 +141,7 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
   const sessions = new SessionService(repos);
   // Load the targeting cohort from the DocNexus claims backend when configured;
   // otherwise the modeled cardiology cohort. Never throws — falls back safely.
-  const { cohort, source: audienceSource } = await loadCohort();
+  const { cohort, source: audienceSource } = await loadCohort(audienceQueryFor(brand.clinical));
   // Coaching → behavior: each turn folds the rep's ACTIVE, compliance-cleared rules into
   // runtime steering (blocked topics reroute; lead topics re-rank). Draft/gated rules never
   // steer, so the compliance gate stays authoritative.
@@ -179,7 +179,7 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
       if (!audienceState.source.includes("fallback")) return true;
       if (Date.now() - audienceState.lastAttemptAt < 60_000) return false;
       audienceState.lastAttemptAt = Date.now();
-      const next = await loadCohort();
+      const next = await loadCohort(audienceQueryFor(brand.clinical));
       if (!next.source.includes("fallback")) {
         targeting.replaceCohort(next.cohort);
         audienceState.source = next.source;

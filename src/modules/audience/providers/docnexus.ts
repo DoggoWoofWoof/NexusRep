@@ -121,7 +121,7 @@ let refreshedInMemory: { token: string; expMs: number } | null = null;
  * cognito-idp, no browser, no SDK. This is what lets the live claims cohort work on a
  * server: the account has no static API key, but the refresh token is valid ~30 days.
  */
-export async function refreshCognitoTokens(input: { refreshToken: string; clientId: string; region: string }): Promise<{ accessToken: string; idToken?: string } | null> {
+export async function refreshCognitoTokens(input: { refreshToken: string; clientId: string; region: string; timeoutMs?: number }): Promise<{ accessToken: string; idToken?: string } | null> {
   try {
     const res = await fetch(`https://cognito-idp.${input.region}.amazonaws.com/`, {
       method: "POST",
@@ -134,7 +134,7 @@ export async function refreshCognitoTokens(input: { refreshToken: string; client
         ClientId: input.clientId,
         AuthParameters: { REFRESH_TOKEN: input.refreshToken },
       }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(input.timeoutMs ?? 15_000),
     });
     if (!res.ok) {
       console.warn(`[audience] cognito refresh failed: HTTP ${res.status}`);

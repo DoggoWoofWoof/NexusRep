@@ -48,6 +48,9 @@ interface CreateConversationResponse {
 // last-applied system prompt per key so we update in place (PATCH) when it changes.
 const createdPersonas = new Map<string, string>();
 const personaPrompts = new Map<string, string>();
+/** In-flight creations — two concurrent first sessions for a brand must share ONE
+ *  persona POST instead of each creating (and leaking) their own. */
+const personaCreations = new Map<string, Promise<string>>();
 
 export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog {
   readonly name = "tavus";
@@ -133,11 +136,20 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog {
       pipeline_mode: "full",
       ...(Object.keys(layers).length ? { layers } : {}),
     };
-    const r = await this.api<CreatePersonaResponse>("/personas", { method: "POST", body: JSON.stringify(body) });
-    if (!r.persona_id) throw new Error("tavus: no persona_id returned");
-    createdPersonas.set(cacheKey, r.persona_id);
-    personaPrompts.set(cacheKey, config.systemPrompt);
-    return r.persona_id;
+    const inFlight = personaCreations.get(cacheKey);
+    if (inFlight) return inFlight;
+    const creation = this.api<CreatePersonaResponse>("/personas", { method: "POST", body: JSON.stringify(body) })
+      .then((r) => {
+        if (!r.persona_id) throw new Error("tavus: no persona_id returned");
+        createdPersonas.set(cacheKey, r.persona_id);
+        personaPrompts.set(cacheKey, config.systemPrompt);
+        return r.persona_id;
+      })
+      .finally(() => {
+        personaCreations.delete(cacheKey);
+      });
+    personaCreations.set(cacheKey, creation);
+    return creation;
   }
 
   async startSession(config: RealtimeSessionConfig): Promise<RealtimeSession> {

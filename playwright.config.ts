@@ -53,6 +53,8 @@ export default defineConfig({
       // Seed demo sessions/follow-ups so Sessions / Analytics / Follow-ups (review + metrics)
       // render populated for E2E. In-memory (no data driver) → deterministic, no PGlite.
       NEXUSREP_SEED_HISTORY: "1",
+      // Pins the computed "Day N of M" campaign counter so visual baselines are stable.
+      NEXUSREP_DEMO_DATE: "2026-07-10",
       ANTHROPIC_API_KEY: "",
       OPENAI_API_KEY: "",
       THINKING_MACHINES_BASE_URL: "",

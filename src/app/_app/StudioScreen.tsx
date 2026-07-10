@@ -1899,18 +1899,13 @@ function RuleCard({ r, onAccept, onReject, compact }: { r: UiRule; onAccept: () 
 
 /* ---------- READINESS MODE ---------- */
 function ReadinessMode({ snap, submitState, onSubmit }: { snap: StudioSnap | null; submitState: string; onSubmit: () => void }) {
-  const fallbackChecklist = [
-    { label: "Setup complete", done: true },
-    { label: "Approved knowledge bound (MLR active)", done: true },
-    { label: "Persona & AI disclosure set", done: true },
-    { label: "Escalation & AE routing configured", done: true },
-    { label: "Rehearsal completed", done: false },
-    { label: "Coaching rules reviewed", done: false },
-  ];
-  const checklist = snap ? snap.readiness.items.map((i) => ({ label: i.label, done: i.done })) : fallbackChecklist;
-  const pct = snap ? snap.readiness.pct : 68;
+  // No fabricated readiness while the snapshot loads — this used to render a made-up
+  // 68% ring + a plausible checklist with no "sample" label. Honest placeholder instead.
+  if (!snap) return <div style={{ padding: "48px 20px", textAlign: "center", font: "400 12.5px/1.6 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Loading readiness…</div>;
+  const checklist = snap.readiness.items.map((i) => ({ label: i.label, done: i.done }));
+  const pct = snap.readiness.pct;
   const itemsLeft = checklist.filter((r) => !r.done).length;
-  const canLaunch = snap ? snap.readiness.canLaunch : false;
+  const canLaunch = snap.readiness.canLaunch;
   return (
     <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 18, alignItems: "start", maxWidth: 1080 }}>
       <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 14, padding: "22px 20px", boxShadow: "var(--dn-shadow-card)", textAlign: "center", position: "sticky", top: 14 }}>

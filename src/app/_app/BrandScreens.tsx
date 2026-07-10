@@ -131,10 +131,10 @@ function Audience({ app }: { app: AppState }) {
   // single bucket on claims data with no rep-coverage feed.
   const topDecile = hcps.filter((h) => /^D[12]$/.test(h.decile)).length;
   const summary = [
-    { label: "Target HCPs", value: apiSummary ? String(apiSummary.cohortSize) : "37", color: "var(--dn-brand-base)", sub: "In the target cohort" },
-    { label: "Avg opp score", value: apiSummary ? apiSummary.averageScore.toFixed(1) : "88.4", color: "var(--dn-fg)", sub: "0–100 · ranked within cohort" },
+    { label: "Target HCPs", value: apiSummary ? String(apiSummary.cohortSize) : "—", color: "var(--dn-brand-base)", sub: "In the target cohort" },
+    { label: "Avg opp score", value: apiSummary ? apiSummary.averageScore.toFixed(1) : "—", color: "var(--dn-fg)", sub: "0–100 · ranked within cohort" },
     { label: "Top-decile targets", value: String(topDecile), color: "var(--dn-fg)", sub: "High-volume prescribers (D1–D2)" },
-    { label: "Eligible patients", value: apiSummary ? apiSummary.eligiblePatients.toLocaleString() : "64,210", color: "var(--dn-fg)", sub: "Target-indication claims · no PHI" },
+    { label: "Eligible patients", value: apiSummary ? apiSummary.eligiblePatients.toLocaleString() : "—", color: "var(--dn-fg)", sub: "Target-indication claims · no PHI" },
     { label: "On activation list", value: String(app.activation.length), color: "var(--dn-success)", sub: "Ready to launch" },
   ];
   return (

@@ -48,6 +48,42 @@
   number + full title only, "Section N · auto-saves".
 - Layout: Training's coaching-rules card moved below the deck panel.
 
+### Final bug + hardcoding audit (same day): two agent sweeps, all confirmed findings fixed
+
+Bugs (compliance-first):
+- **Presentation routes now classify HCP text** — a typed deck "jump" or display text
+  carrying an AE mention / off-label ask used to ride a hardcoded zero-risk
+  classification; risky turns now leave the deck flow for the real pipeline
+  (AE→PV, refusal→MSL, medical info, handoff — with follow-ups + audit). Synthetic
+  action strings keep the zero-risk constant. Route-level regression tests.
+- **Audit seq survives restarts** — it reset to 0 per process, interleaving a durable
+  session's trail; now seeded from the store max on first write.
+- **Keyword recovery scoped** — it could override a CONFIDENT LLM's medical-info
+  escalation (capping risk 0.3 and answering directly); recovery now applies only to
+  low-confidence LLM fallbacks. Existing recovery tests still pass.
+- **StudioService writes serialized per rep** (same pattern as SessionService) —
+  concurrent studio POSTs could lost-update the rules array, silently dropping a
+  guardrail. Internal composite ops call *Core variants (no chain re-entry).
+- **Persona creation deduped** (two concurrent first sessions shared one POST),
+  **webhook callbacks verified** with the shared key when configured, **numeric env
+  guard** (a malformed DOCNEXUS_TIMEOUT_MS became NaN → instant abort → silent modeled
+  fallback). Dismissed as false positive: "inverted decile" (repo convention is
+  decile 1 = top, consistent across modeled/live/UI). Known limitation kept: one live
+  video call per process (documented, warned).
+
+Hardcoding (honesty + generalization):
+- **Readiness no longer fabricates 68%** + a fake checklist while loading.
+- **Targeting query comes from BrandProfile.clinical** (specialties/diagnosisCodes) —
+  a rebranded profile no longer silently fetches cardiology HCPs.
+- **"Day 18 of 92" is computed** from campaign.startDate/lengthDays (NEXUSREP_DEMO_DATE
+  pins it for demos + visual baselines); **greeting** computes time-of-day and pulls the
+  name from one DEMO_USER source (e2e pins the clock).
+- **Sample-data pill shows if ANY Command-Center KPI fell back** to fixture; Audience
+  summary shows em-dashes instead of fixture numbers.
+- **Speech locale follows brand.persona.language** (ASR + TTS voice hint).
+- **Realtime responders respect NEXUSREP_COMPOSER_MAX_TOKENS**; cognito refresh threads
+  the provider timeout. Noted, deliberately deferred: per-market number locale.
+
 
 
 NexusRep is a real, runnable **Next.js (App Router) + TypeScript modular monolith**.

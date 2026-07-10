@@ -6,6 +6,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { env } from "@lib/env";
 import { getContainer } from "@lib/container";
 
 export const dynamic = "force-dynamic";
@@ -39,6 +40,13 @@ function recordingUrl(body: TavusCallback): string | null {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  // When the shared key is configured, callbacks must carry it (we register the
+  // callback URL ourselves with ?k=<key> at conversation start). Without the check,
+  // anyone who learned a conversation id could attach an arbitrary recording URL.
+  if (env.tavusLlmKey) {
+    const k = new URL(req.url).searchParams.get("k");
+    if (k !== env.tavusLlmKey) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
   const body = (await req.json().catch(() => ({}))) as TavusCallback;
   const event = String(body.event_type ?? body.message_type ?? "");
   const convId = body.conversation_id ?? (body.properties?.conversation_id as string | undefined);

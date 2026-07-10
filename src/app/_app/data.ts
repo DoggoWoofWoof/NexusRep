@@ -159,6 +159,10 @@ export const KNOWLEDGE_ASSETS = [
 ];
 
 // Overview / Command Center KPIs (representative, themed to the campaign).
+/** The demo operator shown in the shell (sidebar + greeting) — ONE source, not
+ *  scattered literals. A real deployment swaps this for the authenticated user. */
+export const DEMO_USER = { firstName: "Jordan", shortName: "J. Rivera", role: "Brand Lead", initials: "JR" };
+
 export const COMMAND_KPIS = [
   { tone: "blue", label: "Sessions completed", value: "128", sub: "82% completion rate" },
   { tone: "fg", label: "Target HCPs", value: "37", sub: "Decile 2–4 whitespace" },

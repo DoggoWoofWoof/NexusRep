@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { AppState } from "./NexusRepApp";
-import { createRecognizer, BrowserVoiceProvider, type ClientRecognizer } from "@lib/browser-speech";
+import { createRecognizer, setSpeechLanguage, speechVoiceHint, BrowserVoiceProvider, type ClientRecognizer } from "@lib/browser-speech";
 import { LiveAvatar, type LiveAvatarHandle } from "../_components/LiveAvatar";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { SlideView } from "../_components/SlideView";
@@ -53,6 +53,8 @@ export function HcpExperience({ app }: { app?: AppState }) {
   // Pending mid-answer slide switch (cleared if a new question arrives first).
   const slideTimerRef = useRef<number | null>(null);
 
+  // The rep's speech locale (ASR + TTS) follows the brand persona's language.
+  useEffect(() => { setSpeechLanguage(brand?.language); }, [brand]);
   useEffect(() => {
     try { setUrlHcpId(new URLSearchParams(window.location.search).get("hcp") ?? ""); } catch { /* no window */ }
     voiceRef.current = new BrowserVoiceProvider();
@@ -70,7 +72,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setSpeaking(true);
     try {
       if (threeD && liveRef.current?.isReady()) await liveRef.current.speak(text);
-      else await voiceRef.current?.speak(text, { voiceHint: "en" });
+      else await voiceRef.current?.speak(text, { voiceHint: speechVoiceHint() });
     } finally { setSpeaking(false); }
   }
 

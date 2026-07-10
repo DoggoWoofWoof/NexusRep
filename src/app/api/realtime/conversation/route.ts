@@ -66,7 +66,9 @@ async function startConversation(req: Request): Promise<NextResponse> {
 
   const startArgs = {
       record: true,
-      callbackUrl: `${env.publicBaseUrl}/api/tavus/webhook`,
+      // The webhook carries the shared key so recording callbacks can be verified —
+      // without it anyone who learns a conversation id could attach an arbitrary URL.
+      callbackUrl: `${env.publicBaseUrl}/api/tavus/webhook${env.tavusLlmKey ? `?k=${encodeURIComponent(env.tavusLlmKey)}` : ""}`,
       sessionId: hist.id,
       personaCacheKey: c.brand.brandId, // one Tavus persona per brand, reused across sessions
       systemPrompt: persona.systemPrompt,

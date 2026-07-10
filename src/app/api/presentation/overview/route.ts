@@ -9,7 +9,7 @@
 import { NextResponse } from "next/server";
 import { getContainer } from "@lib/container";
 import { resolveSessionAndHcp } from "@lib/resolve-session";
-import { complianceGate, isiAlreadyDelivered, type PolicyRoute, type RiskClassification } from "@modules/compliance";
+import { complianceGate, isiAlreadyDelivered, type PolicyRoute, type RiskClassification, classify, route as policyRouteFor } from "@modules/compliance";
 import { mergePlan, PresentationSkill } from "@modules/content";
 import { presentationGuidance } from "@modules/rules";
 
@@ -55,6 +55,27 @@ export async function POST(req: Request): Promise<NextResponse> {
   // Shared session + invite-link identity resolution (same logic as conversation/turn).
   const { sessionId, hcpId } = await resolveSessionAndHcp(c, body);
 
+  // Same guard as the step route: an overview prompt is user-typed text and can carry
+  // an AE mention or an off-label ask — classify it, and route risky turns through the
+  // real pipeline instead of narrating the deck over them.
+  const risk = classify(text);
+  const riskPolicy = policyRouteFor(risk);
+  if (riskPolicy !== "approved_answer" && riskPolicy !== "fallback") {
+    const { output } = await c.conversation.turn({
+      sessionId,
+      hcpId,
+      audience: c.demo.audience,
+      indication: c.demo.indication,
+      market: c.demo.market,
+      investigational: c.demo.investigational,
+      text,
+    });
+    return NextResponse.json({
+      sessionId,
+      segments: [{ response: output.responseText, detailAidSlideId: output.detailAidSlideId ?? null, slideTitle: null, stepId: null, stepTitle: null }],
+      skill: "nexusrep_presentation",
+    });
+  }
   await c.sessions.appendTurn(sessionId, { speaker: "hcp", text });
   let nextRepAt = Date.now() + 350;
 
