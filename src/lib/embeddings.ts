@@ -91,7 +91,7 @@ const neuralProvider: EmbeddingProvider = {
 /** Tries neural, falls back to lexical on any error, then sticks with the choice. */
 const autoProvider: EmbeddingProvider = {
   name: "auto(neural→lexical)",
-  // eslint-disable-next-line @typescript-eslint/no-this-alias
+
   async embed(texts) {
     if (autoMode !== "lexical") {
       try {

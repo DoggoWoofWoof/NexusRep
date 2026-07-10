@@ -1061,7 +1061,7 @@ function useOverviewPlan() {
 
   useEffect(() => {
     void loadOverviewPlan();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, []);
 
   const persistOverviewPlan = async (plan = overviewPlan?.plan, message = "Script saved.") => {
@@ -1194,7 +1194,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
       setCoachDraft({});
       setPreviewSessionId(makePreviewSessionId());
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [brand?.displayName]);
 
   // Seed the OPENING-LINE exchange once the greeting loads, so the disclosure itself can be

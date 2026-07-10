@@ -39,7 +39,7 @@ describe.runIf(LIVE)("DocNexus advanced-search (live)", () => {
     expect(cohort.some((h) => h.eligiblePatients > 0)).toBe(true);
 
     const top = cohort[0]!;
-    // eslint-disable-next-line no-console
+
     console.log(`[live] ${cohort.length} HCPs; top: ${top.name} (${top.specialty}) — ${top.eligiblePatients} eligible patients, decile ${top.decile}`);
   }, 40000);
 });
