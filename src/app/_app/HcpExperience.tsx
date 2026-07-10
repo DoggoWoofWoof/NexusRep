@@ -284,6 +284,27 @@ export function HcpExperience({ app }: { app?: AppState }) {
       <button onClick={() => void ask(input)} disabled={pending} style={{ padding: "11px 18px", background: "var(--dn-brand-base)", color: "#fff", border: "none", borderRadius: 9, font: "600 13px/1 var(--dn-font-sans)", cursor: "pointer" }}>{pending ? "…" : label}</button>
     </div>
   );
+  // First-visit help for the doctor — plain language, dismissible, remembered.
+  const [hintsOpen, setHintsOpen] = useState(false);
+  useEffect(() => {
+    try { setHintsOpen(localStorage.getItem("nexusrep_hcp_hints") !== "dismissed"); } catch { setHintsOpen(true); }
+  }, []);
+  const dismissHints = () => {
+    setHintsOpen(false);
+    try { localStorage.setItem("nexusrep_hcp_hints", "dismissed"); } catch { /* private mode */ }
+  };
+  const hintsCard = hintsOpen ? (
+    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "var(--dn-surface-2)", border: "1px solid var(--dn-border)", borderRadius: 10, padding: "10px 12px", marginBottom: 11 }}>
+      <div style={{ font: "400 11.5px/1.6 var(--dn-font-sans)", color: "var(--dn-fg-muted)", flex: 1 }}>
+        <strong style={{ color: "var(--dn-fg)" }}>How this works:</strong> type a question, or tap <strong>🎤</strong> and speak.
+        Turn on <strong>🔊 Rep voice</strong> to hear answers read aloud. <strong>🎥 Video rep</strong> starts a live video
+        conversation — end it anytime. The <strong>guided overview</strong> buttons walk you through the slides,
+        and you can always request a <strong>human rep</strong>, an <strong>MSL</strong>, or <strong>report a side effect</strong> below.
+      </div>
+      <span onClick={dismissHints} title="Dismiss" style={{ cursor: "pointer", font: "600 13px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", padding: "1px 4px" }}>✕</span>
+    </div>
+  ) : null;
+
   const tryChips = (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
       <span style={{ font: "500 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", alignSelf: "center" }}>Try:</span>
@@ -334,7 +355,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
                 {videoOn
                   ? <VideoAgentStage onMutedChange={setVideoMuted} onHcpUtterance={addSpokenHcpTurn} ref={videoAgentRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} hcpId={inviteHcpId || undefined} />
                   : <LiveAvatar ref={liveRef} enabled={threeD} speaking={speaking} fallbackStream={null} fallbackStatus={listening ? "Listening…" : speaking ? "Speaking…" : "Ready"} height={300} />}
-                <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{askBar("Ask")}{tryChips}</div>
+                <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{hintsCard}{askBar("Ask")}{tryChips}</div>
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginRight: 2 }}>Guided overview</span>
                   <button onClick={() => void deckStep("start")} disabled={pending} style={ghostMd}>Start overview</button>
@@ -352,8 +373,11 @@ export function HcpExperience({ app }: { app?: AppState }) {
                       if (videoOn) { videoAgentRef.current?.setMuted(!videoMuted); }
                       else { if (voiceOn) voiceRef.current?.cancel(); setVoiceOn((v) => !v); }
                     }}
-                    style={ghostMd}
-                  >{(videoOn ? !videoMuted : voiceOn) ? "🔊 Sound on" : "🔇 Sound off"}</button>
+                    title={(videoOn ? !videoMuted : voiceOn) ? "The rep reads answers aloud — click to turn its voice off" : "The rep's voice is off — answers aren't read aloud. Click to turn it on."}
+                    // Off must LOOK off (red) — and say WHOSE audio this is: the REP's voice
+                    // (speaker), never the doctor's mic. "Muted" alone reads as mic-muted.
+                    style={{ ...ghostMd, ...((videoOn ? !videoMuted : voiceOn) ? {} : { background: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca" }) }}
+                  >{(videoOn ? !videoMuted : voiceOn) ? "🔊 Rep voice on" : "🔇 Rep voice off"}</button>
                   <button onClick={() => setScr("complete")} style={{ marginLeft: "auto", padding: "10px 16px", background: "var(--dn-brand-dark)", color: "#fff", border: "none", borderRadius: 9, font: "600 12px/1 var(--dn-font-sans)", cursor: "pointer" }}>End session →</button>
                 </div>
               </div>
