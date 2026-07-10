@@ -102,8 +102,12 @@ export class DocNexusAudienceProvider implements AudienceProvider {
 
   private async headers(): Promise<Record<string, string>> {
     const h: Record<string, string> = { "Content-Type": "application/json" };
+    const hasRefreshLogin = Boolean(this.config.refreshToken && this.config.cognitoClientId && this.config.cognitoRegion);
     if (this.config.apiKey) h["X-Api-Key"] = this.config.apiKey;
-    else if (this.config.idToken || this.config.idTokenFile) {
+    else if (this.config.idToken || this.config.idTokenFile || hasRefreshLogin) {
+      // The refresh trio alone (the documented Render path: no token file, no inline token)
+      // must reach loadIdToken too — it used to be skipped entirely, so the deployed
+      // provider sent NO auth header and every live query 401'd into the modeled fallback.
       const loaded = await loadIdToken(this.config);
       if (loaded?.header === "authorization") h.Authorization = `Bearer ${loaded.token}`;
       else if (loaded) h["x-id-token"] = loaded.token;

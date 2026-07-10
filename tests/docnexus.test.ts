@@ -173,3 +173,39 @@ describe("refreshCognitoTokens", () => {
     expect(await refreshCognitoTokens({ refreshToken: "x", clientId: "y", region: "us-east-1" })).toBeNull();
   });
 });
+
+// ── Render path: the refresh trio ALONE must authenticate the live query ──
+describe("DocNexus provider with only the Cognito refresh trio (server deployment)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("mints an access token and sends it as the Bearer (no token file, no inline token)", async () => {
+    const seen: { cognito: number; queryAuth: string | null } = { cognito: 0, queryAuth: null };
+    // A real-shaped JWT (alg none padding irrelevant — only exp is decoded) valid for an hour.
+    const fakeJwt = (use: string) => {
+      const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+      return `${b64({ alg: "none" })}.${b64({ token_use: use, exp: Math.floor(Date.now() / 1000) + 3600 })}.x`;
+    };
+    vi.stubGlobal("fetch", (async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("cognito-idp.")) {
+        seen.cognito++;
+        return new Response(JSON.stringify({ AuthenticationResult: { AccessToken: fakeJwt("access"), IdToken: fakeJwt("id") } }), { status: 200 });
+      }
+      if (u.endsWith("/api/query")) {
+        seen.queryAuth = (init?.headers as Record<string, string>)?.Authorization ?? null;
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch);
+
+    const provider = new DocNexusAudienceProvider({
+      baseUrl: "https://advanced-search.example",
+      refreshToken: "refresh-token-value",
+      cognitoClientId: "client123",
+      cognitoRegion: "ap-southeast-2",
+    });
+    await provider.fetchCohort({ specialties: ["Cardiology"], diagnosisCodes: [], limit: 5 });
+    expect(seen.cognito).toBeGreaterThanOrEqual(1); // the trio actually minted
+    expect(seen.queryAuth).toMatch(/^Bearer .+/); // and the query carried it
+  });
+});
