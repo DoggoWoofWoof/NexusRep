@@ -37,7 +37,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   return NextResponse.json({
     session: {
       id: session.id,
-      hcp: hcpNameOf(session.hcpId),
+      // Live cohort first (canonical ids from the claims source), demo-seed names as fallback.
+      hcp: c.targeting.get(String(session.hcpId))?.name ?? hcpNameOf(session.hcpId),
       startedAt: session.startedAt,
       durationSeconds: deriveSessionDurationSeconds(session),
       questionCount: session.questionCount,

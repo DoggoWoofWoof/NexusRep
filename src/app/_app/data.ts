@@ -22,34 +22,35 @@ export interface Hcp {
   up: boolean;
   topic: string;
   rationale: string[];
-  affinity: { label: string; pct: number }[];
+  /** Score-breakdown bars: signal fill (0-100) + a note (points/weight or status). */
+  scoreParts: { label: string; pct: number; note: string }[];
 }
 
 export const HCPS: Hcp[] = [
   { id: "sharma", rank: 1, name: "Dr. A. Sharma", specialty: "Interventional Cardiology", institution: "Mercy Heart Institute", decile: "D3", segment: "High Growth", segTone: "green", patients: "2,847", score: "92.1", trend: "+18%", up: true, topic: "Program overview",
     rationale: ["Top-quartile eligible-patient density for ACS in region (2,847).", "Prescribing whitespace: high anticoagulation volume, no exposure to the new mechanism.", "Growth trend +18% QoQ — accelerating ACS caseload."],
-    affinity: [{ label: "Program", pct: 88 }, { label: "Investigational status", pct: 64 }, { label: "Mechanism of action", pct: 52 }] },
+    scoreParts: [{ label: "Prescribing whitespace", pct: 88, note: "45% weight" }, { label: "Eligible-patient volume", pct: 64, note: "35% weight" }, { label: "Prescribing trend", pct: 52, note: "20% weight" }] },
   { id: "okafor", rank: 2, name: "Dr. M. Okafor", specialty: "Interventional Cardiology", institution: "St. Vincent Cardiovascular", decile: "D2", segment: "ACS Whitespace", segTone: "yellow", patients: "3,102", score: "90.4", trend: "+12%", up: true, topic: "Mechanism of action",
     rationale: ["Highest eligible-patient density in cohort (3,102).", "Decile 2 anticoagulation writer with no familiarity with the new mechanism.", "Strong fit for interventional ACS awareness."],
-    affinity: [{ label: "Program", pct: 79 }, { label: "Mechanism of action", pct: 71 }, { label: "Investigational status", pct: 58 }] },
+    scoreParts: [{ label: "Prescribing whitespace", pct: 79, note: "45% weight" }, { label: "Eligible-patient volume", pct: 71, note: "35% weight" }, { label: "Prescribing trend", pct: 58, note: "20% weight" }] },
   { id: "castellano", rank: 3, name: "Dr. L. Castellano", specialty: "Cardiology", institution: "Lakeshore Medical Group", decile: "D4", segment: "AFib Density", segTone: "pink", patients: "1,956", score: "87.9", trend: "+9%", up: true, topic: "Investigational status",
     rationale: ["High AFib eligible-patient density among existing panel.", "Responsive to trial-program and MoA content historically.", "Moderate density, steady +9% growth."],
-    affinity: [{ label: "Investigational status", pct: 84 }, { label: "Program", pct: 62 }, { label: "Mechanism of action", pct: 49 }] },
+    scoreParts: [{ label: "Prescribing whitespace", pct: 84, note: "45% weight" }, { label: "Eligible-patient volume", pct: 62, note: "35% weight" }, { label: "Prescribing trend", pct: 49, note: "20% weight" }] },
   { id: "nguyen", rank: 4, name: "Dr. R. Nguyen", specialty: "Cardiac Electrophysiology", institution: "Summit Arrhythmia Center", decile: "D3", segment: "New Writer", segTone: "green", patients: "2,134", score: "85.3", trend: "+22%", up: true, topic: "Mechanism of action",
     rationale: ["Fastest-growing trend in cohort (+22%).", "High AFib volume — early-adopter profile.", "High receptivity to MoA and trial-program content."],
-    affinity: [{ label: "Mechanism of action", pct: 77 }, { label: "Program", pct: 69 }, { label: "Investigational status", pct: 55 }] },
+    scoreParts: [{ label: "Prescribing whitespace", pct: 77, note: "45% weight" }, { label: "Eligible-patient volume", pct: 69, note: "35% weight" }, { label: "Prescribing trend", pct: 55, note: "20% weight" }] },
   { id: "andersson", rank: 5, name: "Dr. P. Andersson", specialty: "Cardiology", institution: "Northgate Physicians", decile: "D5", segment: "Re-engage", segTone: "yellow", patients: "1,420", score: "81.7", trend: "-3%", up: false, topic: "FDA Fast Track status",
     rationale: ["Declining trend (-3%) — at risk of lapse.", "Previously engaged; no touch in 90 days.", "Re-engagement opportunity with development-status update."],
-    affinity: [{ label: "Investigational status", pct: 66 }, { label: "Program", pct: 51 }, { label: "Mechanism of action", pct: 44 }] },
+    scoreParts: [{ label: "Prescribing whitespace", pct: 66, note: "45% weight" }, { label: "Eligible-patient volume", pct: 51, note: "35% weight" }, { label: "Prescribing trend", pct: 44, note: "20% weight" }] },
   { id: "haddad", rank: 6, name: "Dr. S. Haddad", specialty: "Interventional Cardiology", institution: "Riverside Heart & Vascular", decile: "D2", segment: "ACS Whitespace", segTone: "yellow", patients: "2,560", score: "80.2", trend: "+6%", up: true, topic: "Mechanism of action",
     rationale: ["Decile 2 with clear ACS whitespace.", "Solid density (2,560), modest growth.", "Good candidate for mechanism-led awareness."],
-    affinity: [{ label: "Mechanism of action", pct: 73 }, { label: "Program", pct: 60 }, { label: "Investigational status", pct: 48 }] },
+    scoreParts: [{ label: "Prescribing whitespace", pct: 73, note: "45% weight" }, { label: "Eligible-patient volume", pct: 60, note: "35% weight" }, { label: "Prescribing trend", pct: 48, note: "20% weight" }] },
   { id: "whitfield", rank: 7, name: "Dr. J. Whitfield", specialty: "Vascular Neurology", institution: "Parkview Stroke Center", decile: "D6", segment: "Low Touch", segTone: "pink", patients: "980", score: "74.5", trend: "+1%", up: true, topic: "Program overview",
     rationale: ["Lower density but under-served (low touch).", "Secondary-stroke-prevention caseload — efficient incremental reach.", "Flat trend — awareness-building candidate."],
-    affinity: [{ label: "Program", pct: 54 }, { label: "Mechanism of action", pct: 47 }, { label: "Investigational status", pct: 39 }] },
+    scoreParts: [{ label: "Prescribing whitespace", pct: 54, note: "45% weight" }, { label: "Eligible-patient volume", pct: 47, note: "35% weight" }, { label: "Prescribing trend", pct: 39, note: "20% weight" }] },
   { id: "volkova", rank: 8, name: "Dr. E. Volkova", specialty: "Cardiology", institution: "Eastside Medical Partners", decile: "D4", segment: "AFib Density", segTone: "pink", patients: "1,610", score: "72.8", trend: "+4%", up: true, topic: "Investigational status",
     rationale: ["High AFib eligible-patient density (1,610).", "Receptive to trial-program resources.", "Steady +4% growth."],
-    affinity: [{ label: "Investigational status", pct: 68 }, { label: "Program", pct: 57 }, { label: "Mechanism of action", pct: 43 }] },
+    scoreParts: [{ label: "Prescribing whitespace", pct: 68, note: "45% weight" }, { label: "Eligible-patient volume", pct: 57, note: "35% weight" }, { label: "Prescribing trend", pct: 43, note: "20% weight" }] },
 ];
 
 export interface Turn {

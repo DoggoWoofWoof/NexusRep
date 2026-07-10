@@ -184,4 +184,50 @@ export class AnalyticsService {
       ],
     };
   }
+
+  /**
+   * Real engagement for ONE cohort doctor — what the Audience drawer shows instead of
+   * fabricated "affinity" bars: sessions, questions asked, follow-ups raised, last
+   * contact, and the approved topics actually shown (slide titles from logged rep turns).
+   * All HCP-level aggregates from our own session store; nothing invented.
+   */
+  async engagementForHcp(hcpId: string): Promise<HcpEngagement> {
+    const member = this.deps.targeting.get(hcpId);
+    const canonical = member ? String(member.id) : String(hcpId ?? "").trim();
+    const [sessions, followups, slides] = await Promise.all([
+      this.deps.sessions.list(),
+      this.deps.followups.list(),
+      this.deps.content.listSlides(),
+    ]);
+    const mine = sessions.filter((x) => {
+      const sid = String(x.hcpId);
+      return sid === canonical || `hcp_${sid}` === canonical || sid === `hcp_${canonical}`;
+    });
+    const sessionIds = new Set(mine.map((x) => String(x.id)));
+    const followUps = followups.filter((f) => sessionIds.has(String(f.sourceSessionId))).length;
+    const titleBySlide = new Map(slides.map((sl) => [String(sl.id), sl.title]));
+    const topics = new Set<string>();
+    let questions = 0;
+    let lastAt: string | null = null;
+    for (const session of mine) {
+      questions += session.questionCount;
+      if (!lastAt || session.startedAt > lastAt) lastAt = session.startedAt;
+      for (const turn of session.turns) {
+        if (turn.speaker === "rep" && turn.detailAidSlideId) {
+          const title = titleBySlide.get(String(turn.detailAidSlideId));
+          if (title) topics.add(title);
+        }
+      }
+    }
+    return { sessions: mine.length, questions, followUps, lastAt, topicsShown: [...topics].slice(0, 6) };
+  }
+}
+
+/** Aggregate, per-doctor engagement summary (no patient-level data — our own session logs). */
+export interface HcpEngagement {
+  sessions: number;
+  questions: number;
+  followUps: number;
+  lastAt: string | null;
+  topicsShown: string[];
 }

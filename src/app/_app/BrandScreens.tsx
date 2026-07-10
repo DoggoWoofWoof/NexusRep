@@ -40,6 +40,7 @@ type HCPOpportunityScore = {
   eligiblePatientOpportunity: string;
   recommendedApprovedTopic: string;
   rationale: string[];
+  components?: { key: string; label: string; weight: number; value01: number; contribution: number }[];
 };
 type AudienceSummary = {
   highOpportunity: number;
@@ -73,11 +74,13 @@ function mapHcp(r: HCPOpportunityScore, i: number): Hcp {
     up: true,
     topic: r.recommendedApprovedTopic,
     rationale: r.rationale,
-    affinity: [
-      { label: r.recommendedApprovedTopic, pct: Math.round(r.score) },
-      { label: "Safety / disclosure", pct: Math.max(30, Math.round(r.score * 0.7)) },
-      { label: "Program", pct: Math.max(25, Math.round(r.score * 0.6)) },
-    ],
+    // The REAL score decomposition (weight x signal = points) — replaces the old
+    // fabricated "content affinity" percentages derived from the score.
+    scoreParts: (r.components ?? []).map((cmp) => ({
+      label: cmp.label,
+      pct: cmp.weight === 0 ? 0 : Math.round(cmp.value01 * 100),
+      note: cmp.weight === 0 ? "uniform pre-launch — not ranking" : `+${cmp.contribution.toFixed(1)} pts · ${Math.round(cmp.weight * 100)}% weight`,
+    })),
   };
 }
 
@@ -112,7 +115,13 @@ function useAudience(): { rows: Hcp[]; summary: AudienceSummary | null; live: bo
 function Audience({ app }: { app: AppState }) {
   const { rows: hcps, summary: apiSummary, live } = useAudience();
   const [showAll, setShowAll] = useState(false);
-  const visibleHcps = showAll ? hcps : hcps.slice(0, 12);
+  const [search, setSearch] = useState("");
+  const [spec, setSpec] = useState("all");
+  const specialties = [...new Set(hcps.map((h) => h.specialty))].sort();
+  const filtered = hcps.filter(
+    (h) => (spec === "all" || h.specialty === spec) && (!search.trim() || h.name.toLowerCase().includes(search.trim().toLowerCase())),
+  );
+  const visibleHcps = showAll ? filtered : filtered.slice(0, 12);
   // Top-decile = high-volume prescribers for the target indications (D1–D2); a real,
   // differentiating targeting signal, unlike the coverage "whitespace" split which is a
   // single bucket on claims data with no rep-coverage feed.
@@ -149,6 +158,21 @@ function Audience({ app }: { app: AppState }) {
           </div>
         ))}
       </div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search doctors by name…"
+          style={{ flex: "1 1 220px", maxWidth: 320, padding: "9px 12px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 12.5px/1 var(--dn-font-sans)", background: "#fff" }}
+        />
+        <select value={spec} onChange={(e) => setSpec(e.target.value)} style={{ padding: "9px 12px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "500 12.5px/1 var(--dn-font-sans)", background: "#fff", color: "var(--dn-fg)" }}>
+          <option value="all">All specialties</option>
+          {specialties.map((sp) => (
+            <option key={sp} value={sp}>{sp}</option>
+          ))}
+        </select>
+        <span style={{ font: "500 11.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{filtered.length} of {hcps.length} doctors</span>
+      </div>
       <div style={{ ...card, overflow: "hidden" }}>
         <div style={{ display: "grid", gridTemplateColumns: "36px 1.6fr 1.2fr 0.6fr 1.1fr 0.9fr 1.4fr 92px", padding: "12px 18px", background: "var(--dn-surface-2)", borderBottom: "1px solid var(--dn-border)", font: "600 10.5px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)", alignItems: "center" }}>
           <span>#</span><span>HCP</span><span>Specialty</span><span>Decile</span><span>Aggregate pts</span><span>Opp</span><span>Conversation lead</span><span />
@@ -168,10 +192,15 @@ function Audience({ app }: { app: AppState }) {
             </div>
           );
         })}
-        {hcps.length > 12 && (
+        {filtered.length === 0 && (
+          <div style={{ padding: "26px 18px", textAlign: "center", font: "400 12.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
+            No doctors match — clear the search or specialty filter.
+          </div>
+        )}
+        {filtered.length > 12 && (
           <div style={{ padding: "14px 18px", display: "flex", justifyContent: "center", background: "#fff" }}>
             <button onClick={() => setShowAll((v) => !v)} style={{ ...btnGhost, padding: "9px 14px" }}>
-              {showAll ? "Show top 12" : `Show all ${hcps.length} HCPs`}
+              {showAll ? "Show top 12" : `Show all ${filtered.length} HCPs`}
             </button>
           </div>
         )}
@@ -214,16 +243,18 @@ function HcpDrawer({ app, hcp }: { app: AppState; hcp: Hcp }) {
               </div>
             ))}
           </div>
-          <div style={{ font: "600 11px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginBottom: 12 }}>Inferred content affinity</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
-            {hcp.affinity.map((a) => (
+          <div style={{ font: "600 11px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginBottom: 4 }}>Score breakdown</div>
+          <div style={{ font: "400 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 12 }}>How the {hcp.score} was computed — auditable weights, no black box.</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 11, marginBottom: 22 }}>
+            {hcp.scoreParts.map((a) => (
               <div key={a.label} style={{ display: "flex", alignItems: "center", gap: 11 }}>
-                <span style={{ width: 140, flexShrink: 0, font: "500 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{a.label}</span>
+                <span style={{ width: 140, flexShrink: 0, font: "500 11.5px/1.3 var(--dn-font-sans)", color: a.pct === 0 ? "var(--dn-fg-subtle)" : "var(--dn-fg)" }}>{a.label}</span>
                 <span style={{ flex: 1, height: 12, borderRadius: 4, background: "var(--dn-surface-2)", overflow: "hidden" }}><span style={{ display: "block", height: "100%", borderRadius: 4, background: "var(--dn-brand-light)", width: `${a.pct}%` }} /></span>
-                <span style={{ width: 32, textAlign: "right", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>{a.pct}%</span>
+                <span style={{ width: 128, textAlign: "right", font: "600 10px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>{a.note}</span>
               </div>
             ))}
           </div>
+          <HcpEngagementPanel hcpId={hcp.id} />
         </div>
         <div style={{ padding: "14px 22px", borderTop: "1px solid var(--dn-border)", display: "flex", gap: 9 }}>
           <button onClick={() => app.toggleActivation(hcp.id)} style={{ flex: 1, padding: 11, borderRadius: 9, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer", border: "none", background: added ? "var(--dn-accent-green-bg)" : "var(--dn-brand-base)", color: added ? "#166534" : "#fff" }}>{added ? "On activation list ✓" : "Add to activation list"}</button>
@@ -231,6 +262,64 @@ function HcpDrawer({ app, hcp }: { app: AppState; hcp: Hcp }) {
         </div>
       </aside>
     </>
+  );
+}
+
+type EngagementSummary = { sessions: number; questions: number; followUps: number; lastAt: string | null; topicsShown: string[] };
+
+/** Real engagement from OUR session logs (no invented percentages): sessions, questions,
+ *  follow-ups, last contact, and the approved topics the rep actually showed this doctor. */
+function HcpEngagementPanel({ hcpId }: { hcpId: string }) {
+  const [data, setData] = useState<EngagementSummary | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setData(null); setFailed(false);
+    (async () => {
+      try {
+        const res = await fetch(`/api/audience/engagement?hcp=${encodeURIComponent(hcpId)}`);
+        if (!res.ok) throw new Error(String(res.status));
+        const json = (await res.json()) as EngagementSummary;
+        if (alive) setData(json);
+      } catch {
+        if (alive) setFailed(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, [hcpId]);
+
+  return (
+    <div>
+      <div style={{ font: "600 11px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginBottom: 10 }}>Engagement so far</div>
+      {failed && <div style={{ font: "400 12px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Engagement data unavailable right now.</div>}
+      {!failed && !data && <div style={{ font: "400 12px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Loading…</div>}
+      {data && data.sessions === 0 && (
+        <div style={{ font: "400 12px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>No conversations yet — sessions, questions and topics appear here after the rep&apos;s first session with this doctor.</div>
+      )}
+      {data && data.sessions > 0 && (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+            {[
+              [String(data.sessions), data.sessions === 1 ? "session" : "sessions"],
+              [String(data.questions), data.questions === 1 ? "question" : "questions"],
+              [String(data.followUps), data.followUps === 1 ? "follow-up" : "follow-ups"],
+              ...(data.lastAt ? [[data.lastAt.slice(0, 10), "last contact"]] : []),
+            ].map(([v, l]) => (
+              <span key={l} style={{ display: "inline-flex", alignItems: "baseline", gap: 5, padding: "6px 11px", background: "var(--dn-surface-2)", borderRadius: 16, font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>
+                {v}<span style={{ font: "500 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>{l}</span>
+              </span>
+            ))}
+          </div>
+          {data.topicsShown.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {data.topicsShown.map((t) => (
+                <span key={t} style={{ padding: "5px 10px", background: "rgba(6,73,172,.06)", border: "1px solid var(--dn-border)", borderRadius: 7, font: "500 11px/1.2 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>{t}</span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

@@ -59,6 +59,16 @@ test.describe("Self-serve setup (chat + UI only)", () => {
         return rows.some((r) => r.hcp.toLowerCase().includes(surname.toLowerCase()));
       }, { timeout: 15_000 })
       .toBe(true);
+    // And the SESSION itself is attributed to that doctor — this is the direct check
+    // (surname-only could pass by coincidence when the fallback demo doctor matches;
+    // stripped drawer ids used to silently attribute preview sessions to the demo HCP).
+    await expect
+      .poll(async () => {
+        const res = await page.request.get("/api/sessions");
+        const rows = ((await res.json()) as { rows?: { hcp: string }[] }).rows ?? [];
+        return rows.some((r) => r.hcp.toLowerCase().includes(surname.toLowerCase()));
+      }, { timeout: 15_000 })
+      .toBe(true);
   });
 
   test("upload → approve in the review queue → doctor view answers from it and shows its slide", async ({ page }) => {

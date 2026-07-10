@@ -29,7 +29,31 @@ behind them. Implemented stage-by-stage with review gates.
 **Test status:** `typecheck` clean · **189 unit/integration tests** pass (1 guarded live test skipped) ·
 **20 Playwright E2E pass** (17 functional incl. the blank-slate self-serve journey + 3 visual).
 
-### Latest — Pitch coherence: ONE plan everywhere, per-section coaching, knowledge-derived suggestions (2026-07-10)
+### Latest — Audience & scoring: explainable score, real engagement, attribution fix (2026-07-10)
+
+- **Bug fixed — stripped ids silently misattributed sessions.** The Audience drawer's
+  "Preview AI rep" (and invite links) pass ids without the canonical `hcp_` prefix; the cohort
+  lookup missed and the session was silently attributed to the demo doctor (live-proven).
+  `TargetingService.get` is now prefix-tolerant, `resolveSessionAndHcp` stores the COHORT's
+  canonical id, `npiFor` normalized, and the session detail route resolves live-cohort names.
+  The attribution e2e now asserts the session's doctor name directly.
+- **Scoring is explainable and cohort-honest.** Every score carries a per-signal breakdown
+  (`components`: weight × value = points). `effectiveWeights` renormalizes away signals that
+  are UNIFORM across the cohort — pre-launch, brand share and trend are 0 for everyone, so the
+  old score was a constant baseline dressed as three signals; now it's a clean volume ranking
+  (top = 100) and the drawer labels the uniform signals "uniform pre-launch — not ranking".
+  Rationale leads with what actually ranks the doctor, and explains the pre-launch situation
+  once instead of repeating constants.
+- **Fabricated drawer bars are gone.** "Inferred content affinity" (percentages derived from
+  the score) → "Score breakdown" (the real math) + **"Engagement so far"** — real per-doctor
+  data from our own session logs via `AnalyticsService.engagementForHcp` + a new
+  `GET /api/audience/engagement?hcp=` route: sessions, questions, follow-ups, last contact,
+  and the approved topics actually shown. Honest empty state before the first conversation.
+- **Cohort table gains search + specialty filter** (with a live "N of M doctors" count).
+- New tests: `tests/audience-scoring.test.ts` (renormalization, breakdown sums, prefix-tolerant
+  lookup, rationale honesty).
+
+### Pitch coherence: ONE plan everywhere, per-section coaching, knowledge-derived suggestions (2026-07-10)
 
 - **The pitch plan is now the single source of truth.** `mergePlan` (moved into the
   presentation module) resolves the EFFECTIVE plan — saved brand edits over the DocNexus

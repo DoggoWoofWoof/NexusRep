@@ -27,7 +27,11 @@ export interface SessionResolution {
 
 export async function resolveSessionAndHcp(c: AppContainer, body: SessionResolveInput): Promise<SessionResolution> {
   const greeting = typeof body.greeting === "string" ? body.greeting.trim() : "";
-  const invitedHcp = typeof body.hcpId === "string" && c.targeting.has(body.hcpId) ? (asId<"hcp_id">(body.hcpId) as HcpId) : undefined;
+  // Canonicalize through the cohort: UI surfaces pass stripped ids (the drawer and invite
+  // links drop the "hcp_" prefix), which previously failed the lookup and silently
+  // attributed the session to the demo doctor. The session stores the COHORT's id.
+  const member = typeof body.hcpId === "string" ? c.targeting.get(body.hcpId) : undefined;
+  const invitedHcp = member ? (asId<"hcp_id">(String(member.id)) as HcpId) : undefined;
   const requested = typeof body.sessionId === "string" ? (asId<"session_id">(body.sessionId) as SessionId) : undefined;
 
   let hcpId: HcpId = invitedHcp ?? c.demo.hcpId;

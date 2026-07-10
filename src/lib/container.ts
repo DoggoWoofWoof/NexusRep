@@ -146,7 +146,7 @@ export async function createContainer(opts?: { seedHistory?: boolean }): Promise
     context: { brandId, campaignId },
     steeringFor: async (hcpId) => activeSteering((await studio.get(aiRepId))?.rules ?? [], { hcpId }),
     // CRM identity from the claims cohort (no NPI → truthful "needs_mapping" in the outbox).
-    npiFor: (hcpId) => cohort.find((f) => String(f.id) === hcpId)?.npi,
+    npiFor: (hcpId) => cohort.find((f) => String(f.id) === hcpId || String(f.id) === `hcp_${hcpId}`)?.npi,
   });
   // Score density relative to the cohort's top provider. For a pre-launch drug the
   // absolute claims counts for the target indications are small, so an absolute
