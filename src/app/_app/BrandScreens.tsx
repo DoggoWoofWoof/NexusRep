@@ -131,7 +131,7 @@ function Audience({ app }: { app: AppState }) {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ font: "500 12px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>Activation list</span>
           <span style={{ font: "700 13px/1 var(--dn-font-sans)", color: "#fff", background: "var(--dn-brand-base)", padding: "7px 12px", borderRadius: 20 }}>{app.activation.length}</span>
-          <button onClick={() => app.setNav("outreach")} style={{ ...btnGhost, color: "var(--dn-brand-base)", borderColor: "var(--dn-brand-base)" }}>Go to launch →</button>
+          <button onClick={() => app.setNav("outreach")} style={{ ...btnGhost, color: "var(--dn-brand-base)", border: "1px solid var(--dn-brand-base)" }}>Go to launch →</button>
         </div>
       </div>
       <p style={{ font: "400 13px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "8px 0 18px", maxWidth: 820 }}>Ranked by opportunity score from HCP-level aggregate claims signals. The table stays concise; click a row for the full rationale, then add selected HCPs to launch.</p>

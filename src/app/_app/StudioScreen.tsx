@@ -1076,7 +1076,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
                                       key={si}
                                       onClick={() => seg.stepId && setActivePlanStepId(seg.stepId)}
                                       title={seg.stepId ? "Click to open this section in the Brand pitch panel" : undefined}
-                                      style={{ ...bubbleStyle, ...(seg.stepId ? { cursor: "pointer" } : {}), ...(active ? { borderColor: "var(--dn-brand-base)", boxShadow: "0 0 0 1px var(--dn-brand-base)" } : {}) }}
+                                      style={{ ...bubbleStyle, ...(seg.stepId ? { cursor: "pointer" } : {}), ...(active ? { border: "1px solid var(--dn-brand-base)", boxShadow: "0 0 0 1px var(--dn-brand-base)" } : {}) }}
                                     >
                                       <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-accent-purple)", marginBottom: 5, display: "flex", gap: 6, alignItems: "center" }}>
                                         <span>{si + 1}.</span>
