@@ -1,9 +1,10 @@
 /**
- * Starts a Tavus CVI conversation for the HCP preview and returns the join URL.
- * The persona is created with its custom-LLM layer pointed at our compliance
- * endpoint (/api/tavus/llm), so the replica only ever speaks approved, gated
- * text. When no TAVUS_API_KEY is set the resolver returns the mock (no join URL)
- * and we report `configured: false` so the UI can fall back to the 3D avatar.
+ * Starts a live video conversation for the HCP preview and returns the join URL.
+ * Vendor-neutral: the concrete provider comes from getRealtimeProvider() (an env
+ * choice), and the persona's custom-LLM layer points at our compliance endpoint,
+ * so the video agent only ever speaks approved, gated text. When no provider is
+ * configured the resolver returns the mock (no join URL) and we report
+ * `configured: false` so the UI falls back to the built-in 3D avatar.
  */
 
 import { NextResponse } from "next/server";
@@ -12,7 +13,7 @@ import { getContainer } from "@lib/container";
 import { env } from "@lib/env";
 import { getRealtimeProvider } from "@modules/vendors";
 import { resolveBrandProfile, setupAnswersOf } from "@modules/brand";
-import { setActiveTavusSession } from "@lib/tavus-session";
+import { setActiveCallSession } from "@lib/active-call";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   } catch (error) {
     // Never return an HTML 500 — the client parses this as JSON and would crash with
     // "Unexpected token '<'". Always hand back a clean, actionable payload.
-    console.error("[tavus/conversation]", error);
+    console.error("[realtime/conversation]", error);
     return NextResponse.json(
       {
         provider: "tavus",
@@ -44,8 +45,12 @@ async function startConversation(req: Request): Promise<NextResponse> {
   const provider = getRealtimeProvider();
   // Persona is brand config resolved from the Setup Assistant's answers — so what the brand
   // user set by chatting (name / greeting / audience) is what the live replica speaks.
-  const draft = (await c.studio.get(c.demo.aiRepId))?.draft;
+  const studioSnap = await c.studio.get(c.demo.aiRepId);
+  const draft = studioSnap?.draft;
   const persona = resolveBrandProfile(c.brand, setupAnswersOf(draft)).persona;
+  // The Studio's Agent gallery selection wins over the deployment default — this is
+  // how "pick a different agent (face + voice)" reaches the live call.
+  const agentId = studioSnap?.appearance?.agentId || env.tavusReplicaId || undefined;
 
   // Identity: honor the invite link's hcpId only when it resolves to a real cohort member.
   const hcpId = typeof body.hcpId === "string" && c.targeting.has(body.hcpId) ? asId<"hcp_id">(body.hcpId) : c.demo.hcpId;
@@ -56,7 +61,7 @@ async function startConversation(req: Request): Promise<NextResponse> {
   // Mark this as the active call so /api/tavus/llm logs the authoritative transcript here (with
   // slideIds), and log the opening greeting once server-side (Tavus speaks it directly, not via
   // the LLM endpoint, so the endpoint never sees it).
-  setActiveTavusSession(hist.id);
+  setActiveCallSession(hist.id);
   if (persona.customGreeting) await c.sessions.appendTurn(hist.id, { speaker: "rep", text: persona.customGreeting });
 
   const startArgs = {
@@ -72,7 +77,7 @@ async function startConversation(req: Request): Promise<NextResponse> {
         apiKey: env.tavusLlmKey || undefined,
         model: "nexusrep-compliance",
       },
-      replicaId: env.tavusReplicaId || undefined,
+      agentId,
       hotwords: persona.hotwords,
       language: persona.language,
       tools: [],
@@ -115,7 +120,7 @@ async function startConversation(req: Request): Promise<NextResponse> {
   // Link the Tavus conversation id to our per-call session, so the recording_ready
   // callback attaches the playback URL to the same session the transcript lives in.
   if (session.transportUrl) {
-    await c.sessions.setTavusConversation(hist.id, session.id);
+    await c.sessions.setVendorConversation(hist.id, session.id);
   }
 
   // Tavus's servers call our custom-LLM endpoint to get each reply. Actively PROBE the
@@ -137,7 +142,7 @@ async function startConversation(req: Request): Promise<NextResponse> {
     conversationUrl: session.transportUrl ?? null,
     token: session.token ?? null,
     // Our reviewable session id (the client logs utterances here). The Tavus
-    // conversation id is separate and lives on the session as tavusConversationId.
+    // conversation id is separate and lives on the session as vendorConversationId.
     sessionId: hist.id,
     reachableLlm,
     note: !session.transportUrl

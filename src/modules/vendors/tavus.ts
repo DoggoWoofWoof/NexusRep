@@ -21,6 +21,8 @@ import type {
   RealtimeSession,
   RealtimeSessionConfig,
   RealtimeSystemEvent,
+  AgentCatalog,
+  AgentSummary,
   ToolResult,
 } from "./types";
 
@@ -47,7 +49,7 @@ interface CreateConversationResponse {
 const createdPersonas = new Map<string, string>();
 const personaPrompts = new Map<string, string>();
 
-export class TavusRealtimeProvider implements RealtimeProvider {
+export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog {
   readonly name = "tavus";
   private conversationId: string | null = null;
   /** Recorded app→CVI intents; the browser replays these over the Daily channel. */
@@ -127,7 +129,7 @@ export class TavusRealtimeProvider implements RealtimeProvider {
       // Stable, per-brand name (not per-session) — one persona per brand, reused across sessions.
       persona_name: cacheKey === "default" ? "NexusRep compliant rep" : `NexusRep compliant rep · ${cacheKey}`,
       system_prompt: config.systemPrompt,
-      default_replica_id: config.replicaId ?? this.cfg.replicaId,
+      default_replica_id: config.agentId ?? this.cfg.replicaId,
       pipeline_mode: "full",
       ...(Object.keys(layers).length ? { layers } : {}),
     };
@@ -140,7 +142,7 @@ export class TavusRealtimeProvider implements RealtimeProvider {
 
   async startSession(config: RealtimeSessionConfig): Promise<RealtimeSession> {
     const personaId = await this.ensurePersona(config);
-    const replicaId = config.replicaId ?? this.cfg.replicaId;
+    const replicaId = config.agentId ?? this.cfg.replicaId;
     const body = {
       persona_id: personaId,
       ...(replicaId ? { replica_id: replicaId } : {}),
@@ -193,6 +195,62 @@ export class TavusRealtimeProvider implements RealtimeProvider {
     } catch {
       /* best-effort; a conversation also frees on Tavus's inactivity timeout */
     }
+  }
+
+  /** Map one raw Tavus replica record into the canonical AgentSummary. This is the ONLY
+   *  place the vendor's "replica" vocabulary exists — callers only see agents. */
+  private static toSummary(raw: Record<string, unknown>, fallbackKind: "stock" | "personal"): AgentSummary | null {
+    const id = typeof raw.replica_id === "string" ? raw.replica_id : "";
+    if (!id) return null;
+    const rawStatus = String(raw.status ?? "").toLowerCase();
+    const status: AgentSummary["status"] =
+      rawStatus === "error" ? "error" : /train|start|queue|progress/.test(rawStatus) ? "training" : "ready";
+    const kind: AgentSummary["kind"] = raw.replica_type === "system" ? "stock" : raw.replica_type === "user" ? "personal" : fallbackKind;
+    const thumb = typeof raw.thumbnail_video_url === "string" ? raw.thumbnail_video_url : typeof raw.thumbnail_url === "string" ? raw.thumbnail_url : undefined;
+    return {
+      id,
+      name: (typeof raw.replica_name === "string" && raw.replica_name.trim()) || id,
+      kind,
+      status,
+      ...(thumb ? { thumbnailUrl: thumb } : {}),
+    };
+  }
+
+  private static parseReplicaList(res: unknown): Record<string, unknown>[] {
+    if (Array.isArray(res)) return res as Record<string, unknown>[];
+    const data = (res as { data?: unknown } | null)?.data;
+    return Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
+  }
+
+  /** Browse the agent catalog: the account's own agents + the vendor's stock library.
+   *  Both calls are best-effort — a failure of one list never hides the other. */
+  async listAgents(): Promise<AgentSummary[]> {
+    const [mine, stock] = await Promise.all([
+      this.api<unknown>("/replicas?limit=100&verbose=true", { method: "GET" }).catch(() => null),
+      this.api<unknown>("/replicas?limit=100&replica_type=system&verbose=true", { method: "GET" }).catch(() => null),
+    ]);
+    const out = new Map<string, AgentSummary>();
+    for (const raw of TavusRealtimeProvider.parseReplicaList(mine)) {
+      const r = TavusRealtimeProvider.toSummary(raw, "personal");
+      if (r) out.set(r.id, r);
+    }
+    for (const raw of TavusRealtimeProvider.parseReplicaList(stock)) {
+      const r = TavusRealtimeProvider.toSummary(raw, "stock");
+      // A personal record wins over the same id appearing in the stock sweep.
+      if (r && !out.has(r.id)) out.set(r.id, r);
+    }
+    return [...out.values()];
+  }
+
+  /** Start training a personal agent from footage. Uses one of the plan's custom slots
+   *  and takes hours to train — the caller is responsible for warning the user first. */
+  async createAgent(input: { name: string; trainVideoUrl: string }): Promise<AgentSummary> {
+    const r = await this.api<{ replica_id?: string; status?: string }>("/replicas", {
+      method: "POST",
+      body: JSON.stringify({ replica_name: input.name, train_video_url: input.trainVideoUrl }),
+    });
+    if (!r.replica_id) throw new Error("tavus: no replica_id returned");
+    return { id: r.replica_id, name: input.name, kind: "personal", status: "training" };
   }
 
   /** List active conversations and end them all — frees concurrent-conversation slots after

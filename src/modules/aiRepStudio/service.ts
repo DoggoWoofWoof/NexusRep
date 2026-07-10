@@ -25,6 +25,9 @@ export interface StudioState extends Entity {
   rules: TrainingRule[];
   /** Launch state: which HCPs were invited + when (undefined until first launch). */
   activation?: { hcpIds: string[]; launchedAt: string | null };
+  /** Video-agent choice from the Studio's Agent gallery. agentId null/"" = use the
+   *  deployment default. Voice is bundled with the agent, so this IS the voice choice too. */
+  appearance?: { agentId: string | null; agentName?: string | null };
   /** Trainable guided-overview script: section order + approved slide references. */
   guidedOverview: PresentationPlan;
 }
@@ -113,6 +116,16 @@ export class StudioService {
     };
     await this.states.insert(state);
     return snapshot(state);
+  }
+
+  /** Persist the Studio's video-agent selection (Agent gallery). null clears back to default. */
+  async setAppearance(aiRepId: AiRepId, appearance: { agentId: string | null; agentName?: string | null }): Promise<StudioSnapshot | null> {
+    const s = await this.states.get(aiRepId);
+    if (!s) return null;
+    const updated = await this.states.update(aiRepId, {
+      appearance: { agentId: appearance.agentId, agentName: appearance.agentName ?? null },
+    });
+    return updated ? snapshot(updated) : null;
   }
 
   async get(aiRepId: AiRepId): Promise<StudioSnapshot | null> {

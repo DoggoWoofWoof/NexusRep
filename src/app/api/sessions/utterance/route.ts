@@ -1,12 +1,12 @@
 /**
  * Records one spoken/typed utterance into a session's transcript. The live video
- * client (TavusStage) posts every finalized utterance here — both the doctor's
+ * client (VideoAgentStage) posts every finalized utterance here — both the doctor's
  * transcribed speech and the rep's spoken reply (greeting included) — so the
  * session transcript is the faithful, both-sided record of the actual call,
  * time-ordered and reviewable alongside the recording (YouTube-style).
  *
  * This is a fallback transcript path for local video calls where Tavus cannot
- * reach our custom-LLM endpoint. In normal Tavus calls, /api/tavus/llm logs via
+ * reach our custom-LLM endpoint. In normal Tavus calls, the compliance endpoint logs via
  * ConversationService.turn(), including approved source IDs and slide IDs, so
  * this endpoint stays quiet and nothing is double-counted.
  */

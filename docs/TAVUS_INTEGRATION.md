@@ -68,11 +68,14 @@ Two things the docs don't spell out that the live API enforces (both fixed):
 
 ## Client join — built
 
-`POST /api/tavus/conversation` opens the conversation and returns `{ configured, conversationUrl,
-token, reachableLlm }`. `src/app/_components/TavusStage.tsx` joins that Daily room with
-`@daily-co/daily-js`, renders the replica's video + audio, shows live captions from
-`conversation.utterance`, and is toggled by the **"Video rep"** button on `/hcp`. With no key it
-reports `configured:false` and the view stays on the built-in 3D avatar.
+`POST /api/realtime/conversation` (vendor-neutral) opens the conversation and returns
+`{ provider, configured, conversationUrl, token, reachableLlm }`.
+`src/app/_components/VideoAgentStage.tsx` is vendor-agnostic: it picks a client transport by the
+returned `provider` name (`src/app/_components/video-transport.ts` — the ONLY client file that
+knows Tavus's Daily/echo/utterance protocol), renders the agent's video + audio, and is toggled
+by the **"Video rep"** button on `/hcp`. With no key it reports `configured:false` and the view
+stays on the built-in 3D avatar. Closing the preview POSTs `/api/realtime/conversation/end` so
+the vendor conversation frees its concurrent-session slot immediately.
 
 ## The one prerequisite for spoken replies: a public URL
 

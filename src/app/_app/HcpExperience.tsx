@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AppState } from "./NexusRepApp";
 import { createRecognizer, BrowserVoiceProvider, type ClientRecognizer } from "@lib/browser-speech";
 import { LiveAvatar, type LiveAvatarHandle } from "../_components/LiveAvatar";
-import { TavusStage, type TavusStageHandle } from "../_components/TavusStage";
+import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { SlideView } from "../_components/SlideView";
 import { useBrand } from "../_components/useBrand";
 import { isOverviewPrompt } from "./overviewPrompt";
@@ -45,7 +45,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
 
   const voiceRef = useRef<BrowserVoiceProvider | null>(null);
   const liveRef = useRef<LiveAvatarHandle | null>(null);
-  const tavusRef = useRef<TavusStageHandle | null>(null);
+  const videoAgentRef = useRef<VideoAgentStageHandle | null>(null);
   const recRef = useRef<ClientRecognizer | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   // This text/voice chat's own reviewable session (video uses the Tavus session).
@@ -123,7 +123,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
 
   async function playRepSegment(text: string) {
     if (videoOn) {
-      tavusRef.current?.speak(text);
+      videoAgentRef.current?.speak(text);
       await wait(estimateSpeechMs(text));
     } else {
       await speak(text);
@@ -279,7 +279,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
               {/* LEFT — the rep (live Tavus video OR the 3D/2D avatar) + one ask bar */}
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {videoOn
-                  ? <TavusStage ref={tavusRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} hcpId={inviteHcpId || undefined} />
+                  ? <VideoAgentStage ref={videoAgentRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} hcpId={inviteHcpId || undefined} />
                   : <LiveAvatar ref={liveRef} enabled={threeD} speaking={speaking} fallbackStream={null} fallbackStatus={listening ? "Listening…" : speaking ? "Speaking…" : "Ready"} height={300} />}
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{askBar("Ask")}{tryChips}</div>
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>

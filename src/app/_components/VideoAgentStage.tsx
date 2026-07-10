@@ -1,65 +1,47 @@
 "use client";
 
 /**
- * Renders the live Tavus replica for the HCP view. Asks our server to open a CVI
- * conversation (POST /api/tavus/conversation), then joins the returned Daily/WebRTC
- * room with the Daily SDK and shows the replica's video + audio.
- * The replica's replies are produced by our compliance endpoint (see the route),
- * so nothing it says bypasses the gate. Daily is imported lazily (browser only).
+ * Renders the live video agent for the HCP view. Asks our server to open a
+ * conversation (POST /api/realtime/conversation — vendor-neutral), then joins it
+ * through a transport adapter (see video-transport.ts) and shows the agent's
+ * video + audio. The agent's replies are produced by our compliance endpoint,
+ * so nothing it says bypasses the gate. No vendor SDK or protocol lives here.
  */
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { createVideoTransport, type VideoCallTransport } from "./video-transport";
 
 type ConvResp = { provider: string; configured: boolean; conversationUrl: string | null; token: string | null; note: string; reachableLlm?: boolean; sessionId?: string };
 type Stage = "loading" | "unconfigured" | "joining" | "live" | "error";
-type CallObj = { leave: () => void; destroy: () => void; sendAppMessage: (data: unknown, to?: string) => void };
 
-/** Imperative handle so the HCP view can make the replica SPEAK a gated answer
- *  (verbatim, via Tavus's echo interaction) — used for typed turns while on video. */
-export interface TavusStageHandle {
+/** Imperative handle so the HCP view can make the agent SPEAK a gated answer
+ *  (verbatim, via the transport's echo) — used for typed turns while on video. */
+export interface VideoAgentStageHandle {
   speak: (text: string) => void;
 }
 
 type RepTurnNotice = { text: string; detailAidSlideId?: string | null; sourceIds?: string[] };
 
-export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; hcpId?: string }>(function TavusStage({ onClose, bare = false, onRepTurn, hcpId }, ref) {
+export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; hcpId?: string }>(function VideoAgentStage({ onClose, bare = false, onRepTurn, hcpId }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const callRef = useRef<CallObj | null>(null);
+  const transportRef = useRef<VideoCallTransport | null>(null);
   // The reviewable session this call logs into, + last-logged utterance for dedup.
   const sessionIdRef = useRef<string | null>(null);
   const convIdRef = useRef<string>("");
   const lastUtterRef = useRef<string>("");
   const onRepTurnRef = useRef<typeof onRepTurn>(onRepTurn);
-  // When Tavus can reach our LLM endpoint, /api/tavus/llm logs the authoritative transcript (with
-  // detail-aid slideIds). The client then logs NOTHING (avoids double-logging). Only when Tavus
-  // can't reach us (localhost / no public URL) does the client log the spoken utterances as a
-  // text-only fallback so the transcript isn't empty.
+  // When the vendor can reach our compliance endpoint, the server logs the authoritative
+  // transcript (with detail-aid slideIds) and the client logs NOTHING (avoids doubling).
+  // Only when it can't (localhost / no public URL) does the client log the spoken
+  // utterances as a text-only fallback so the transcript isn't empty.
   const serverLogsRef = useRef(false);
 
-  // Make the replica speak our (already gated) text verbatim. Tavus "echo"
-  // interaction over the Daily data channel; we interrupt any current speech
-  // first so typed answers don't queue behind the greeting.
-  const speakReplica = (text: string): boolean => {
-    const call = callRef.current;
-    const cid = convIdRef.current;
-    const t = (text || "").trim();
-    if (!call || !t) return false;
-    const echo = () => {
-      try { call.sendAppMessage({ message_type: "conversation", event_type: "conversation.echo", conversation_id: cid, properties: { text: t } }, "*"); } catch { /* not connected */ }
-    };
-    try {
-      // Gently stop any in-progress speech, then a short natural beat before the new
-      // answer — so a barge-in doesn't jump-cut mid-word (it reads like a person
-      // pausing to pick up the new question rather than an abrupt splice).
-      call.sendAppMessage({ message_type: "conversation", event_type: "conversation.interrupt", conversation_id: cid }, "*");
-      setTimeout(echo, 220);
-    } catch { echo(); }
-    return true;
-  };
-  useImperativeHandle(ref, () => ({ speak: (text: string) => { speakReplica(text); } }), []);
+  // Make the agent speak our (already gated) text verbatim, via the transport.
+  const speakAgent = (text: string): boolean => transportRef.current?.speak(text) ?? false;
+  useImperativeHandle(ref, () => ({ speak: (text: string) => { speakAgent(text); } }), []);
   // Guards React StrictMode's double-invoke of effects in dev — without it the
-  // component opens TWO Tavus conversations (wasted minutes + a concurrent-slot clash).
+  // component opens TWO vendor conversations (wasted minutes + a concurrent-slot clash).
   const startedRef = useRef(false);
   const [stage, setStage] = useState<Stage>("loading");
   const [note, setNote] = useState("");
@@ -92,12 +74,12 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
   }
 
   useEffect(() => {
-    const w = window as unknown as { __nexusrepTavus?: unknown };
-    w.__nexusrepTavus = { speak: speakReplica, getStage: () => stage, getNote: () => note };
+    const w = window as unknown as { __nexusrepVideoAgent?: unknown };
+    w.__nexusrepVideoAgent = { speak: speakAgent, getStage: () => stage, getNote: () => note };
     return () => {
-      const current = (window as unknown as { __nexusrepTavus?: unknown }).__nexusrepTavus;
-      if (current && (current as { speak?: unknown }).speak === speakReplica) {
-        delete (window as unknown as { __nexusrepTavus?: unknown }).__nexusrepTavus;
+      const current = (window as unknown as { __nexusrepVideoAgent?: unknown }).__nexusrepVideoAgent;
+      if (current && (current as { speak?: unknown }).speak === speakAgent) {
+        delete (window as unknown as { __nexusrepVideoAgent?: unknown }).__nexusrepVideoAgent;
       }
     };
   }, [note, stage]);
@@ -108,15 +90,15 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
       startedRef.current = true;
       void (async () => {
       try {
-        const res = await fetch("/api/tavus/conversation", {
+        const res = await fetch("/api/realtime/conversation", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           // Invite-link identity — server honors it only for a real cohort member.
           body: JSON.stringify(hcpId ? { hcpId } : {}),
         });
-        // The server always returns JSON — but a Render OOM/502 or gateway error yields an
-        // HTML error page. Parse defensively so we show a clean note instead of crashing with
-        // "Unexpected token '<'", and fall back to the built-in avatar.
+        // The server always returns JSON — but an OOM/502 or gateway error yields an
+        // HTML error page. Parse defensively so we show a clean note instead of crashing
+        // with "Unexpected token '<'", and fall back to the built-in avatar.
         const raw = await res.text();
         let d: ConvResp;
         try {
@@ -137,21 +119,25 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
         // recording to the right session). Harmless in normal use.
         (window as unknown as { __nexusrep?: unknown }).__nexusrep = { sessionId: d.sessionId ?? null, conversationUrl: d.conversationUrl };
         if (d.reachableLlm === false) setNote(d.note);
-        // Reachable → the server (/api/tavus/llm) is the transcript source of truth; client stays quiet.
+        // Reachable → the server's compliance endpoint is the transcript source of truth.
         serverLogsRef.current = d.reachableLlm === true;
         setStage("joining");
-        const Daily = (await import("@daily-co/daily-js")).default;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const call: any = Daily.createCallObject({ audioSource: true, videoSource: false });
-        callRef.current = call;
 
-        // Bare/record mode: capture ONLY the replica stream (video+audio) starting at
-        // the FIRST live frame — trims the ~20s "Connecting" boot and excludes all page
-        // chrome. Exposes window.__nexusrepRec.stop() → base64 webm for the recorder.
+        const transport = createVideoTransport(d.provider, { conversationUrl: d.conversationUrl, token: d.token });
+        if (!transport) {
+          setNote(`No client transport for the "${d.provider}" provider — the built-in avatar still works.`);
+          setStage("unconfigured");
+          return;
+        }
+        transportRef.current = transport;
+
+        // Bare/record mode: capture ONLY the agent stream (video+audio) starting at
+        // the FIRST live frame — trims the connect boot and excludes all page chrome.
+        // Exposes window.__nexusrepRec.stop() → base64 webm for the recorder.
         let recStarted = false;
         const maybeStartRec = () => {
           // Record when in bare mode OR when a recorder set window.__nexusrepRecord
-          // (used to capture a replica-only clip of a full multi-turn doctor session).
+          // (used to capture an agent-only clip of a full multi-turn doctor session).
           const recWanted = bare || (window as unknown as { __nexusrepRecord?: boolean }).__nexusrepRecord === true;
           if (!recWanted || recStarted || typeof MediaRecorder === "undefined") return;
           const vs = videoRef.current?.srcObject as MediaStream | null;
@@ -193,55 +179,43 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
           } catch { recStarted = false; }
         };
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        call.on("track-started", (ev: any) => {
-          if (ev?.participant?.local || !ev?.track) return;
-          const stream = new MediaStream([ev.track]);
-          if (ev.track.kind === "video" && videoRef.current) { videoRef.current.srcObject = stream; void videoRef.current.play?.(); }
-          if (ev.track.kind === "audio" && audioRef.current) { audioRef.current.srcObject = stream; void audioRef.current.play?.(); }
-          // Fallback: if the replica never emits an utterance event, still start recording a few
-          // seconds after the video track arrives so we never miss a clip. The PRIMARY start is on
-          // the replica's first spoken words (see the utterance handler) — that trims the connect
-          // boot + any idle before the rep speaks.
-          if (ev.track.kind === "video") setTimeout(maybeStartRec, 6000);
-        });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        call.on("app-message", (ev: any) => {
-          const p = ev?.data;
-          // QA aid: record ALL conversation events so tests can see what the replica
-          // does after an echo (started/stopped speaking, utterances). Harmless.
-          {
+        await transport.join({
+          onTrack: (kind, stream) => {
+            if (kind === "video" && videoRef.current) { videoRef.current.srcObject = stream; void videoRef.current.play?.(); }
+            if (kind === "audio" && audioRef.current) { audioRef.current.srcObject = stream; void audioRef.current.play?.(); }
+            // Fallback: if the agent never emits an utterance event, still start recording a few
+            // seconds after the video track arrives so we never miss a clip. The PRIMARY start is
+            // on the agent's first spoken words (see onUtterance) — that trims the connect boot.
+            if (kind === "video") setTimeout(maybeStartRec, 6000);
+          },
+          onRawEvent: (e) => {
+            // QA aid: record ALL conversation events so tests can see what the agent
+            // does after an echo (started/stopped speaking, utterances). Harmless.
             const w = window as unknown as { __nexusrepEvents?: { type: string; role: string; text: string }[] };
-            w.__nexusrepEvents = [...(w.__nexusrepEvents ?? []).slice(-40), { type: String(p?.event_type ?? ""), role: String(p?.properties?.role ?? ""), text: String(p?.properties?.speech ?? p?.properties?.text ?? "").slice(0, 80) }];
-          }
-          if (p?.event_type !== "conversation.utterance") return;
-          const props = p?.properties ?? {};
-          const utter = String(props.speech ?? props.text ?? "").trim();
-          if (!utter) return;
-          // Log BOTH sides into the call's session (the transcript source of truth).
-          const role = String(props.role ?? "").toLowerCase();
-          const speaker = role.includes("replica") ? "rep" : role.includes("user") ? "hcp" : null;
-          // Begin the recording at the replica's FIRST words (the greeting) so the clip trims the
-          // "Connecting" boot + any idle before the rep speaks. No-op once already recording.
-          if (speaker === "rep") maybeStartRec();
-          const sid = sessionIdRef.current;
-          if (!speaker || !sid) return;
-          const key = `${speaker}:${utter}`;
-          if (key === lastUtterRef.current) return; // client-side dedup of re-emits
-          lastUtterRef.current = key;
-          // Only log from the client when the server can't (unreachable LLM). When reachable,
-          // /api/tavus/llm already logged this turn with its slideId — logging here would double it.
-          if (serverLogsRef.current) {
-            if (speaker === "rep") void notifyAuthoritativeRepTurn(sid, utter);
-            return;
-          }
-          void fetch("/api/sessions/utterance", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sessionId: sid, speaker, text: utter }),
-          });
+            w.__nexusrepEvents = [...(w.__nexusrepEvents ?? []).slice(-40), e];
+          },
+          onUtterance: ({ speaker, text }) => {
+            // Begin the recording at the agent's FIRST words (the greeting) so the clip trims
+            // the connect boot + any idle before the rep speaks. No-op once already recording.
+            if (speaker === "rep") maybeStartRec();
+            const sid = sessionIdRef.current;
+            if (!sid) return;
+            const key = `${speaker}:${text}`;
+            if (key === lastUtterRef.current) return; // client-side dedup of re-emits
+            lastUtterRef.current = key;
+            // Only log from the client when the server can't (unreachable compliance endpoint).
+            // When reachable, the server already logged this turn with its slideId.
+            if (serverLogsRef.current) {
+              if (speaker === "rep") void notifyAuthoritativeRepTurn(sid, text);
+              return;
+            }
+            void fetch("/api/sessions/utterance", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sessionId: sid, speaker, text }),
+            });
+          },
         });
-        await call.join({ url: d.conversationUrl, ...(d.token ? { token: d.token } : {}) });
         setStage("live");
         maybeStartRec(); // in case the video track already arrived before join resolved
       } catch (e) {
@@ -251,16 +225,15 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
       })();
     }
     return () => {
-      const c = callRef.current;
-      if (c) { try { c.leave(); c.destroy(); } catch { /* noop */ } }
-      callRef.current = null;
-      // Leaving the Daily call does NOT end the Tavus conversation — it lingers and holds a
-      // concurrent-conversation slot until Tavus times it out. End it explicitly so repeated
+      transportRef.current?.leave();
+      transportRef.current = null;
+      // Leaving the room does NOT end the vendor conversation — it lingers and holds a
+      // concurrent-session slot until the vendor times it out. End it explicitly so repeated
       // previews don't pile up to the account cap. keepalive: survives the unmount/navigation.
       const cid = convIdRef.current;
       if (cid) {
         try {
-          void fetch("/api/tavus/conversation/end", {
+          void fetch("/api/realtime/conversation/end", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ conversationId: cid }),
@@ -272,7 +245,7 @@ export const TavusStage = forwardRef<TavusStageHandle, { onClose: () => void; ba
     };
   }, []);
 
-  // Bare mode: JUST the replica video, full-bleed, no captions/overlays/chrome —
+  // Bare mode: JUST the agent video, full-bleed, no captions/overlays/chrome —
   // used to capture a clean recording of only the rep (the recorder navigates to
   // /hcp?bare=1). Everything else (transcript logging, session wiring) is unchanged.
   const container: React.CSSProperties = bare

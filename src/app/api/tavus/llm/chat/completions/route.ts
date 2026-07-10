@@ -13,7 +13,7 @@
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { env } from "@lib/env";
-import { getActiveTavusSession } from "@lib/tavus-session";
+import { getActiveCallSession } from "@lib/active-call";
 
 export const dynamic = "force-dynamic";
 
@@ -55,7 +55,7 @@ export async function POST(req: Request): Promise<Response> {
     // Tavus supplies ASR + avatar transport only. The actual turn goes through the same
     // ConversationService used by typed chat, so mic and chat share one NexusRep path:
     // log HCP turn -> orchestrate -> gate -> log rep turn/source/slide -> CRM/follow-up.
-    let sessionId = asId<"session_id">(getActiveTavusSession() ?? (c.demo.sessionId as string));
+    let sessionId = asId<"session_id">(getActiveCallSession() ?? (c.demo.sessionId as string));
     if (!(await c.sessions.get(sessionId))) {
       const fresh = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId, seed: sessionId === c.demo.sessionId ? "demo" : undefined });
       sessionId = fresh.id;

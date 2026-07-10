@@ -7,14 +7,16 @@ import { streamArena } from "@lib/arena-client";
 import { DEFAULT_RULES, KNOWLEDGE_ASSETS, TRAIN_SEED_KEY, setupTopicsFor } from "./data";
 import { isOverviewPrompt } from "./overviewPrompt";
 import { SlideView } from "../_components/SlideView";
-import { TavusStage } from "../_components/TavusStage";
+import { VideoAgentStage } from "../_components/VideoAgentStage";
+import { StudioAgentMode } from "./StudioAgentMode";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 
-type StudioMode = "setup" | "pitch" | "train" | "rules" | "readiness";
+type StudioMode = "setup" | "agent" | "pitch" | "train" | "rules" | "readiness";
 const MODES: { key: StudioMode; label: string }[] = [
   { key: "setup", label: "Build" },
+  { key: "agent", label: "Agent" },
   { key: "pitch", label: "Pitch & Script" },
-  { key: "train", label: "Training & Preview" },
+  { key: "train", label: "Training" },
   { key: "rules", label: "Rules" },
   { key: "readiness", label: "Readiness" },
 ];
@@ -43,7 +45,7 @@ interface UiRule {
   sourceMessage?: string;
 }
 interface StudioSnap {
-  rep: { displayName: string; state: string };
+  rep: { displayName: string; state: string; voiceStyle?: string };
   readiness: { pct: number; canLaunch: boolean; items: { key: string; label: string; done: boolean; blocking: boolean }[] };
   sections: { key: string; title: string; status: string; fields: { key: string; label: string; value: string; inferred: boolean }[] }[];
   rules: UiRule[];
@@ -217,11 +219,12 @@ export function StudioScreen({ app }: { app: AppState }) {
           ))}
         </div>
         <span style={{ font: "500 12px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", flex: 1, minWidth: 220 }}>
-          {mode === "setup" ? "Answer DocNexus's questions on the left — it drafts each section on the right." : mode === "pitch" ? "Pick the deck, perfect the slide-by-slide script. Coach any line — approved text changes go through MLR." : mode === "train" ? "Free-flow practice: ask anything a doctor might, coach the answers. The deck follows the conversation." : mode === "rules" ? "Guardrails are locked. Drafts from coaching need review before they go live." : "Resolve the checklist, then submit for approval."}
+          {mode === "setup" ? "Answer DocNexus's questions on the left — it drafts each section on the right." : mode === "agent" ? "Pick who your rep is on video — face and voice. Browse the gallery or train your own from footage." : mode === "pitch" ? "Pick the deck, perfect the slide-by-slide script. Coach any line — approved text changes go through MLR." : mode === "train" ? "Free-flow practice: ask anything a doctor might, coach the answers. The deck follows the conversation." : mode === "rules" ? "Guardrails are locked. Drafts from coaching need review before they go live." : "Resolve the checklist, then submit for approval."}
         </span>
       </div>
 
       {mode === "setup" && <BuildMode repName={repName} snap={snap} post={post} app={app} refresh={refresh} />}
+      {mode === "agent" && <StudioAgentMode voiceStyle={snap?.rep.voiceStyle} onVoiceStyle={(v) => post({ action: "answer", questionKey: "voice_style", value: v })} />}
       {mode === "pitch" && <PitchMode />}
       {mode === "train" && <TrainMode rules={rules} post={post} repName={repName} app={app} />}
       {mode === "rules" && <RulesMode rules={rules} post={post} />}
@@ -717,7 +720,7 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
                 )}
                 {sec.key === "rules" && (
                   <div style={{ paddingTop: 14 }}>
-                    <div style={{ font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 13 }}>Required and forbidden talking points the rep must follow — gated by compliance. Most rules are written for you when you coach the rep in Training &amp; Preview. Manage the full set, by scope, in Rules.</div>
+                    <div style={{ font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 13 }}>Required and forbidden talking points the rep must follow — gated by compliance. Most rules are written for you when you coach the rep in Training. Manage the full set, by scope, in Rules.</div>
                     <button onClick={() => app.setStudioMode("rules")} style={{ ...btnPrimary, padding: "9px 15px", font: "600 12px/1 var(--dn-font-sans)" }}>Open Rules →</button>
                   </div>
                 )}
@@ -1296,11 +1299,11 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
       {/* Rep preview + drive */}
       <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
         {showVideo ? (
-          <TavusStage onClose={() => setShowVideo(false)} />
+          <VideoAgentStage onClose={() => setShowVideo(false)} />
         ) : (
           <div style={{ position: "relative", borderRadius: 15, overflow: "hidden", aspectRatio: "4/3", background: "radial-gradient(120% 120% at 50% 0%, #15315f 0%, #0a1a33 60%, #060f1f 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "var(--dn-shadow-dark)" }}>
             <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "center", gap: 7, background: "rgba(0,0,0,.4)", padding: "6px 11px", borderRadius: 8, border: "1px solid rgba(255,255,255,.12)" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fbbf24" }} /><span style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "#fff" }}>AI rep · {repName}</span></div>
-            <button onClick={() => setShowVideo(true)} title="Preview the live video rep (DocNexus Agent)" style={{ position: "absolute", top: 12, right: 12, background: "rgba(255,255,255,.14)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "6px 10px", font: "600 11px/1 var(--dn-font-sans)", cursor: "pointer" }}>🎥 Video</button>
+            <button onClick={() => setShowVideo(true)} title="Watch the live video rep (DocNexus Agent)" style={{ position: "absolute", top: 12, right: 12, background: "rgba(255,255,255,.14)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "6px 10px", font: "600 11px/1 var(--dn-font-sans)", cursor: "pointer" }}>🎥 Video</button>
             <div style={{ width: 96, height: 96, borderRadius: "50%", background: "linear-gradient(160deg,#2d4f86,#1a3258)", display: "flex", alignItems: "flex-end", justifyContent: "center", overflow: "hidden", boxShadow: "0 0 0 6px rgba(96,165,250,.12)" }}><svg width="68" height="68" viewBox="0 0 24 24" fill="rgba(191,219,254,.9)"><circle cx="12" cy="8" r="4.2" /><path d="M3.5 21c0-4.4 3.8-7.5 8.5-7.5s8.5 3.1 8.5 7.5z" /></svg></div>
             <div style={{ marginTop: 14, font: "600 13.5px/1 var(--dn-font-sans)", color: "rgba(255,255,255,.92)" }}>{repName}</div>
             <div className="rep-eq" data-on={exchanges.length > 0} style={{ marginTop: 12 }}><span /><span /><span /><span /><span /></div>

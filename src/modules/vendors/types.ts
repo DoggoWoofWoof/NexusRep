@@ -14,7 +14,8 @@ export interface RealtimeSessionConfig {
   tools: { name: string; description: string; parameters?: Record<string, unknown> }[];
   voice?: VoiceConfig;
   /** Video-avatar id for providers that render one (Tavus replica / "face"). */
-  replicaId?: string;
+  /** Which video agent fronts this session (an AgentSummary id). */
+  agentId?: string;
   /** Reuse an existing persona instead of creating one per session. */
   personaId?: string;
   /** Cache key for the auto-created persona (one persona PER BRAND, e.g. the brandId) —
@@ -58,6 +59,31 @@ export interface RealtimeSystemEvent {
 export interface ToolResult {
   toolName: string;
   result: unknown;
+}
+
+/** One selectable video agent: a face + its bundled voice. Canonical NexusRep object —
+ *  vendors call these "replicas" (Tavus), "avatars" (HeyGen), etc.; nothing outside a
+ *  vendor adapter ever sees those terms. */
+export interface AgentSummary {
+  id: string;
+  name: string;
+  /** stock = provided by the vendor's library; personal = trained on the brand's own footage. */
+  kind: "stock" | "personal";
+  status: "ready" | "training" | "error";
+  thumbnailUrl?: string;
+}
+
+/** Optional capability: providers that expose a browsable agent catalog implement this
+ *  alongside RealtimeProvider. Callers feature-detect via hasAgentCatalog() — swapping the
+ *  vendor never changes a caller. */
+export interface AgentCatalog {
+  listAgents(): Promise<AgentSummary[]>;
+  createAgent(input: { name: string; trainVideoUrl: string }): Promise<AgentSummary>;
+}
+
+export function hasAgentCatalog(p: unknown): p is AgentCatalog {
+  const c = p as Partial<AgentCatalog> | null;
+  return typeof c?.listAgents === "function" && typeof c?.createAgent === "function";
 }
 
 export interface RealtimeProvider {

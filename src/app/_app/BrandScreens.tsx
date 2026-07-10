@@ -745,7 +745,7 @@ function SessionDetail({ app }: { app: AppState }) {
         <p style={{ font: "400 12.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "0 0 12px" }}>{app.selectedSessionId} · {mmss(effectiveDuration)} · {detail.audit.length} audited events — every turn is a provable record.</p>
         {recordingShort && (
           <div style={{ margin: "0 0 12px", padding: "9px 12px", border: "1px solid #f3c969", background: "#fff8e6", borderRadius: 8, font: "600 11.5px/1.45 var(--dn-font-sans)", color: "#7a4b00" }}>
-            Recording ends at {mmss(Math.round(vidDur))}, but the transcript runs to {mmss(Math.round(estTotal))}. Later transcript lines were logged after the captured Tavus media stopped, so this replay is not a clean recording.
+            Recording ends at {mmss(Math.round(vidDur))}, but the transcript runs to {mmss(Math.round(estTotal))}. Later transcript lines were logged after the captured video stream stopped, so this replay is not a clean recording.
           </div>
         )}
         {/* Compact stat strip (was a tall 5-card grid) — keeps the replay above the fold. */}
@@ -990,7 +990,7 @@ function Admin() {
       <p style={{ font: "400 13px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "0 0 16px", maxWidth: 720 }}>Not visible to brand teams. The runtime vendor stack is swappable without changing governance — brand users only configure persona, content, targeting and outreach.</p>
       <div style={{ marginBottom: 22, font: "500 12px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>
         Model A/B testing (Claude / OpenAI / Thinking Machines, latency + streaming) lives inside the AI rep
-        conversation — open <strong>AI Rep → Training &amp; Preview → ⚙ Model lab</strong>.
+        conversation — open <strong>AI Rep → Training → ⚙ Model lab</strong>.
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div style={{ ...card, padding: "20px 22px" }}>

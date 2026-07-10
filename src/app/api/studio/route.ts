@@ -60,7 +60,7 @@ function toUiRule(r: TrainingRule, personaName: string) {
 function shape(snap: StudioSnapshot) {
   const personaName = snap.rep.persona.displayName;
   return {
-    rep: { displayName: personaName, state: snap.rep.state },
+    rep: { displayName: personaName, state: snap.rep.state, voiceStyle: snap.rep.persona.voiceStyle },
     readiness: snap.readiness,
     sections: snap.draft.sections,
     rules: snap.rules.map((r) => toUiRule(r, personaName)),

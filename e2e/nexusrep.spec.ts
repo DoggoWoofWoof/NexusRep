@@ -137,7 +137,7 @@ test.describe("Studio — Train / coach / rules (self-serve)", () => {
   test("Training re-answers the rep from your coaching, and accepting saves a scoped rule", async ({ page }) => {
     await page.goto("/");
     await nav(page, "AI Rep").click();
-    await page.getByText("Training & Preview").click();
+    await page.getByText("Training", { exact: true }).click();
     await page.getByRole("button", { name: "Ask" }).click();
     await expect(page.getByText(/investigational|Factor XIa|LIBREXIA/i).first()).toBeVisible({ timeout: 15_000 });
     // Coach the answer → the rep tries again. The coaching note stays VISIBLE in the thread.
@@ -193,4 +193,38 @@ test.describe("Audience + Review", () => {
     await expect(page.getByText("Coach the rep").first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/You \(as HCP\)/i).first()).toBeVisible({ timeout: 20_000 });
   });
+});
+
+test("agent gallery: browse, filter, select (fixture-backed)", async ({ page }) => {
+  // Deterministic vendor catalog; the POST echoes the new selection back the way
+  // the real route does, so this exercises the full client wiring.
+  const agents = [
+    { id: "agent_a", name: "Avery - Office", kind: "stock", status: "ready" },
+    { id: "agent_b", name: "Blake - Office", kind: "stock", status: "ready" },
+    { id: "agent_c", name: "Casey - Desk", kind: "stock", status: "ready" },
+  ];
+  let selected: string | null = null;
+  let lastSelectBody: Record<string, unknown> | null = null;
+  await page.route("**/api/realtime/agents", async (route) => {
+    if (route.request().method() === "POST") {
+      lastSelectBody = route.request().postDataJSON() as Record<string, unknown>;
+      selected = (lastSelectBody.agentId as string) ?? null;
+    }
+    await route.fulfill({ json: { configured: true, selected, selectedName: null, defaultReplicaId: "agent_a", agents } });
+  });
+  await page.goto("/");
+  await page.locator("aside").getByText("AI Rep", { exact: false }).first().click();
+  await page.getByText("Agent", { exact: true }).click();
+  await expect(page.getByTestId("agent-card")).toHaveCount(3, { timeout: 15_000 });
+
+  // Search narrows the gallery without scrolling the page.
+  await page.getByPlaceholder(/Search agents/).fill("office");
+  await expect(page.getByTestId("agent-card")).toHaveCount(2);
+  await page.getByPlaceholder(/Search agents/).fill("");
+
+  // Selecting an agent posts the canonical agentId and marks the card in use.
+  const casey = page.getByTestId("agent-card").filter({ hasText: "Casey - Desk" });
+  await casey.getByRole("button", { name: "Select" }).click();
+  await expect(casey.getByText("✓ In use")).toBeVisible({ timeout: 10_000 });
+  expect(lastSelectBody).toMatchObject({ action: "select", agentId: "agent_c" });
 });

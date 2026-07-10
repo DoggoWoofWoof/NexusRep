@@ -112,3 +112,22 @@ describe("StudioService persistence", () => {
     expect((await studio.get(aiRepId))?.guidedOverview.steps[1]?.slideId).toBe("slide_moa");
   });
 });
+
+describe("Agent gallery appearance", () => {
+  it("persists the selected video agent and clears back to default", async () => {
+    const studio = await fresh();
+    await studio.setAppearance(aiRepId, { agentId: "agent_abc123", agentName: "Nora" });
+    let snap = await studio.get(aiRepId);
+    expect(snap?.appearance).toMatchObject({ agentId: "agent_abc123", agentName: "Nora" });
+    // Clearing stores null — callers fall back to the deployment default.
+    await studio.setAppearance(aiRepId, { agentId: null });
+    snap = await studio.get(aiRepId);
+    expect(snap?.appearance?.agentId).toBeNull();
+  });
+
+  it("returns null for an unknown rep (no phantom state created)", async () => {
+    const studio = await fresh();
+    const out = await studio.setAppearance(asId("airep_missing"), { agentId: "agent_1" });
+    expect(out).toBeNull();
+  });
+});

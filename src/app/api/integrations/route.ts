@@ -39,9 +39,9 @@ export async function GET(): Promise<NextResponse> {
   const seats = [
     seat(
       "Realtime / conversation",
-      realtime.name === "tavus" ? "DocNexus Agent" : "Mock realtime",
-      realtime.name === "tavus" ? "connected" : "simulated",
-      realtime.name === "tavus" ? "Replies produced by the NexusRep compliance endpoint" : "Set TAVUS_API_KEY for the live video rep",
+      realtime.name !== "mock" ? "DocNexus Agent" : "Mock realtime",
+      realtime.name !== "mock" ? "connected" : "simulated",
+      realtime.name !== "mock" ? "Replies produced by the NexusRep compliance endpoint" : "Set TAVUS_API_KEY for the live video rep",
     ),
     seat("Voice — TTS / ASR", voice.name === "mock" ? "Browser speech (built-in)" : voice.name, voice.name === "mock" ? "simulated" : "connected"),
     seat("Avatar", avatar.name === "mock" ? "TalkingHead 3D (built-in) · DocNexus Agent" : avatar.name, env.tavusApiKey ? "connected" : "simulated"),

@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from "react";
 import { HcpExperience } from "../_app/HcpExperience";
-import { TavusStage } from "../_components/TavusStage";
+import { VideoAgentStage } from "../_components/VideoAgentStage";
 
 export default function HcpRoute() {
   // Render the doctor view immediately (no blank flash); only the recorder's rare
@@ -23,6 +23,6 @@ export default function HcpRoute() {
     if (params.get("bare") === "1") setBare(true);
     setHcp(params.get("hcp") ?? ""); // per-doctor invite identity (validated server-side)
   }, []);
-  if (bare) return <TavusStage bare onClose={() => setBare(false)} hcpId={hcp || undefined} />;
+  if (bare) return <VideoAgentStage bare onClose={() => setBare(false)} hcpId={hcp || undefined} />;
   return <HcpExperience />;
 }

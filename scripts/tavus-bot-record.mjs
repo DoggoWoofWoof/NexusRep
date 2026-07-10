@@ -3,12 +3,12 @@
  * doctor view (/hcp → Video) — not the raw Daily room — so the recording shows the
  * product (replica video + captions), never Daily's Record/Share/People chrome.
  *
- * Because it drives our UI, TavusStage logs every utterance (both sides, greeting
+ * Because it drives our UI, VideoAgentStage logs every utterance (both sides, greeting
  * included) into the call's own session, so the transcript matches the recording.
  *
  * Flow:
  *   1. Open /hcp headless (fake mic), click the "Video" mode pill.
- *   2. TavusStage opens a Tavus conversation (its own session) + joins; the replica
+ *   2. VideoAgentStage opens a Tavus conversation (its own session) + joins; the replica
  *      greets. Read window.__nexusrep for the sessionId + conversationUrl.
  *   3. Playwright records the page → a .webm of our clean UI.
  *   4. Leave + END the Tavus conversation immediately (free the concurrent slot).
@@ -69,7 +69,7 @@ async function main() {
       if (info?.sessionId) { sessionId = info.sessionId; convId = info.conversationUrl ? new URL(info.conversationUrl).pathname.split("/").filter(Boolean).pop() : ""; }
       if (!sessionId) await sleep(1000);
     }
-    if (!sessionId) throw new Error("TavusStage did not start a conversation (Tavus configured? dev server up?)");
+    if (!sessionId) throw new Error("VideoAgentStage did not start a conversation (Tavus configured? dev server up?)");
     console.log("   sessionId:", sessionId, "| conversationId:", convId);
 
     // Recorder appears when the replica's first frame is live → boot is trimmed.

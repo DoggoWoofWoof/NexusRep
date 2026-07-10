@@ -63,7 +63,7 @@ async function main() {
         convId = convIdFromUrl(nx.conversationUrl);
       }
       const tavusState = await page.evaluate(() => {
-        const t = window.__nexusrepTavus;
+        const t = window.__nexusrepVideoAgent;
         if (!t) return null;
         return {
           stage: typeof t.getStage === "function" ? t.getStage() : undefined,
@@ -77,7 +77,7 @@ async function main() {
     }
     if (!sessionId) {
       const tavusState = await page.evaluate(() => {
-        const t = window.__nexusrepTavus;
+        const t = window.__nexusrepVideoAgent;
         if (!t) return null;
         return {
           stage: typeof t.getStage === "function" ? t.getStage() : undefined,
@@ -232,7 +232,7 @@ async function startedCount(page) {
 
 async function assertTavusLive(page) {
   const state = await page.evaluate(() => {
-    const t = window.__nexusrepTavus;
+    const t = window.__nexusrepVideoAgent;
     if (!t) return null;
     return {
       stage: typeof t.getStage === "function" ? t.getStage() : undefined,

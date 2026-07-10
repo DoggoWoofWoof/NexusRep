@@ -54,7 +54,7 @@ describe("Tavus realtime adapter", () => {
       tools: [{ name: "route_to_msl", description: "route", parameters: { type: "object", properties: {} } }],
       customGreeting: "hi doctor",
       customLlm: { baseUrl: "https://app.example/api/tavus/llm", model: "nexusrep-compliance" },
-      replicaId: "r1",
+      agentId: "r1",
     });
 
     expect(session.provider).toBe("tavus");
@@ -153,5 +153,57 @@ describe("Tavus conversation cleanup", () => {
     vi.stubGlobal("fetch", (async () => new Response("nope", { status: 500 })) as typeof fetch);
     const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1" });
     expect(await tavus.endActiveConversations()).toBe(0);
+  });
+});
+
+// ── Agent gallery: list stock + personal agents, start training a new one ──
+describe("Tavus agent catalog (vendor replicas -> canonical AgentSummary)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("listAgents merges personal + stock lists, maps status, dedupes by id", async () => {
+    vi.stubGlobal("fetch", (async (url: string) => {
+      const u = String(url);
+      if (u.includes("replica_type=system")) {
+        return new Response(JSON.stringify({ data: [
+          { replica_id: "rs1", replica_name: "Nora", status: "completed", thumbnail_video_url: "https://cdn/nora.mp4" },
+          { replica_id: "rp1", replica_name: "Duplicate of mine", status: "completed" },
+        ] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: [
+        { replica_id: "rp1", replica_name: "Our presenter", status: "training", replica_type: "user" },
+      ] }), { status: 200 });
+    }) as typeof fetch);
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1" });
+    const list = await tavus.listAgents();
+    expect(list).toHaveLength(2); // rp1 deduped — the personal record wins
+    const mine = list.find((r) => r.id === "rp1")!;
+    expect(mine).toMatchObject({ kind: "personal", status: "training", name: "Our presenter" });
+    const nora = list.find((r) => r.id === "rs1")!;
+    expect(nora).toMatchObject({ kind: "stock", status: "ready", thumbnailUrl: "https://cdn/nora.mp4" });
+  });
+
+  it("listAgents survives one list failing (returns the other)", async () => {
+    vi.stubGlobal("fetch", (async (url: string) => {
+      if (String(url).includes("replica_type=system")) return new Response("boom", { status: 500 });
+      return new Response(JSON.stringify({ data: [{ replica_id: "rp1", replica_name: "Mine", status: "completed" }] }), { status: 200 });
+    }) as typeof fetch);
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1" });
+    const list = await tavus.listAgents();
+    expect(list.map((r) => r.id)).toEqual(["rp1"]);
+  });
+
+  it("createAgent POSTs name + train video and returns a training summary", async () => {
+    let sent: unknown = null;
+    vi.stubGlobal("fetch", (async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith("/replicas") && init?.method === "POST") {
+        sent = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ replica_id: "rnew1", status: "training" }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch);
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1" });
+    const created = await tavus.createAgent({ name: "Dr. Patel", trainVideoUrl: "https://cdn/train.mp4" });
+    expect(sent).toEqual({ replica_name: "Dr. Patel", train_video_url: "https://cdn/train.mp4" });
+    expect(created).toMatchObject({ id: "rnew1", kind: "personal", status: "training" });
   });
 });

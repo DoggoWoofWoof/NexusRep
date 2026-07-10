@@ -67,7 +67,7 @@ export async function seedDemoHistory(deps: SeedDeps): Promise<void> {
       questionCount: s.questionCount,
       complianceStatus: s.status,
       turns: [],
-      ...(s.sid === "session_sx4471" ? { tavusConversationId: "seed_tavus_sx4471", recordingUrl: "/recordings/seeded-session-sx4471.webm" } : {}),
+      ...(s.sid === "session_sx4471" ? { vendorConversationId: "seed_call_sx4471", recordingUrl: "/recordings/seeded-session-sx4471.webm" } : {}),
     });
 
     if (s.follow) {

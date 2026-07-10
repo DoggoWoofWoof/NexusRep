@@ -9,6 +9,29 @@
 
 ## 1. Current build status
 
+### Latest: Agent gallery + vendor-neutral realtime layer (2026-07-10)
+
+- **New Studio mode: "Agent"** (between Build and Pitch & Script): browse the video-agent
+  gallery — your own trained agents + the vendor's stock library — with **search**, data-derived
+  **setting filters** (Office, Studio…), an **older-versions toggle** (deprecated agents hidden by
+  default), and a **scrollable grid** (90+ agents never scroll the page). Selecting an agent
+  persists (`StudioState.appearance.agentId`) and every video call uses it; "Train your own agent"
+  starts a personal agent from footage (consent + custom-slot warning, status shows as Training).
+  Voice & tone chips live here too (voice is bundled with the agent; tone = persona voice style).
+- **"Training & Preview" is now just "Training"** (tab, copy, pointers).
+- **Vendor-neutral realtime layer** (no vendor lock, per the adapter rule): canonical
+  `AgentSummary`/`AgentCatalog` types (`hasAgentCatalog` feature-detect) — vendor "replica"
+  vocabulary exists ONLY inside `src/modules/vendors/tavus.ts`; generic routes
+  `/api/realtime/conversation` (+`/end`) and `/api/realtime/agents`; `lib/active-call.ts`
+  (was tavus-session); client `VideoAgentStage` + a **transport registry**
+  (`video-transport.ts`) keyed by provider name — adding a vendor = one adapter + one transport,
+  zero changes to stages/routes/Studio. Vendor-named endpoints that remain are the ones the
+  vendor itself calls (`/api/tavus/llm`, `/api/tavus/webhook`) — they ARE the adapter surface.
+- Session config field renamed `replicaId` → `agentId` (canonical); the Tavus adapter maps it.
+- Tests: catalog parsing (merge/dedupe/status), appearance persistence, e2e agent-gallery
+  functional flow (fixture-backed select + search) + `studio-agent.png` visual baseline.
+
+
 NexusRep is a real, runnable **Next.js (App Router) + TypeScript modular monolith**.
 The full brand console + HCP doctor experience are built and match the original
 `NexusRep.dc.html` mockup, with a real (mock-data) compliance/conversation engine

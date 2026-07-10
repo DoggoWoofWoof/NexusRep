@@ -4,7 +4,7 @@
  * the avatar slot + click-through transcript + slides that move with playback).
  *
  * Drives the real doctor view (/hcp → HcpExperience), turns on the video rep, WAITS
- * for the greeting to finish (no race), then asks a scripted sequence. TavusStage
+ * for the greeting to finish (no race), then asks a scripted sequence. VideoAgentStage
  * records only the replica stream (window.__nexusrepRecord) starting at its first live
  * frame (boot trimmed). Run: node scripts/record-session-replay.mjs
  */

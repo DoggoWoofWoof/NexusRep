@@ -41,7 +41,8 @@ export interface ConversationSession {
   complianceStatus: SessionComplianceStatus;
   turns: ConversationTurn[];
   /** Tavus conversation id backing this session (for recording callbacks). */
-  tavusConversationId?: string;
+  /** The realtime vendor's conversation id for this call (whichever provider ran it). */
+  vendorConversationId?: string;
   /** Playback recording URL once Tavus's recording_ready callback lands. */
   recordingUrl?: string;
 }
@@ -179,13 +180,13 @@ export class SessionService {
   }
 
   /** Link the Tavus conversation so its recording callback can find this session. */
-  async setTavusConversation(sessionId: SessionId, tavusConversationId: string): Promise<ConversationSession | null> {
-    return this.sessions.update(sessionId, { tavusConversationId });
+  async setVendorConversation(sessionId: SessionId, vendorConversationId: string): Promise<ConversationSession | null> {
+    return this.sessions.update(sessionId, { vendorConversationId });
   }
 
   /** Attach a playback recording URL, keyed by the Tavus conversation id. */
-  async attachRecording(tavusConversationId: string, recordingUrl: string): Promise<ConversationSession | null> {
-    const [match] = await this.sessions.list({ where: { tavusConversationId } });
+  async attachRecording(vendorConversationId: string, recordingUrl: string): Promise<ConversationSession | null> {
+    const [match] = await this.sessions.list({ where: { vendorConversationId } });
     if (!match) return null;
     return this.sessions.update(match.id, { recordingUrl });
   }

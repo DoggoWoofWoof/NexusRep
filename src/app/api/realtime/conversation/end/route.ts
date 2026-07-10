@@ -1,7 +1,7 @@
 /**
- * Ends a Tavus conversation by id — the preview calls this on close so the conversation
- * doesn't linger and consume one of the account's concurrent-conversation slots. Best-effort,
- * always returns JSON (never throws an HTML error the client can't parse).
+ * Ends a live video conversation by id — the client calls this on close so the conversation
+ * doesn't linger and consume one of the vendor account's concurrent-session slots. Vendor-
+ * neutral (whatever getRealtimeProvider() resolves). Best-effort, always returns JSON.
  */
 
 import { NextResponse } from "next/server";
