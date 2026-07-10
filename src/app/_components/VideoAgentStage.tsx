@@ -18,11 +18,15 @@ type Stage = "loading" | "unconfigured" | "joining" | "live" | "error";
  *  (verbatim, via the transport's echo) — used for typed turns while on video. */
 export interface VideoAgentStageHandle {
   speak: (text: string) => void;
+  /** Mute/unmute the AGENT's audio (what the doctor hears). */
+  setMuted: (muted: boolean) => void;
+  /** Enable/disable the doctor's own microphone on the call. */
+  setMicEnabled: (on: boolean) => void;
 }
 
 type RepTurnNotice = { text: string; detailAidSlideId?: string | null; sourceIds?: string[] };
 
-export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; hcpId?: string }>(function VideoAgentStage({ onClose, bare = false, onRepTurn, hcpId }, ref) {
+export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; onHcpUtterance?: (text: string) => void; hcpId?: string; onMutedChange?: (muted: boolean) => void }>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, hcpId, onMutedChange }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const transportRef = useRef<VideoCallTransport | null>(null);
@@ -39,13 +43,22 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
 
   // Make the agent speak our (already gated) text verbatim, via the transport.
   const speakAgent = (text: string): boolean => transportRef.current?.speak(text) ?? false;
-  useImperativeHandle(ref, () => ({ speak: (text: string) => { speakAgent(text); } }), []);
+  const applyMuted = (m: boolean) => { setMuted(m); onMutedChange?.(m); };
+  useImperativeHandle(ref, () => ({
+    speak: (text: string) => { speakAgent(text); },
+    setMuted: (m: boolean) => { applyMuted(m); },
+    setMicEnabled: (on: boolean) => { setMicOn(on); transportRef.current?.setMicEnabled(on); },
+  }));
   // Guards React StrictMode's double-invoke of effects in dev — without it the
   // component opens TWO vendor conversations (wasted minutes + a concurrent-slot clash).
   const startedRef = useRef(false);
   const [stage, setStage] = useState<Stage>("loading");
   const [note, setNote] = useState("");
   const [muted, setMuted] = useState(false);
+  const [micOn, setMicOn] = useState(true);
+  // join() resolves before the agent publishes media — keep the connecting status up
+  // until the first real frame instead of showing an empty black pane.
+  const [hasVideo, setHasVideo] = useState(false);
 
   useEffect(() => {
     onRepTurnRef.current = onRepTurn;
@@ -182,7 +195,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
 
         await transport.join({
           onTrack: (kind, stream) => {
-            if (kind === "video" && videoRef.current) { videoRef.current.srcObject = stream; void videoRef.current.play?.(); }
+            if (kind === "video" && videoRef.current) { videoRef.current.srcObject = stream; void videoRef.current.play?.(); setHasVideo(true); }
             if (kind === "audio" && audioRef.current) { audioRef.current.srcObject = stream; void audioRef.current.play?.(); }
             // Fallback: if the agent never emits an utterance event, still start recording a few
             // seconds after the video track arrives so we never miss a clip. The PRIMARY start is
@@ -196,9 +209,14 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             w.__nexusrepEvents = [...(w.__nexusrepEvents ?? []).slice(-40), e];
           },
           onUtterance: ({ speaker, text }) => {
+            // ASR silence/noise artifacts are not speech — never caption or log them.
+            if (/^\s*[[(]\s*(?:blank[_ ]?audio|inaudible|silence|no[_ ]?speech|noise|music|applause|laughter)\s*[\])]\s*$/i.test(text)) return;
             // Begin the recording at the agent's FIRST words (the greeting) so the clip trims
             // the connect boot + any idle before the rep speaks. No-op once already recording.
             if (speaker === "rep") maybeStartRec();
+            // The doctor's SPOKEN words must appear in the captions like typed ones do —
+            // without this, a voice-only conversation has no "You" lines at all.
+            if (speaker === "hcp") onHcpUtterance?.(text);
             const sid = sessionIdRef.current;
             if (!sid) return;
             const key = `${speaker}:${text}`;
@@ -254,12 +272,13 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     : { position: "relative", borderRadius: "var(--dn-radius-lg)", overflow: "hidden", background: "#0a1a33", aspectRatio: "4 / 3", display: "flex", alignItems: "center", justifyContent: "center" };
   return (
     <div style={container}>
-      <video ref={videoRef} autoPlay playsInline muted={false} style={{ width: "100%", height: "100%", objectFit: "cover", display: stage === "live" ? "block" : "none" }} />
+      <video ref={videoRef} autoPlay playsInline muted={false} style={{ width: "100%", height: "100%", objectFit: "cover", display: stage === "live" && hasVideo ? "block" : "none" }} />
       <audio ref={audioRef} autoPlay muted={muted} />
-      {stage !== "live" && (
+      {(stage !== "live" || !hasVideo) && (
         <div style={{ color: "#cfe0f6", textAlign: "center", padding: 20, fontSize: 13, maxWidth: 420 }}>
           {stage === "loading" && "Starting the video rep…"}
           {stage === "joining" && "Connecting to the DocNexus Agent…"}
+          {stage === "live" && !hasVideo && "The agent is joining — video starts in a few seconds…"}
           {stage === "unconfigured" && note}
           {stage === "error" && `Couldn't start the video rep: ${note}`}
         </div>
@@ -270,7 +289,10 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
       {!bare && (
         <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6 }}>
           {stage === "live" && (
-            <button onClick={() => setMuted((m) => !m)} aria-label={muted ? "Unmute" : "Mute"} title={muted ? "Unmute the agent" : "Mute the agent"} style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>{muted ? "🔇" : "🔊"}</button>
+            <>
+              <button onClick={() => { const next = !micOn; setMicOn(next); transportRef.current?.setMicEnabled(next); }} aria-label={micOn ? "Mute my microphone" : "Unmute my microphone"} title={micOn ? "Mute my microphone" : "Unmute my microphone"} style={{ background: micOn ? "rgba(255,255,255,.15)" : "rgba(220,38,38,.75)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>{micOn ? "🎙" : "🎙✕"}</button>
+              <button onClick={() => applyMuted(!muted)} aria-label={muted ? "Unmute the agent" : "Mute the agent"} title={muted ? "Unmute the agent" : "Mute the agent"} style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>{muted ? "🔇" : "🔊"}</button>
+            </>
           )}
           <button onClick={onClose} style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>End video</button>
         </div>

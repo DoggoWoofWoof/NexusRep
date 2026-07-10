@@ -32,6 +32,10 @@ export function HcpExperience({ app }: { app?: AppState }) {
   const [speaking, setSpeaking] = useState(false);
   const [threeD, setThreeD] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
+  // Video-call audio state mirrored from the stage (the header button proxies to it —
+  // controls must not disappear when the mode changes).
+  const [videoMuted, setVideoMuted] = useState(false);
+  const [callMicOn, setCallMicOn] = useState(true);
   const [videoOn, setVideoOn] = useState(false);
   const [deckFocus, setDeckFocus] = useState<string>(""); // "" → SlideView shows the first slide (title)
   const [fs, setFs] = useState(false);
@@ -108,19 +112,35 @@ export function HcpExperience({ app }: { app?: AppState }) {
     slideTimerRef.current = window.setTimeout(() => setDeckFocus(id), slideCueDelay(spokenText));
   }
 
+  // The preloaded greeting is swapped for the agent's actual spoken greeting EXACTLY once.
+  // The old heuristic ("no HCP messages yet -> replace everything") wiped the captions on
+  // every reply in a voice-only conversation, where spoken turns weren't in `msgs`.
+  const greetingSwappedRef = useRef(false);
+
   function syncVideoRepTurn(turn: { text: string; detailAidSlideId?: string | null }) {
     const text = turn.text.trim();
     if (!text) return;
     setMsgs((current) => {
       const norm = (s: string) => s.replace(/\s+/g, " ").trim();
       if (current.some((m) => m.role === "rep" && norm(m.text) === norm(text))) return current;
-      const hasHcp = current.some((m) => m.role === "hcp");
-      // Before the doctor asks anything, the only local rep line is the preloaded greeting.
-      // Replace it with the actual Tavus-spoken greeting so the video caption and transcript match.
-      if (!hasHcp && current.every((m) => m.role === "rep")) return [{ role: "rep", text }];
+      if (!greetingSwappedRef.current && current.length === 1 && current[0]!.role === "rep") {
+        greetingSwappedRef.current = true;
+        return [{ role: "rep", text }];
+      }
       return [...current, { role: "rep", text }];
     });
     cueSlide(turn.detailAidSlideId, text);
+  }
+
+  function addSpokenHcpTurn(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    setMsgs((current) => {
+      const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+      const last = current[current.length - 1];
+      if (last?.role === "hcp" && norm(last.text) === norm(t)) return current; // re-emit dedup
+      return [...current, { role: "hcp", text: t }];
+    });
   }
 
   // Monotonic playback generation: each new ask bumps it, so an in-flight multi-segment
@@ -245,10 +265,13 @@ export function HcpExperience({ app }: { app?: AppState }) {
       {micSupported && (
         <button
           type="button"
-          onClick={videoOn ? undefined : toggleMic}
-          aria-label="Talk"
-          title={videoOn ? "The video call is already listening — just speak" : "Ask by voice"}
-          style={{ padding: "11px 13px", background: listening ? "var(--dn-danger)" : "#fff", color: listening ? "#fff" : videoOn ? "var(--dn-fg-subtle)" : "var(--dn-fg)", border: "1px solid var(--dn-border)", borderRadius: 9, fontSize: 15, cursor: videoOn ? "default" : "pointer", opacity: videoOn ? 0.6 : 1 }}
+          onClick={() => {
+            if (videoOn) { const next = !callMicOn; setCallMicOn(next); videoAgentRef.current?.setMicEnabled(next); }
+            else toggleMic();
+          }}
+          aria-label={videoOn ? (callMicOn ? "Mute my microphone" : "Unmute my microphone") : "Talk"}
+          title={videoOn ? (callMicOn ? "The call is listening — click to mute your microphone" : "Your microphone is muted — click to unmute") : "Ask by voice"}
+          style={{ padding: "11px 13px", background: listening || (videoOn && !callMicOn) ? "var(--dn-danger)" : "#fff", color: listening || (videoOn && !callMicOn) ? "#fff" : "var(--dn-fg)", border: "1px solid var(--dn-border)", borderRadius: 9, fontSize: 15, cursor: "pointer" }}
         >🎤</button>
       )}
       <button onClick={() => void ask(input)} disabled={pending} style={{ padding: "11px 18px", background: "var(--dn-brand-base)", color: "#fff", border: "none", borderRadius: 9, font: "600 13px/1 var(--dn-font-sans)", cursor: "pointer" }}>{pending ? "…" : label}</button>
@@ -302,7 +325,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
               {/* LEFT — the rep (live Tavus video OR the 3D/2D avatar) + one ask bar */}
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {videoOn
-                  ? <VideoAgentStage ref={videoAgentRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} hcpId={inviteHcpId || undefined} />
+                  ? <VideoAgentStage onMutedChange={setVideoMuted} onHcpUtterance={addSpokenHcpTurn} ref={videoAgentRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} hcpId={inviteHcpId || undefined} />
                   : <LiveAvatar ref={liveRef} enabled={threeD} speaking={speaking} fallbackStream={null} fallbackStatus={listening ? "Listening…" : speaking ? "Speaking…" : "Ready"} height={300} />}
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{askBar("Ask")}{tryChips}</div>
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -315,9 +338,15 @@ export function HcpExperience({ app }: { app?: AppState }) {
                   <button onClick={() => request("human")} style={ghostMd}>Request human rep</button>
                   <button onClick={() => request("msl")} style={ghostMd}>Request MSL</button>
                   <button onClick={() => request("ae")} style={{ ...ghostMd, color: "var(--dn-accent-orange)" }}>Report side effect</button>
-                  <button onClick={() => setVideoOn((v) => !v)} title="Live video representative (DocNexus Agent)" style={{ ...ghostMd, color: videoOn ? "#fff" : "var(--dn-fg)", background: videoOn ? "var(--dn-brand-base)" : "#fff" }}>{videoOn ? "🎥 Video on" : "🎥 Video rep"}</button>
+                  <button onClick={() => { setVideoOn((v) => !v); setVideoMuted(false); setCallMicOn(true); greetingSwappedRef.current = false; }} title="Live video representative (DocNexus Agent)" style={{ ...ghostMd, color: videoOn ? "#fff" : "var(--dn-fg)", background: videoOn ? "var(--dn-brand-base)" : "#fff" }}>{videoOn ? "🎥 Video on" : "🎥 Video rep"}</button>
                   {!videoOn && <button onClick={() => setThreeD((v) => !v)} style={{ ...ghostMd, color: threeD ? "#fff" : "var(--dn-fg)", background: threeD ? "var(--dn-brand-base)" : "#fff" }}>{threeD ? "🧑 3D: on" : "🧑 3D avatar"}</button>}
-                  {!videoOn && <button onClick={() => { if (voiceOn) voiceRef.current?.cancel(); setVoiceOn((v) => !v); }} style={ghostMd}>{voiceOn ? "🔊 Sound on" : "🔇 Sound off"}</button>}
+                  <button
+                    onClick={() => {
+                      if (videoOn) { videoAgentRef.current?.setMuted(!videoMuted); }
+                      else { if (voiceOn) voiceRef.current?.cancel(); setVoiceOn((v) => !v); }
+                    }}
+                    style={ghostMd}
+                  >{(videoOn ? !videoMuted : voiceOn) ? "🔊 Sound on" : "🔇 Sound off"}</button>
                   <button onClick={() => setScr("complete")} style={{ marginLeft: "auto", padding: "10px 16px", background: "var(--dn-brand-dark)", color: "#fff", border: "none", borderRadius: 9, font: "600 12px/1 var(--dn-font-sans)", cursor: "pointer" }}>End session →</button>
                 </div>
               </div>

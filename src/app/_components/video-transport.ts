@@ -22,6 +22,8 @@ export interface VideoCallTransport {
   join(events: VideoTransportEvents): Promise<void>;
   /** Make the agent speak our (already gated) text verbatim. False if not connected. */
   speak(text: string): boolean;
+  /** Enable/disable the doctor's microphone on the call (push-to-mute). */
+  setMicEnabled(on: boolean): void;
   leave(): void;
 }
 
@@ -40,7 +42,8 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
   type CallObj = {
     join: (o: { url: string; token?: string }) => Promise<unknown>;
     leave: () => void;
-    destroy: () => void;
+    destroy: () => Promise<void> | void;
+    setLocalAudio: (on: boolean) => void;
     sendAppMessage: (data: unknown, to?: string) => void;
     on: (event: string, cb: (ev: unknown) => void) => void;
   };
@@ -52,6 +55,13 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
   return {
     async join(events: VideoTransportEvents): Promise<void> {
       const Daily = (await import("@daily-co/daily-js")).default;
+      // Daily allows ONE call object per page. A previous call whose async destroy hasn't
+      // finished (closing and reopening the video quickly, a hot reload, an errored start)
+      // otherwise throws "Duplicate DailyIframe instances are not allowed".
+      const existing = (Daily as unknown as { getCallInstance?: () => CallObj | null }).getCallInstance?.();
+      if (existing) {
+        try { await existing.destroy(); } catch { /* already gone */ }
+      }
       call = Daily.createCallObject({ audioSource: true, videoSource: false }) as unknown as CallObj;
       call.on("track-started", (raw) => {
         const ev = raw as { participant?: { local?: boolean }; track?: MediaStreamTrack };
@@ -93,8 +103,13 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
       return true;
     },
 
+    setMicEnabled(on: boolean): void {
+      try { call?.setLocalAudio(on); } catch { /* not connected */ }
+    },
+
     leave(): void {
-      if (call) { try { call.leave(); call.destroy(); } catch { /* noop */ } }
+      // destroy() is async — the join-side singleton guard handles a fast re-open racing it.
+      if (call) { try { call.leave(); void call.destroy(); } catch { /* noop */ } }
       call = null;
     },
   };
