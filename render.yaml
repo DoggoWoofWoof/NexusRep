@@ -24,21 +24,22 @@ services:
     buildCommand: npm ci && npm run build
     startCommand: npm run start
     healthCheckPath: /api/brand
-    # Persistent PGlite storage — coaching, script edits, MLR decisions, uploads and
-    # sessions survive deploys/restarts (~$0.25/GB/mo on top of the Starter instance).
-    disk:
-      name: nexusrep-data
-      mountPath: /var/data
-      sizeGB: 1
+    # NOTE: embedded Postgres (PGlite) needs ~600MB — it does NOT fit the Starter 512MB
+    # instance (measured). So Starter uses the in-memory driver below (no disk needed).
+    # For durable state, either (a) bump to a >=2GB instance and switch the driver to
+    # "postgres" + attach this disk, or (b) point DATABASE_URL at a hosted Postgres.
+    # disk:
+    #   name: nexusrep-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
     envVars:
       - key: NODE_VERSION
         value: 22.12.0
-      # Durable embedded Postgres. With no disk attached this still works but
-      # resets on every deploy; switch to "memory" if that churn is confusing.
+      # In-memory store — fits the 512MB Starter instance (PGlite needs ~600MB). State
+      # re-seeds on every restart. On a >=2GB instance, set this to "postgres", add
+      # PGLITE_DATA_DIR=/var/data/nexusrep, and uncomment the disk above for persistence.
       - key: NEXUSREP_DATA_DRIVER
-        value: postgres
-      - key: PGLITE_DATA_DIR
-        value: /var/data/nexusrep # on the persistent disk — survives deploys/restarts
+        value: memory
       # Starter instances have 512MB — the neural embeddings model (Transformers.js)
       # OOMs at boot when the retrieval index builds. Lexical retrieval runs through the
       # exact same validation + compliance gate; flip to "auto" on a >=2GB instance.
