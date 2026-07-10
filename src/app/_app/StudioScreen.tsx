@@ -10,9 +10,10 @@ import { SlideView } from "../_components/SlideView";
 import { TavusStage } from "../_components/TavusStage";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 
-type StudioMode = "setup" | "train" | "rules" | "readiness";
+type StudioMode = "setup" | "pitch" | "train" | "rules" | "readiness";
 const MODES: { key: StudioMode; label: string }[] = [
   { key: "setup", label: "Build" },
+  { key: "pitch", label: "Pitch & Script" },
   { key: "train", label: "Training & Preview" },
   { key: "rules", label: "Rules" },
   { key: "readiness", label: "Readiness" },
@@ -216,12 +217,13 @@ export function StudioScreen({ app }: { app: AppState }) {
           ))}
         </div>
         <span style={{ font: "500 12px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", flex: 1, minWidth: 220 }}>
-          {mode === "setup" ? "Answer DocNexus's questions on the left — it drafts each section on the right." : mode === "train" ? "Rehearse the pitch DocNexus drafted from your approved deck — or ask anything. Coach a line and the rep tries again." : mode === "rules" ? "Guardrails are locked. Drafts from coaching need review before they go live." : "Resolve the checklist, then submit for approval."}
+          {mode === "setup" ? "Answer DocNexus's questions on the left — it drafts each section on the right." : mode === "pitch" ? "Pick the deck, perfect the slide-by-slide script. Coach any line — approved text changes go through MLR." : mode === "train" ? "Free-flow practice: ask anything a doctor might, coach the answers. The deck follows the conversation." : mode === "rules" ? "Guardrails are locked. Drafts from coaching need review before they go live." : "Resolve the checklist, then submit for approval."}
         </span>
       </div>
 
       {mode === "setup" && <BuildMode repName={repName} snap={snap} post={post} app={app} refresh={refresh} />}
-      {mode === "train" && <TrainMode rules={rules} post={post} repName={repName} app={app} />}
+      {mode === "pitch" && <PitchMode rules={rules} post={post} app={app} />}
+      {mode === "train" && <TrainMode post={post} repName={repName} app={app} />}
       {mode === "rules" && <RulesMode rules={rules} post={post} />}
       {mode === "readiness" && <ReadinessMode snap={snap} submitState={submitState} onSubmit={submit} />}
     </div>
@@ -816,7 +818,354 @@ function splitIsi(text: string): [string, string | null] {
   return parts.length > 1 ? [parts[0]!.trim(), parts.slice(1).join(" ").trim()] : [text, null];
 }
 
-function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; repName: string; app: AppState }) {
+/* ---------- PITCH & SCRIPT — perfect the slide-by-slide script before free-flow training ----------
+ * Same skeleton as Train & Preview, but the PPT sits where the video was: pick (or upload) the
+ * source deck on the left, the knowledge base drafts the script, the middle column is the script
+ * line by line (coach any line in place), and the right column edits sections. Rules live below
+ * the deck. Nothing here creates sessions — it is all rehearsal against the compliance graph. */
+function PitchMode({ rules, post, app }: { rules: UiRule[]; post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; app: AppState }) {
+  const {
+    overviewPlan, activePlanStepId, setActivePlanStepId, activePlanSlideId,
+    planNote, setPlanNote, planMsg, persistOverviewPlan, updatePlanStep,
+    applyPlanNote, movePlanStep, resetOverviewPlan,
+  } = useOverviewPlan();
+
+  const coachingRules = rules.filter((r) => r.source === "feedback");
+
+  // ── The script: what the rep actually SAYS, slide by slide (compliance graph, no sessions).
+  const [script, setScript] = useState<OverviewSegment[] | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [scriptMsg, setScriptMsg] = useState("");
+  const [lineCoach, setLineCoach] = useState<number | null>(null);
+  const [lineNote, setLineNote] = useState("");
+
+  const generate = async () => {
+    if (generating) return;
+    setGenerating(true);
+    setScriptMsg("");
+    try {
+      const res = await fetch("/api/train/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "overview", text: "Can you walk me through the approved information?" }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const d = (await res.json()) as { segments?: OverviewSegment[] };
+      setScript(d.segments ?? []);
+    } catch (e) {
+      setScript([]);
+      setScriptMsg(`Couldn't generate the script: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  useEffect(() => {
+    void generate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Coach ONE line: the note lands on that section's plan instruction (persisted), then the
+  // script regenerates so the change is visible immediately.
+  const coachLine = async (seg: OverviewSegment, note: string) => {
+    const n = note.trim();
+    if (!n) return;
+    setLineCoach(null);
+    setLineNote("");
+    await applyPlanNote(n, seg.stepId ?? activePlanStepId);
+    await generate();
+  };
+
+  // ── Deck sources: which uploaded/approved documents feed the deck + script.
+  const [sources, setSources] = useState<{ id: string; title: string; status: string; slides: number }[] | null>(null);
+  const loadSources = async () => {
+    try {
+      const res = await fetch("/api/content/knowledge");
+      if (!res.ok) return;
+      const d = (await res.json()) as { documents?: { id: string; title: string; status: string; slides?: { id: string }[] }[] };
+      setSources((d.documents ?? []).map((doc) => ({ id: doc.id, title: doc.title, status: doc.status, slides: doc.slides?.length ?? 0 })));
+    } catch { /* progressive */ }
+  };
+  useEffect(() => { void loadSources(); }, []);
+
+  const draftFrom = async (assetId?: string) => {
+    await resetOverviewPlan(assetId);
+    await generate();
+  };
+
+  // Upload straight from here — parsed into the MLR queue (Build) like every source.
+  const [uploadNote, setUploadNote] = useState("");
+  const onUploadDeck = async (file: File | undefined) => {
+    if (!file) return;
+    setUploadNote(`Parsing "${file.name}"…`);
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      const res = await fetch("/api/content/ingest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, contentBase64: btoa(bin) }),
+      });
+      const d = (await res.json()) as { parsed?: { blocks: number }; error?: string };
+      if (!res.ok || !d.parsed) throw new Error(d.error ?? String(res.status));
+      setUploadNote(`Parsed ${d.parsed.blocks} passage(s) from "${file.name}" — approve them in Build → MLR review; the slides join this deck on approval.`);
+      void loadSources();
+    } catch (e) {
+      setUploadNote(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const activeSources = (sources ?? []).filter((d) => d.status === "active" && d.slides > 0);
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr 0.85fr", gap: 15, alignItems: "start" }}>
+      {/* ── LEFT: the PPT (where Train has the video) + deck sources + rules ── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
+        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+          <div style={{ padding: "12px 14px 0" }}>
+            <div style={{ height: 250, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "1px solid var(--dn-border)", background: "var(--dn-surface-2)" }}>
+              <SlideView focusId={activePlanSlideId} compact fill />
+            </div>
+          </div>
+          <div style={{ padding: "9px 14px 12px", font: "400 10.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>The slide for the selected script line — click any line in the middle to jump.</div>
+        </div>
+
+        {/* Deck sources — pick which approved document drafts the script, or upload a new one. */}
+        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "13px 14px", boxShadow: "var(--dn-shadow-card)" }}>
+          <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginBottom: 4 }}>Deck sources</div>
+          <div style={{ font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 10 }}>Approved documents whose slides feed this deck. Draft the script from one source, or from everything approved.</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {sources === null && <div style={{ font: "400 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Loading sources…</div>}
+            {activeSources.map((doc) => (
+              <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", border: "1px solid var(--dn-surface-2)", borderRadius: 9 }}>
+                <span style={{ flex: 1, minWidth: 0, font: "600 11px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{doc.title}</span>
+                <span style={{ flexShrink: 0, font: "500 9.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{doc.slides} slide(s)</span>
+                <button onClick={() => void draftFrom(doc.id)} style={{ ...btnGhost, flexShrink: 0, padding: "5px 8px", font: "600 9.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>Draft script from this</button>
+              </div>
+            ))}
+            {sources !== null && activeSources.length === 0 && <div style={{ font: "400 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>No approved sources with slides yet — upload below and approve in Build.</div>}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--dn-surface-2)" }}>
+            <label style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>
+              ↑ Upload another deck / PDF
+              <input data-testid="upload-deck" type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => void onUploadDeck(e.target.files?.[0])} style={{ display: "none" }} />
+            </label>
+            <button onClick={() => void draftFrom()} style={{ ...btnGhost, padding: "6px 9px", font: "600 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>↺ Draft from all sources</button>
+          </div>
+          {uploadNote && <div style={{ font: "500 10px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginTop: 8 }}>{uploadNote}</div>}
+        </div>
+
+        {/* Rules from coaching — below the deck, as requested. */}
+        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+          <div style={{ padding: "12px 14px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--dn-border)" }}><span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Rules from your coaching</span><span onClick={() => app.setStudioMode("rules")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>See all →</span></div>
+          <div style={{ padding: "11px 14px", display: "flex", flexDirection: "column", gap: 9, maxHeight: 230, overflowY: "auto" }}>
+            {coachingRules.length === 0 && <div style={{ textAlign: "center", padding: "14px 8px", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Accept a coached answer in Training and the rules behind it land here for review.</div>}
+            {coachingRules.map((r) => <RuleCard key={r.id} r={r} onAccept={() => void post({ action: "ruleStatus", ruleId: r.id, status: "active" })} onReject={() => void post({ action: "ruleStatus", ruleId: r.id, status: "rejected" })} compact />)}
+          </div>
+        </div>
+      </div>
+
+      {/* ── MIDDLE: the script, line by line — coach any line in place ── */}
+      <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", display: "flex", flexDirection: "column", height: 640 }}>
+        <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--dn-border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Script <span style={{ font: "500 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>· what the rep says, slide by slide</span></span>
+          <button onClick={() => void generate()} disabled={generating} style={{ ...btnGhost, padding: "6px 10px", font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)", opacity: generating ? 0.6 : 1 }}>{generating ? "Generating…" : "↻ Regenerate"}</button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+          {script === null && <div style={{ textAlign: "center", color: "var(--dn-fg-subtle)", font: "400 12px/1.6 var(--dn-font-sans)", padding: "40px 14px" }}>Drafting the script from your approved deck…</div>}
+          {script !== null && script.length === 0 && <div style={{ textAlign: "center", color: "var(--dn-fg-subtle)", font: "400 12px/1.6 var(--dn-font-sans)", padding: "40px 14px" }}>{scriptMsg || "No approved slides yet — upload a deck on the left and approve it in Build."}</div>}
+          {(script ?? []).map((seg, si) => {
+            const [body, isiText] = splitIsi(seg.response);
+            const active = !!seg.stepId && seg.stepId === activePlanStepId;
+            const coachingThis = lineCoach === si;
+            return (
+              <div
+                key={si}
+                onClick={() => { if (seg.stepId) setActivePlanStepId(seg.stepId); }}
+                style={{ padding: "10px 12px", background: "var(--dn-surface-2)", border: active ? "1px solid var(--dn-brand-base)" : "1px solid var(--dn-border)", boxShadow: active ? "0 0 0 1px var(--dn-brand-base)" : undefined, borderRadius: 9, font: "400 12px/1.55 var(--dn-font-sans)", color: "var(--dn-fg)", cursor: "pointer" }}
+              >
+                <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-accent-purple)", marginBottom: 5, display: "flex", gap: 6, alignItems: "center" }}>
+                  <span>{si + 1}.</span>
+                  <span style={{ flex: 1 }}>{seg.stepTitle ?? seg.slideTitle ?? "Approved section"}</span>
+                  {seg.slideTitle && <span style={{ color: "var(--dn-fg-subtle)", textTransform: "none", letterSpacing: 0 }}>▤ {seg.slideTitle}</span>}
+                  {seg.stepId && (
+                    <span onClick={(e) => { e.stopPropagation(); setLineCoach(coachingThis ? null : si); setLineNote(""); }} style={{ color: "var(--dn-brand-light)", cursor: "pointer", textTransform: "none", letterSpacing: 0 }}>✎ Coach</span>
+                  )}
+                </div>
+                <div style={{ whiteSpace: "pre-wrap" }}>{body}</div>
+                {isiText && (
+                  <div style={{ marginTop: 9, paddingTop: 8, borderTop: "1px dashed var(--dn-border)", font: "400 10px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
+                    <span style={{ fontWeight: 600, letterSpacing: ".02em" }}>Required safety information · active approved block — </span>{isiText}
+                  </div>
+                )}
+                {coachingThis && (
+                  <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                    <input
+                      autoFocus
+                      value={lineNote}
+                      onChange={(e) => setLineNote(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && lineNote.trim()) void coachLine(seg, lineNote); }}
+                      placeholder={`Coach line ${si + 1} — shorter, warmer, use a different slide…`}
+                      style={{ flex: 1, padding: "7px 9px", border: "1px solid var(--dn-brand-light)", borderRadius: 7, font: "400 11.5px/1.3 var(--dn-font-sans)", background: "#fff" }}
+                    />
+                    <button onClick={() => void coachLine(seg, lineNote)} disabled={!lineNote.trim() || generating} style={{ ...btnPrimary, padding: "7px 10px", font: "600 10.5px/1 var(--dn-font-sans)", opacity: lineNote.trim() && !generating ? 1 : 0.55 }}>Apply</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {scriptMsg && script !== null && script.length > 0 && <div style={{ font: "500 10.5px/1.4 var(--dn-font-sans)", color: "#991b1b" }}>{scriptMsg}</div>}
+        </div>
+        <div style={{ padding: "10px 16px", borderTop: "1px solid var(--dn-border)", font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
+          Coach a line and the change lands on that section&apos;s notes (saved). The approved medical text itself is locked — revise it via <strong>✎ Propose a revision</strong> on the right, which goes through MLR.
+        </div>
+      </div>
+
+      {/* ── RIGHT: the section editor (big deck already on the left, so no mini slide here) ── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+        <OverviewPlanCard
+          snap={overviewPlan}
+          activeStepId={activePlanStepId}
+          activeSlideId={activePlanSlideId}
+          planNote={planNote}
+          planMsg={planMsg}
+          onStep={(id) => setActivePlanStepId(id)}
+          onUpdateStep={updatePlanStep}
+          onSave={() => void persistOverviewPlan()}
+          onApplyNote={() => void applyPlanNote().then(() => generate())}
+          onReset={() => void draftFrom()}
+          onNote={setPlanNote}
+          onRehearse={() => void generate()}
+          rehearsing={generating}
+          onMove={movePlanStep}
+          showSlide={false}
+          rehearseLabel="↻ Regenerate script"
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Shared pitch-plan state + CRUD (load/save/apply-note/reorder/reset). Used by the
+ *  Pitch & Script editor AND Train & Preview (per-line coaching, deck follow) so the two
+ *  surfaces can never drift — both read and write the same server-side plan. */
+function useOverviewPlan() {
+  const [overviewPlan, setOverviewPlan] = useState<OverviewPlanSnap | null>(null);
+  const [activePlanStepId, setActivePlanStepId] = useState("");
+  const [planNote, setPlanNote] = useState("");
+  const [planMsg, setPlanMsg] = useState("");
+  const [planSaving, setPlanSaving] = useState(false);
+
+  const loadOverviewPlan = async () => {
+    try {
+      const res = await fetch("/api/presentation/plan");
+      if (!res.ok) return;
+      const data = (await res.json()) as OverviewPlanSnap;
+      setOverviewPlan(data);
+      setActivePlanStepId((current) => current || data.plan.steps[0]?.id || "");
+    } catch {
+      /* deck editor is progressive; coaching still works without it */
+    }
+  };
+
+  useEffect(() => {
+    void loadOverviewPlan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const persistOverviewPlan = async (plan = overviewPlan?.plan, message = "Script saved.") => {
+    if (!plan) return;
+    setPlanSaving(true);
+    setPlanMsg("Saving script…");
+    try {
+      const res = await fetch("/api/presentation/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save", plan }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as OverviewPlanSnap;
+      setOverviewPlan(data);
+      setActivePlanStepId((current) => data.plan.steps.some((s) => s.id === current) ? current : data.plan.steps[0]?.id || "");
+      setPlanMsg(message);
+    } catch (e) {
+      setPlanMsg(`Could not save: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setPlanSaving(false);
+    }
+  };
+
+  const updatePlanStep = (stepId: string, patch: Partial<OverviewPlanStep>, save = false) => {
+    if (!overviewPlan) return;
+    const nextPlan = { ...overviewPlan.plan, steps: overviewPlan.plan.steps.map((s) => (s.id === stepId ? { ...s, ...patch } : s)) };
+    setOverviewPlan({ ...overviewPlan, plan: nextPlan });
+    if (save) void persistOverviewPlan(nextPlan, "Script section saved.");
+  };
+
+  const applyPlanNote = async (feedback = planNote, stepId = activePlanStepId) => {
+    const note = feedback.trim();
+    if (!note) return;
+    setPlanMsg("Applying your note to the script…");
+    try {
+      const res = await fetch("/api/presentation/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "applyFeedback", feedback: note, stepId }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as OverviewPlanSnap & { warning?: string };
+      setOverviewPlan(data);
+      setActivePlanStepId(stepId || data.plan.steps[0]?.id || "");
+      setPlanNote("");
+      // Surface server-side warnings (e.g. a named slide couldn't be matched) instead of
+      // silently pretending the anchor changed.
+      setPlanMsg(data.warning ? `⚠ ${data.warning}` : "Script updated — rehearsals and every doctor conversation use it.");
+    } catch (e) {
+      setPlanMsg(`Could not apply note: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  // Reorder script sections — guarded while a save is in flight: two rapid moves could
+  // otherwise interleave and the first server response would briefly clobber the second.
+  const movePlanStep = (stepId: string, dir: -1 | 1) => {
+    if (!overviewPlan || planSaving) return;
+    const steps = [...overviewPlan.plan.steps];
+    const i = steps.findIndex((st) => st.id === stepId);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= steps.length) return;
+    [steps[i], steps[j]] = [steps[j]!, steps[i]!];
+    const nextPlan = { ...overviewPlan.plan, steps };
+    setOverviewPlan({ ...overviewPlan, plan: nextPlan });
+    void persistOverviewPlan(nextPlan, "Script order updated — the rep now presents in this order.");
+  };
+
+  /** Re-draft the script from the approved deck — optionally from ONE source document. */
+  const resetOverviewPlan = async (assetId?: string) => {
+    setPlanMsg(assetId ? "Drafting the script from that source…" : "Re-drafting from the full approved deck…");
+    try {
+      const res = await fetch("/api/presentation/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reset", ...(assetId ? { assetId } : {}) }) });
+      const data = (await res.json()) as OverviewPlanSnap & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? String(res.status));
+      setOverviewPlan(data);
+      setActivePlanStepId(data.plan.steps[0]?.id || "");
+      setPlanMsg(assetId ? "Script drafted from the selected source." : "Reset to approved deck order.");
+    } catch (e) {
+      setPlanMsg(`Could not draft: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const activePlanStep = overviewPlan?.plan.steps.find((s) => s.id === activePlanStepId) ?? overviewPlan?.plan.steps[0];
+  const activePlanSlideId = activePlanStep?.slideId ?? overviewPlan?.slides[0]?.id;
+
+  return {
+    overviewPlan, activePlanStepId, setActivePlanStepId, activePlanSlideId,
+    planNote, setPlanNote, planMsg, planSaving,
+    loadOverviewPlan, persistOverviewPlan, updatePlanStep, applyPlanNote, movePlanStep, resetOverviewPlan,
+  };
+}
+
+function TrainMode({ post, repName, app }: { post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; repName: string; app: AppState }) {
   const brand = useBrand();
   // Rehydrate the coaching thread from localStorage so it survives tab switches / reload.
   const [exchanges, setExchanges] = useState<Exchange[]>(() => loadTrainState().exchanges ?? []);
@@ -826,8 +1175,10 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
   const [busyIdx, setBusyIdx] = useState<number | null>(null);
   const [showVideo, setShowVideo] = useState(false);
   const [previewSessionId, setPreviewSessionId] = useState(() => loadTrainState().previewSessionId ?? makePreviewSessionId());
-  const [overviewPlan, setOverviewPlan] = useState<OverviewPlanSnap | null>(null);
-  const [activePlanStepId, setActivePlanStepId] = useState("");
+  // Shared script plan (per-line coaching writes to it; the deck panel follows the convo).
+  const { activePlanStepId, setActivePlanStepId, activePlanSlideId, applyPlanNote } = useOverviewPlan();
+  const [followSlideId, setFollowSlideId] = useState<string | null>(null);
+  const [deckOpen, setDeckOpen] = useState(true);
   // Inline per-section coaching on a rehearsed pitch segment ({exchange, segment} being coached).
   const [segCoach, setSegCoach] = useState<{ exIdx: number; segIdx: number } | null>(null);
   const [segNote, setSegNote] = useState("");
@@ -838,12 +1189,6 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     const el = threadRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [exchanges, busyIdx]);
-  const [planNote, setPlanNote] = useState("");
-  const [planMsg, setPlanMsg] = useState("");
-
-  const coachingRules = rules.filter((r) => r.source === "feedback");
-  const activePlanStep = overviewPlan?.plan.steps.find((s) => s.id === activePlanStepId) ?? overviewPlan?.plan.steps[0];
-  const activePlanSlideId = activePlanStep?.slideId ?? overviewPlan?.slides[0]?.id;
 
   const greetingExchange = (): Exchange => ({ q: "", kind: "greeting", answers: [{ text: brand?.greeting ?? "", route: "greeting", isi: false, detailAidSlideId: null, usedLlm: true }], coachings: [], scope: "persona", accepted: false });
 
@@ -874,104 +1219,6 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     try { window.localStorage.setItem(TRAIN_STORE_KEY, JSON.stringify({ exchanges, coachDraft, previewSessionId, brandName: brand?.displayName })); } catch { /* storage disabled/full — non-fatal */ }
   }, [exchanges, coachDraft, previewSessionId, brand?.displayName]);
 
-  const loadOverviewPlan = async () => {
-    try {
-      const res = await fetch("/api/presentation/plan");
-      if (!res.ok) return;
-      const data = (await res.json()) as OverviewPlanSnap;
-      setOverviewPlan(data);
-      setActivePlanStepId((current) => current || data.plan.steps[0]?.id || "");
-    } catch {
-      /* deck editor is progressive; training still works without it */
-    }
-  };
-
-  useEffect(() => {
-    void loadOverviewPlan();
-  }, []);
-
-  const [planSaving, setPlanSaving] = useState(false);
-  const persistOverviewPlan = async (plan = overviewPlan?.plan, message = "Pitch saved.") => {
-    if (!plan) return;
-    setPlanSaving(true);
-    setPlanMsg("Saving pitch…");
-    try {
-      const res = await fetch("/api/presentation/plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "save", plan }),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      const data = (await res.json()) as OverviewPlanSnap;
-      setOverviewPlan(data);
-      setActivePlanStepId((current) => data.plan.steps.some((s) => s.id === current) ? current : data.plan.steps[0]?.id || "");
-      setPlanMsg(message);
-    } catch (e) {
-      setPlanMsg(`Could not save: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setPlanSaving(false);
-    }
-  };
-
-  const updatePlanStep = (stepId: string, patch: Partial<OverviewPlanStep>, save = false) => {
-    if (!overviewPlan) return;
-    const nextPlan = { ...overviewPlan.plan, steps: overviewPlan.plan.steps.map((s) => (s.id === stepId ? { ...s, ...patch } : s)) };
-    setOverviewPlan({ ...overviewPlan, plan: nextPlan });
-    if (save) void persistOverviewPlan(nextPlan, "Pitch section saved.");
-  };
-
-  const applyPlanNote = async (feedback = planNote, stepId = activePlanStepId) => {
-    const note = feedback.trim();
-    if (!note) return;
-    setPlanMsg("Applying your note to the pitch…");
-    try {
-      const res = await fetch("/api/presentation/plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "applyFeedback", feedback: note, stepId }),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      const data = (await res.json()) as OverviewPlanSnap & { warning?: string };
-      setOverviewPlan(data);
-      setActivePlanStepId(stepId || data.plan.steps[0]?.id || "");
-      setPlanNote("");
-      // Surface server-side warnings (e.g. a named slide couldn't be matched) instead of
-      // silently pretending the anchor changed.
-      setPlanMsg(data.warning ? `⚠ ${data.warning}` : "Pitch updated — the next rehearsal and every doctor conversation use it.");
-    } catch (e) {
-      setPlanMsg(`Could not apply note: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-
-  // Reorder pitch sections (the arrows in the card) — reorder client-side, persist the plan.
-  // Guarded while a save is in flight: two rapid moves could otherwise interleave and the
-  // first server response would briefly clobber the second reorder.
-  const movePlanStep = (stepId: string, dir: -1 | 1) => {
-    if (!overviewPlan || planSaving) return;
-    const steps = [...overviewPlan.plan.steps];
-    const i = steps.findIndex((st) => st.id === stepId);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= steps.length) return;
-    [steps[i], steps[j]] = [steps[j]!, steps[i]!];
-    const nextPlan = { ...overviewPlan.plan, steps };
-    setOverviewPlan({ ...overviewPlan, plan: nextPlan });
-    void persistOverviewPlan(nextPlan, "Pitch order updated — the rep now presents in this order.");
-  };
-
-  const resetOverviewPlan = async () => {
-    setPlanMsg("Resetting pitch…");
-    try {
-      const res = await fetch("/api/presentation/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reset" }) });
-      if (!res.ok) throw new Error(String(res.status));
-      const data = (await res.json()) as OverviewPlanSnap;
-      setOverviewPlan(data);
-      setActivePlanStepId(data.plan.steps[0]?.id || "");
-      setPlanMsg("Reset to approved deck order.");
-    } catch (e) {
-      setPlanMsg(`Could not reset: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-
   // Rehearse the rep with the coaching so far applied. A greeting exchange rewrites the opening
   // line (keeping the mandatory disclosures); any other rewrites the answer. Rehearsal only — the
   // preview endpoint creates no session, logs no turn, enqueues no follow-up.
@@ -999,6 +1246,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     setInput("");
     const a = await runPreview({ kind, q, current: "" }, []);
     setExchanges((xs) => [...xs, { q, kind, answers: [a], coachings: [], scope: "persona", accepted: false }]);
+    setFollowSlideId((a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId) ?? null);
     setAsking(false);
   };
 
@@ -1027,6 +1275,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     if (ex.kind === "overview") await applyPlanNote(note, opts?.stepId ?? activePlanStepId);
     const a = await runPreview({ kind: ex.kind, q: ex.q, current: ex.answers[ex.answers.length - 1]!.text }, coachings);
     setExchanges((xs) => xs.map((x, i) => (i === idx ? { ...x, coachings, answers: [...x.answers, a] } : x)));
+    setFollowSlideId((a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId) ?? null);
     setCoachDraft((d) => ({ ...d, [idx]: "" }));
     setBusyIdx(null);
   };
@@ -1083,19 +1332,10 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
             <span onClick={() => { setExchanges([greetingExchange()]); setCoachDraft({}); setPreviewSessionId(makePreviewSessionId()); }} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>↺ Restart</span>
           </div>
         </div>
-        {/* Rules from your coaching — next to the thread that creates them (it used to sit
-            below the tall pitch card where nobody scrolled). */}
-        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
-          <div style={{ padding: "12px 14px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--dn-border)" }}><span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Rules from your coaching</span><span onClick={() => app.setStudioMode("rules")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>See all →</span></div>
-          <div style={{ padding: "11px 14px", display: "flex", flexDirection: "column", gap: 9, maxHeight: 230, overflowY: "auto" }}>
-            {coachingRules.length === 0 && <div style={{ textAlign: "center", padding: "14px 8px", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Accept a coached answer and the rules behind it land here for review.</div>}
-            {coachingRules.map((r) => <RuleCard key={r.id} r={r} onAccept={() => void post({ action: "ruleStatus", ruleId: r.id, status: "active" })} onReject={() => void post({ action: "ruleStatus", ruleId: r.id, status: "rejected" })} compact />)}
-          </div>
-        </div>
         <ModelLab />
         <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)" }}>
           <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", marginBottom: 5 }}>How this works</div>
-          <div style={{ font: "400 11px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>The <strong>brand pitch</strong> (right) is what the rep opens doctor conversations with — DocNexus drafted it from your approved deck. <strong>Rehearse</strong> it here, coach any line, and when you <strong>Accept</strong>, the pitch and the rep&apos;s rules update. The first card is the rep&apos;s <strong>opening line</strong> — coach that too.</div>
+          <div style={{ font: "400 11px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>This is <strong>free-flow practice</strong>: ask anything a doctor might, coach the answer, and <strong>Accept</strong> to save your coaching as rules. The deck (right) follows the conversation like it does for a doctor. Perfecting the slide-by-slide script lives in <strong onClick={() => app.setStudioMode("pitch")} style={{ color: "var(--dn-brand-light)", cursor: "pointer" }}>Pitch &amp; Script</strong>. The first card is the rep&apos;s <strong>opening line</strong> — coach that too.</div>
         </div>
       </div>
 
@@ -1147,8 +1387,8 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
                                   return (
                                     <div
                                       key={si}
-                                      onClick={() => seg.stepId && setActivePlanStepId(seg.stepId)}
-                                      title={seg.stepId ? "Click to open this section in the Brand pitch panel" : undefined}
+                                      onClick={() => { if (seg.stepId) setActivePlanStepId(seg.stepId); setFollowSlideId(seg.detailAidSlideId ?? null); }}
+                                      title={"Click to show this line's slide in the deck panel"}
                                       style={{ ...bubbleStyle, ...(seg.stepId ? { cursor: "pointer" } : {}), ...(active ? { border: "1px solid var(--dn-brand-base)", boxShadow: "0 0 0 1px var(--dn-brand-base)" } : {}) }}
                                     >
                                       <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-accent-purple)", marginBottom: 5, display: "flex", gap: 6, alignItems: "center" }}>
@@ -1193,7 +1433,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
                           }
                           const [bodyText, isiText] = splitIsi(a.text);
                           return (
-                            <div style={bubbleStyle}>
+                            <div style={{ ...bubbleStyle, ...(a.detailAidSlideId ? { cursor: "pointer" } : {}) }} onClick={() => a.detailAidSlideId && setFollowSlideId(a.detailAidSlideId)} title={a.detailAidSlideId ? "Click to show this answer's slide in the deck panel" : undefined}>
                               <div style={{ whiteSpace: "pre-wrap" }}>{bodyText}</div>
                               {isiBlock(isiText)}
                             </div>
@@ -1248,23 +1488,25 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
-        <OverviewPlanCard
-          snap={overviewPlan}
-          activeStepId={activePlanStepId}
-          activeSlideId={activePlanSlideId}
-          planNote={planNote}
-          planMsg={planMsg}
-          onStep={(id) => setActivePlanStepId(id)}
-          onUpdateStep={updatePlanStep}
-          onSave={() => void persistOverviewPlan()}
-          onApplyNote={() => void applyPlanNote()}
-          onReset={() => void resetOverviewPlan()}
-          onNote={setPlanNote}
-          onRehearse={() => void ask("Can you walk me through the approved information?")}
-          rehearsing={asking}
-          onMove={movePlanStep}
-        />
-
+        {/* The deck as a doctor sees it — it follows the conversation (latest answer's slide,
+            or a clicked line). Script editing lives in Pitch & Script, not here. */}
+        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+          <div style={{ padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Deck <span style={{ font: "500 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>· follows the conversation</span></span>
+            <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
+              <span onClick={() => app.setStudioMode("pitch")} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>Perfect the script →</span>
+              <span onClick={() => setDeckOpen((v) => !v)} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", cursor: "pointer" }}>{deckOpen ? "Hide" : "Show"}</span>
+            </span>
+          </div>
+          {deckOpen && (
+            <div style={{ padding: "0 12px 12px" }}>
+              <div style={{ height: 200, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "1px solid var(--dn-border)", background: "var(--dn-surface-2)" }}>
+                <SlideView focusId={followSlideId ?? activePlanSlideId} compact fill />
+              </div>
+              <div style={{ font: "400 10px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 7 }}>Ask a question or click any rep line — the slide the doctor would see appears here.</div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1358,6 +1600,65 @@ function ModelLab() {
   );
 }
 
+/** "Changes go through MLR" — for real: propose a replacement for an ACTIVE approved
+ *  passage. It lands in the Build screen's MLR review queue as version N+1; the current
+ *  text keeps speaking until a reviewer approves, then the old version retires. */
+function ReviseApprovedText({ answerId }: { answerId?: string }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setOpen(false); setText(""); setMsg("");
+  }, [answerId]);
+  if (!answerId) return null;
+
+  const submit = async () => {
+    if (!text.trim() || busy) return;
+    setBusy(true);
+    setMsg("Submitting to MLR review…");
+    try {
+      const res = await fetch("/api/content/revise", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answerId, text: text.trim() }),
+      });
+      const d = (await res.json()) as { note?: string; version?: number; error?: string };
+      if (!res.ok) throw new Error(d.error ?? String(res.status));
+      setMsg(`v${d.version} submitted — review it in Build → Approved knowledge → MLR review. The current text stays live until approval.`);
+      setOpen(false);
+      setText("");
+    } catch (e) {
+      setMsg(`Couldn't submit: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      {!open && (
+        <span onClick={() => { setOpen(true); setMsg(""); }} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>✎ Propose a revision → MLR review</span>
+      )}
+      {open && (
+        <>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Full replacement text for this approved passage — a reviewer approves it before the rep ever says it."
+            style={{ width: "100%", minHeight: 64, resize: "vertical", padding: "8px 9px", border: "1px solid var(--dn-brand-light)", borderRadius: 8, font: "400 11px/1.45 var(--dn-font-sans)", background: "#fff" }}
+          />
+          <div style={{ display: "flex", gap: 7 }}>
+            <button onClick={() => void submit()} disabled={busy || !text.trim()} style={{ ...btnPrimary, flex: 1, padding: "7px 9px", font: "600 10.5px/1 var(--dn-font-sans)", opacity: busy || !text.trim() ? 0.55 : 1 }}>{busy ? "…" : "Submit to MLR review"}</button>
+            <button onClick={() => { setOpen(false); setText(""); }} style={{ ...btnGhost, padding: "7px 9px", font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>Cancel</button>
+          </div>
+        </>
+      )}
+      {msg && <div style={{ font: "500 10px/1.45 var(--dn-font-sans)", color: msg.startsWith("Couldn't") ? "#991b1b" : "var(--dn-fg-muted)" }}>{msg}</div>}
+    </div>
+  );
+}
+
 function OverviewPlanCard({
   snap,
   activeStepId,
@@ -1373,6 +1674,8 @@ function OverviewPlanCard({
   onRehearse,
   rehearsing,
   onMove,
+  showSlide = true,
+  rehearseLabel = "▶ Rehearse",
 }: {
   snap: OverviewPlanSnap | null;
   activeStepId: string;
@@ -1388,6 +1691,9 @@ function OverviewPlanCard({
   onRehearse: () => void;
   rehearsing: boolean;
   onMove: (stepId: string, dir: -1 | 1) => void;
+  /** Hide the built-in slide preview (Pitch & Script shows the BIG deck on the left instead). */
+  showSlide?: boolean;
+  rehearseLabel?: string;
 }) {
   const steps = snap?.plan.steps ?? [];
   const slides = snap?.slides ?? [];
@@ -1402,13 +1708,15 @@ function OverviewPlanCard({
           <div style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Brand pitch</div>
           <div style={{ font: "500 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 4 }}>Drafted by DocNexus from your approved deck. The rep opens doctor conversations with it, slide by slide — edit a section or rehearse and coach it.</div>
         </div>
-        <button onClick={onRehearse} disabled={rehearsing} title="Run the pitch in the coaching thread on the left" style={{ ...btnPrimary, flexShrink: 0, padding: "7px 10px", font: "600 10.5px/1 var(--dn-font-sans)", opacity: rehearsing ? 0.6 : 1 }}>{rehearsing ? "…" : "▶ Rehearse"}</button>
+        <button onClick={onRehearse} disabled={rehearsing} title="Run the pitch in the coaching thread on the left" style={{ ...btnPrimary, flexShrink: 0, padding: "7px 10px", font: "600 10.5px/1 var(--dn-font-sans)", opacity: rehearsing ? 0.6 : 1 }}>{rehearsing ? "…" : rehearseLabel}</button>
       </div>
 
       <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 11 }}>
-        <div style={{ height: 178, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "1px solid var(--dn-border)", background: "var(--dn-surface-2)" }}>
-          <SlideView focusId={activeSlideId} compact fill />
-        </div>
+        {showSlide && (
+          <div style={{ height: 178, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "1px solid var(--dn-border)", background: "var(--dn-surface-2)" }}>
+            <SlideView focusId={activeSlideId} compact fill />
+          </div>
+        )}
 
         {!snap || !step ? (
           <div style={{ padding: "20px 8px", textAlign: "center", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Loading approved deck…</div>
@@ -1437,6 +1745,11 @@ function OverviewPlanCard({
               })}
             </div>
 
+            {slides.length > steps.length && (
+              <div style={{ font: "500 10.5px/1.45 var(--dn-font-sans)", color: "#92400e", background: "var(--dn-accent-yellow-bg)", borderRadius: 8, padding: "7px 10px" }}>
+                {slides.length - steps.length} approved slide(s) aren&apos;t in this pitch yet (they still answer questions, and the walkthrough appends them at the end). <span onClick={onReset} style={{ cursor: "pointer", textDecoration: "underline" }}>Re-draft from deck</span> to include them as sections.
+              </div>
+            )}
             <div style={{ display: "grid", gap: 8, borderTop: "1px solid var(--dn-surface-2)", paddingTop: 10 }}>
               <span style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-brand-base)" }}>Edit section {stepIndex + 1} — saves when you click away</span>
               <label style={{ display: "grid", gap: 4 }}>
@@ -1476,6 +1789,7 @@ function OverviewPlanCard({
                 <div style={{ padding: "8px 9px", borderRadius: 8, background: "#f8fafc", border: "1px dashed var(--dn-border)", font: "400 10.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
                   {slides.find((s) => s.id === step.slideId)?.preview ?? "Select an approved slide to anchor this section."}
                 </div>
+                <ReviseApprovedText answerId={slides.find((s) => s.id === step.slideId)?.sourceId} />
               </div>
             </div>
 

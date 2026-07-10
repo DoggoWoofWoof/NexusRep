@@ -146,8 +146,10 @@ test.describe("Studio — Train / coach / rules (self-serve)", () => {
     await page.getByRole("button", { name: /Coach & re-answer/i }).last().click();
     await expect(page.getByText(/You coached/i).first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/Don't mention warfarin/i).first()).toBeVisible();
-    // Accept the answer → the coaching becomes a (compliance-classified) rule.
+    // Accept the answer → the coaching becomes a (compliance-classified) rule. The rules
+    // card lives in Pitch & Script / the Rules tab now — assert it landed in Rules.
     await page.getByRole("button", { name: /^Accept/i }).last().click();
+    await page.getByText("Rules", { exact: true }).click();
     await expect(page.getByText(/Do not raise/i).first()).toBeVisible({ timeout: 10_000 });
   });
 
@@ -188,7 +190,7 @@ test.describe("Audience + Review", () => {
     if (!(await coach.isVisible().catch(() => false))) test.skip(true, "reviewed session has no HCP line to coach");
     await coach.click();
     // Lands on Train with the reviewed question already asked → the rep answers it here.
-    await expect(page.getByText("Brand pitch").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Coach the rep").first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/You \(as HCP\)/i).first()).toBeVisible({ timeout: 20_000 });
   });
 });

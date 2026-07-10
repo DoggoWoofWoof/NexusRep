@@ -8,7 +8,7 @@
 
 import { MemoryRepositoryFactory, type Repository, type RepositoryFactory } from "@lib/repository";
 import { err, ok, type Result } from "@lib/result";
-import type { ApprovedAnswerId, ContentAssetId, DetailAidSlideId, SafetyStatementId } from "@lib/ids";
+import { asId, newId, type ApprovedAnswerId, type ContentAssetId, type DetailAidSlideId, type SafetyStatementId } from "@lib/ids";
 import { type ApprovedAnswer, type ContentAsset, type ContentStatus, type DetailAidSlide, type SafetyStatement, isRetrievable } from "./types";
 
 export interface SourceValidationContext {
@@ -75,6 +75,34 @@ export class ContentService {
 
   async addAnswer(answer: ApprovedAnswer): Promise<ApprovedAnswer> {
     return this.answers.insert(answer);
+  }
+
+  /**
+   * Propose a REVISION of an approved passage: a new draft version (in MLR review) that
+   * keeps the original's slide/topic/clinical scope. The current text stays live until a
+   * reviewer approves the revision — nothing changes on the rep until MLR signs off.
+   */
+  async reviseAnswer(id: ApprovedAnswerId, text: string): Promise<ApprovedAnswer | { error: string }> {
+    const original = await this.answers.get(String(id));
+    if (!original) return { error: "answer not found" };
+    if (original.mlr.status !== "active") return { error: "only ACTIVE approved passages can be revised" };
+    const trimmed = text.replace(/\s+/g, " ").trim();
+    if (!trimmed) return { error: "revision text is empty" };
+    if (trimmed === original.text.replace(/\s+/g, " ").trim()) return { error: "revision is identical to the current approved text" };
+    const revision: ApprovedAnswer = {
+      ...original,
+      id: newId<"approved_answer_id">("ans_rev"),
+      text: trimmed.slice(0, 4000),
+      supersedes: original.id,
+      mlr: {
+        ...original.mlr,
+        mlrApprovalId: asId<"mlr_approval_id">("mlr_pending"),
+        status: "in_mlr",
+        version: original.mlr.version + 1,
+        sourceFile: original.mlr.sourceFile,
+      },
+    };
+    return this.answers.insert(revision);
   }
 
   async addSafetyStatement(stmt: SafetyStatement): Promise<SafetyStatement> {

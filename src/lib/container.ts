@@ -11,6 +11,7 @@
 import { asId, type AiRepId, type BrandId, type CampaignId, type ContentAssetId, type DetailAidSlideId, type HcpId, type MlrApprovalId, type SessionId, type TenantId } from "@lib/ids";
 import { InMemoryVectorIndex } from "@lib/vector-index";
 import { getRepositoryFactory } from "@lib/db";
+import type { RepositoryFactory } from "@lib/repository";
 import { ContentService, PresentationSkill, firstAvailableComposer, resolveComposer, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
 import { configureClassifierLexicon, resolveClassifier } from "@modules/compliance";
 import { env } from "@lib/env";
@@ -102,14 +103,15 @@ function activeMlr(seed: string): MlrMetadata {
 }
 
 /** Build a fully-wired, demo-seeded container. Synchronous wiring; async seeding. */
-export async function createContainer(opts?: { seedHistory?: boolean }): Promise<AppContainer> {
+export async function createContainer(opts?: { seedHistory?: boolean; repos?: RepositoryFactory }): Promise<AppContainer> {
   // Canonical persistence: in-memory (default) or embedded Postgres (PGlite) when
   // NEXUSREP_DATA_DRIVER=postgres. Persist across restarts by setting PGLITE_DATA_DIR;
   // default it to a local data dir so the postgres demo is durable out of the box.
   if (env.dataDriver === "postgres" && !process.env.PGLITE_DATA_DIR) {
     process.env.PGLITE_DATA_DIR = ".nexusrep-data";
   }
-  const repos = getRepositoryFactory();
+  // Tests inject a shared factory to prove restart semantics (seed-if-absent).
+  const repos = opts?.repos ?? getRepositoryFactory();
   const index = new InMemoryVectorIndex();
   const content = new ContentService(repos);
   const presentation = new PresentationSkill(content);
@@ -205,11 +207,16 @@ export async function createContainer(opts?: { seedHistory?: boolean }): Promise
     title: `${brand.displayName} approved detail aid`,
     mlr: activeMlr("detail_aid"),
   };
-  await content.addAsset(asset);
+  // Seed-if-absent: the durable store is the source of truth across restarts. Re-seeding
+  // over existing records would RESURRECT content MLR reviewers retired/superseded (a
+  // compliance bug: the Postgres driver's insert is an upsert).
+  if (!(await content.getAsset(assetId))) await content.addAsset(asset);
 
   for (const [i, s] of brand.deck.entries()) {
+    const slideId = asId<"detail_aid_slide_id">(s.id) as DetailAidSlideId;
+    if (await content.getSlide(slideId)) continue;
     await content.addSlide({
-      id: asId<"detail_aid_slide_id">(s.id) as DetailAidSlideId,
+      id: slideId,
       contentAssetId: assetId,
       title: s.title,
       label: s.label,
@@ -222,24 +229,32 @@ export async function createContainer(opts?: { seedHistory?: boolean }): Promise
   // Investigational compounds seed only publicly-disclosed, non-promotional facts;
   // clinical specifics route to Medical Information via the investigational guardrail.
   for (const a of brand.approvedAnswers) {
-    const slideId = asId<"detail_aid_slide_id">(a.detailAidSlideId) as DetailAidSlideId;
-    const answer: ApprovedAnswer = {
-      id: asId<"approved_answer_id">(a.id) as ApprovedAnswer["id"],
-      tenantId,
-      brandId,
-      campaignId,
-      contentAssetId: assetId,
-      topic: a.topic,
-      text: a.text,
-      detailAidSlideId: slideId,
-      mlr: activeMlr(a.id),
-    };
-    await content.addAnswer(answer);
-    await index.upsert({
-      refId: a.id,
-      metadata: { audience, indication, market },
-      text: `${a.topic} ${a.text}`,
-    });
+    const answerId = asId<"approved_answer_id">(a.id) as ApprovedAnswer["id"];
+    const existing = await content.getAnswer(answerId);
+    if (!existing) {
+      const slideId = asId<"detail_aid_slide_id">(a.detailAidSlideId) as DetailAidSlideId;
+      await content.addAnswer({
+        id: answerId,
+        tenantId,
+        brandId,
+        campaignId,
+        contentAssetId: assetId,
+        topic: a.topic,
+        text: a.text,
+        detailAidSlideId: slideId,
+        mlr: activeMlr(a.id),
+      });
+    }
+    // Index only what is CURRENTLY retrievable — a retired/superseded seed answer must not
+    // re-enter the candidate pool (validation would reject it anyway; keep the index honest).
+    const current = existing ?? (await content.getAnswer(answerId));
+    if (current && current.mlr.status === "active") {
+      await index.upsert({
+        refId: a.id,
+        metadata: { audience, indication, market },
+        text: `${current.topic} ${current.text}`,
+      });
+    }
   }
 
   const isi: SafetyStatement = {
@@ -250,7 +265,7 @@ export async function createContainer(opts?: { seedHistory?: boolean }): Promise
     text: brand.isiText,
     mlr: activeMlr("isi"),
   };
-  await content.addSafetyStatement(isi);
+  if (!(await content.getSafetyStatement(isi.id))) await content.addSafetyStatement(isi);
 
   // Fake past sessions/follow-ups only when explicitly demoing (NEXUSREP_SEED_HISTORY=1
   // or an explicit createContainer({ seedHistory:true }) — used by tests). Off by

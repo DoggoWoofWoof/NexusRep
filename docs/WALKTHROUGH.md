@@ -29,7 +29,59 @@ behind them. Implemented stage-by-stage with review gates.
 **Test status:** `typecheck` clean · **189 unit/integration tests** pass (1 guarded live test skipped) ·
 **26 Playwright E2E pass** (19 functional incl. the blank-slate self-serve journey + 7 visual baselines).
 
-### Latest — Full audit + fix round (2026-07-10)
+### Latest — Studio redesign: Pitch & Script mode + slim Train & Preview (2026-07-10)
+
+The Studio now separates SCRIPT work from CONVERSATION work:
+
+- **New "Pitch & Script" mode** (between Build and Training) — the Train skeleton with the
+  PPT where the video was. Left: the big slide (follows the selected line), **Deck sources**
+  (pick which approved document drafts the script — `reset {assetId}` scopes `defaultPlan`
+  to that source — or upload another deck/PDF straight into the MLR queue), and the Rules
+  card below the deck. Middle: **the script, line by line** — auto-drafted from the knowledge
+  base through the same compliance graph (no sessions), each line coachable in place
+  (✎ → the note lands on that section's plan instruction → the script regenerates).
+  Right: the section editor (reorder, slide anchors, speaker notes, locked approved text
+  with the MLR revision flow).
+- **Train & Preview slimmed to free-flow practice**: ask anything, coach answers, Accept →
+  rules. The pitch card became a **collapsible Deck panel that follows the conversation**
+  (latest answer's slide, or any clicked line — same behavior a doctor sees), with
+  "Perfect the script →" jumping to Pitch & Script.
+- Shared `useOverviewPlan()` hook: both modes read/write the same server-side plan, so the
+  surfaces can't drift.
+- **Compliance bug found & fixed while verifying**: the boot seeder re-inserted seed content
+  every start, and the Postgres driver's insert is an upsert — so a passage MLR had retired/
+  superseded came back ACTIVE after a restart. Seeding is now insert-if-absent (and only
+  indexes currently-active answers); regression-tested with a restart simulation
+  (`SharedMemoryFactory` in `tests/content-revision.test.ts`), and live-verified: the retired
+  version stayed retired across a real restart.
+- Visual baselines: `studio-pitch.png` added, `studio-train.png` re-baselined.
+
+### Approved-content REVISION loop: "changes go through MLR", made real (2026-07-10)
+
+The pitch editor's locked box promised "changes go through MLR" but no revision flow existed —
+you could only ADD new content, never revise an approved passage. Now:
+
+- **`ContentService.reviseAnswer`**: proposes a replacement for an ACTIVE passage as version
+  N+1 (`in_mlr`, `supersedes: originalId`, same slide/topic/clinical scope). Fail-safe: only
+  active passages, no empty/identical text.
+- **`MlrService.approve` supersedes atomically**: approving a revision retires the version it
+  replaces — exactly one version of a passage is ever retrievable/spoken.
+- **`POST /api/content/revise`** (thin, audited as a `correction` event) + a
+  **"✎ Propose a revision → MLR review"** control right under the locked approved text in the
+  Brand-pitch editor. Revisions appear in the same Build → MLR review queue as uploads.
+- **Pitch coverage note**: when approved slides exist that the saved pitch doesn't include,
+  the card says so (they still answer questions and append to the walkthrough) with a
+  one-click re-draft.
+- Live-verified end-to-end: revise mechanism text → v2 in queue (old text keeps speaking) →
+  approve → v1 retired, v2 active → the rep's rehearsal answer speaks the revised text; then
+  reverted to the original wording through the same loop (v3). `tests/content-revision.test.ts`
+  covers the loop, rejection (original untouched), and the fail-safes.
+
+RAG behavior confirmed while here: retrieval searches ALL active passages (every approved
+upload joins immediately); the guided pitch speaks plan sections first and appends approved
+content that isn't in the plan, so nothing approved is ever unreachable.
+
+### Full audit + fix round (2026-07-10)
 
 Six parallel code auditors (screens, routes, compliance core, platform modules, tests/config/docs)
 plus a live screen-by-screen pass. Every confirmed finding fixed:

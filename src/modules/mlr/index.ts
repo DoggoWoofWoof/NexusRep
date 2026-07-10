@@ -48,6 +48,11 @@ export class MlrService {
 
   async approve(id: ApprovedAnswerId): Promise<ApprovedAnswer | null> {
     const a = await this.content.setAnswerStatus(id, "active");
+    if (a?.supersedes) {
+      // A revision replaces its original ATOMICALLY on approval: the old version retires,
+      // so exactly one version of the passage is ever retrievable/spoken.
+      await this.content.setAnswerStatus(a.supersedes, "retired");
+    }
     if (a && this.onActivate) await this.onActivate(a);
     return a;
   }

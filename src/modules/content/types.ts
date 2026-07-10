@@ -53,6 +53,9 @@ export interface ApprovedAnswer {
   text: string;
   /** Optional detail-aid slide to display alongside. */
   detailAidSlideId?: DetailAidSlideId;
+  /** Set on a proposed REVISION: the currently-active answer this draft replaces.
+   *  MLR approval of the revision retires the superseded version atomically. */
+  supersedes?: ApprovedAnswerId;
   mlr: MlrMetadata;
 }
 

@@ -111,6 +111,8 @@ export async function POST(req: Request): Promise<NextResponse> {
       plan?: unknown;
       feedback?: unknown;
       stepId?: unknown;
+      /** reset only: draft the script from ONE source document's approved slides. */
+      assetId?: unknown;
     };
     const c = await getContainer();
     const presentation = new PresentationSkill(c.content);
@@ -133,7 +135,17 @@ export async function POST(req: Request): Promise<NextResponse> {
       plan = applied.plan;
       warning = applied.warning;
     } else if (body.action === "reset") {
-      plan = fallback;
+      const assetId = typeof body.assetId === "string" && body.assetId.trim() ? body.assetId.trim() : undefined;
+      if (assetId) {
+        const scoped = await presentation.defaultPlan(contextOf(c), { assetId });
+        if (!scoped.steps.length) {
+          // Honest refusal: the picked source has no APPROVED slides yet (still in MLR).
+          return NextResponse.json({ error: "that source has no approved slides yet — approve its passages in MLR review first", slides, plan }, { status: 409 });
+        }
+        plan = scoped;
+      } else {
+        plan = fallback;
+      }
     } else {
       return NextResponse.json({ error: "unknown action" }, { status: 400 });
     }

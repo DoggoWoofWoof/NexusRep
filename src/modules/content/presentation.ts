@@ -251,8 +251,11 @@ export class PresentationSkill {
     }));
   }
 
-  async defaultPlan(ctx: SourceValidationContext = {}): Promise<PresentationPlan> {
-    const items = await this.deckItems(ctx);
+  /** Default plan drafted from the approved deck — optionally scoped to ONE source document
+   *  (the "draft the script from this PPT" picker). Only that asset's approved slides anchor
+   *  sections; everything else still answers questions via retrieval. */
+  async defaultPlan(ctx: SourceValidationContext = {}, opts?: { assetId?: string }): Promise<PresentationPlan> {
+    const items = await this.deckItems(ctx, opts?.assetId);
     return {
       updatedAt: new Date().toISOString(),
       steps: items.map((item, index) => ({
@@ -288,8 +291,9 @@ export class PresentationSkill {
     return planned.slice(0, total).map(({ item, step }, index) => this.buildPlannedStep(planned, item, index, index === 0 ? "start" : "next", step));
   }
 
-  private async deckItems(ctx: SourceValidationContext): Promise<DeckItem[]> {
-    const answers = await this.content.listAnswers();
+  private async deckItems(ctx: SourceValidationContext, assetId?: string): Promise<DeckItem[]> {
+    const all = await this.content.listAnswers();
+    const answers = assetId ? all.filter((a) => String(a.contentAssetId) === assetId) : all;
     const slides = await this.content.listSlides();
     const byId = new Map(slides.map((s) => [s.id, s]));
     const valid: DeckItem[] = [];
