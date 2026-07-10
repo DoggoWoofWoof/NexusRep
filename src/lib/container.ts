@@ -245,16 +245,20 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
         mlr: activeMlr(a.id),
       });
     }
-    // Index only what is CURRENTLY retrievable — a retired/superseded seed answer must not
-    // re-enter the candidate pool (validation would reject it anyway; keep the index honest).
-    const current = existing ?? (await content.getAnswer(answerId));
-    if (current && current.mlr.status === "active") {
-      await index.upsert({
-        refId: a.id,
-        metadata: { audience, indication, market },
-        text: `${current.topic} ${current.text}`,
-      });
-    }
+  }
+
+  // REBUILD the retrieval index from the canonical store (the index is an in-memory,
+  // rebuildable cache — brief §4). Every ACTIVE answer re-enters it: seeded content,
+  // approved uploads, and MLR-approved revisions. Without this, a restart silently
+  // dropped everything approved after boot from retrieval (found live: a revised
+  // mechanism passage stopped being retrievable after a dev-server restart).
+  for (const a of await content.listAnswers()) {
+    if (a.mlr.status !== "active") continue;
+    await index.upsert({
+      refId: String(a.id),
+      metadata: { audience: a.mlr.audience, indication: a.mlr.indication, market: a.mlr.market },
+      text: `${a.topic} ${a.text}`,
+    });
   }
 
   const isi: SafetyStatement = {

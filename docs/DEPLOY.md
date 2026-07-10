@@ -61,10 +61,11 @@ filesystem between requests), so the durable store runs as-is. The repo ships a 
    `TAVUS_LLM_KEY` (+ set `NEXUSREP_REALTIME_PROVIDER=tavus`), and the DocNexus cohort creds if used.
 3. After the first deploy, set `NEXUSREP_PUBLIC_URL=https://<service>.onrender.com` and redeploy —
    Tavus calls back through it for every gated reply, so this must be the real public URL.
-4. **Storage caveat**: without a persistent disk the instance filesystem is wiped on every deploy
-   and restart, so `.nexusrep-data` (coaching, uploads, sessions) resets — same effect as the
-   in-memory driver plus a re-seed. For durable state attach a paid persistent disk (uncomment the
-   `disk:` block in `render.yaml`) and set `PGLITE_DATA_DIR=/var/data/nexusrep`.
+4. **Storage**: the blueprint attaches a 1 GB persistent disk (`/var/data`) and points
+   `PGLITE_DATA_DIR` at it, so coaching, script edits, MLR decisions, uploads and sessions
+   survive deploys and restarts (~$0.25/GB/mo on top of the instance). Remove the `disk:` block
+   only if you want an ephemeral reset-on-deploy demo. The retrieval index rebuilds itself from
+   the durable store on every boot.
 5. Free-tier instances sleep after idle; the first request after sleep takes ~30–60s (cold boot +
    PGlite init + model warmup). The embedded MiniLM embedding model downloads on first use — the
    `starter` plan's memory is enough, but expect the first retrieval to be slower.

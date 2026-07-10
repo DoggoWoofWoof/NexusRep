@@ -24,11 +24,12 @@ services:
     buildCommand: npm ci && npm run build
     startCommand: npm run start
     healthCheckPath: /api/brand
-    # --- persistent PGlite storage (paid plans only; uncomment to enable) ---
-    # disk:
-    #   name: nexusrep-data
-    #   mountPath: /var/data
-    #   sizeGB: 1
+    # Persistent PGlite storage — coaching, script edits, MLR decisions, uploads and
+    # sessions survive deploys/restarts (~$0.25/GB/mo on top of the Starter instance).
+    disk:
+      name: nexusrep-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_VERSION
         value: 22.12.0
@@ -37,7 +38,7 @@ services:
       - key: NEXUSREP_DATA_DRIVER
         value: postgres
       - key: PGLITE_DATA_DIR
-        value: .nexusrep-data # set to /var/data/nexusrep when the disk is enabled
+        value: /var/data/nexusrep # on the persistent disk — survives deploys/restarts
       # Flip to "tavus" once TAVUS_* secrets are set to enable the live video rep.
       - key: NEXUSREP_REALTIME_PROVIDER
         value: mock

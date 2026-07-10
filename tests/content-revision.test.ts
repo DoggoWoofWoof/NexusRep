@@ -96,4 +96,27 @@ describe("boot seeding never overwrites MLR decisions", () => {
     const after = await b.content.getAnswer(seeded.id);
     expect(after?.mlr.status).toBe("retired"); // seeding did NOT resurrect it
   });
+
+  it("content approved AFTER boot is still retrievable after a restart (index rebuilds)", async () => {
+    // The vector index is in-memory; boot must rebuild it from the STORE — a restart used
+    // to silently drop approved uploads/revisions from retrieval (found live).
+    const repos = new SharedMemoryFactory();
+    const a = await createContainer({ repos });
+    const seeded = (await a.content.listAnswers()).find((x) => x.topic === "mechanism")!;
+    const rev = (await a.content.reviseAnswer(seeded.id, "Revised mechanism wording: selective Factor XIa inhibition, distinctivetestphrase.")) as ApprovedAnswer;
+    await a.mlr.approve(rev.id);
+
+    const b = await createContainer({ repos }); // "restart"
+    const session = await b.conversation.start({ aiRepId: b.demo.aiRepId, hcpId: b.demo.hcpId });
+    const { output } = await b.conversation.turn({
+      sessionId: session.id,
+      hcpId: b.demo.hcpId,
+      audience: b.demo.audience,
+      indication: b.demo.indication,
+      market: b.demo.market,
+      investigational: b.demo.investigational,
+      text: "How does the mechanism of action work?",
+    });
+    expect(output.responseText).toContain("distinctivetestphrase"); // the revision, post-restart
+  });
 });
