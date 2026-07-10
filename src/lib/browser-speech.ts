@@ -77,9 +77,35 @@ function pickVoice(voices: SpeechSynthesisVoice[], hint?: string): SpeechSynthes
   return voices.find((v) => v.lang.toLowerCase().startsWith("en")) ?? voices[0];
 }
 
+/** Split text into short speakable chunks. Chrome silently kills any utterance around
+ *  the ~15s mark and WEDGES the synthesis queue (speaking stays true, every later
+ *  speak() is silent until reload) — short sentence chunks never get there. */
+function chunkForSpeech(text: string, max = 220): string[] {
+  const sentences = text.replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]*\s*/g) ?? [text];
+  const chunks: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    if (current && current.length + sentence.length > max) {
+      chunks.push(current.trim());
+      current = "";
+    }
+    current += sentence;
+    // A single overlong sentence still gets split on commas/spaces.
+    while (current.length > max) {
+      const cut = current.lastIndexOf(",", max) > 40 ? current.lastIndexOf(",", max) + 1 : max;
+      chunks.push(current.slice(0, cut).trim());
+      current = current.slice(cut);
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.length ? chunks : [text];
+}
+
 export class BrowserVoiceProvider implements ClientVoiceProvider {
   readonly name = "browser-webspeech";
   private voices: SpeechSynthesisVoice[] = [];
+  /** Bumped by cancel(); an in-flight chunked speak() stops when it no longer matches. */
+  private speakSession = 0;
 
   async warmup(): Promise<void> {
     this.voices = await ensureVoices();
@@ -94,30 +120,45 @@ export class BrowserVoiceProvider implements ClientVoiceProvider {
     if (!this.audioAvailable()) {
       return new Promise((r) => setTimeout(r, Math.min(estimateSpeechMs(text), 1200)));
     }
+    const session = ++this.speakSession;
     return new Promise<void>((resolve) => {
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = opts?.rate ?? 1;
-      u.pitch = opts?.pitch ?? 1;
+      const synth = window.speechSynthesis;
+      const chunks = chunkForSpeech(text);
       const v = pickVoice(this.voices, opts?.voiceHint);
-      if (v) u.voice = v;
-
+      let idx = 0;
       let settled = false;
+      // Second Chrome workaround: a periodic pause/resume nudge keeps the engine from
+      // stalling between chunks on some platforms (notably Windows).
+      const keepalive = window.setInterval(() => {
+        try { if (synth.speaking) { synth.pause(); synth.resume(); } } catch { /* noop */ }
+      }, 10_000);
       const finish = () => {
         if (settled) return;
         settled = true;
+        window.clearInterval(keepalive);
         resolve();
       };
-      u.onend = finish;
-      u.onerror = finish;
+      const speakNext = () => {
+        if (settled) return;
+        if (this.speakSession !== session || idx >= chunks.length) { finish(); return; }
+        const u = new SpeechSynthesisUtterance(chunks[idx++]!);
+        u.rate = opts?.rate ?? 1;
+        u.pitch = opts?.pitch ?? 1;
+        if (v) u.voice = v;
+        u.onend = speakNext;
+        u.onerror = speakNext; // a broken chunk must not silence the rest
+        synth.speak(u);
+      };
       // Safety net: never hang if onend doesn't fire on some platform.
-      setTimeout(finish, estimateSpeechMs(text) + 4000);
-
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
+      setTimeout(finish, estimateSpeechMs(text) + 8000);
+      synth.cancel();
+      // Chrome drops an utterance queued in the same tick as cancel() — give it a beat.
+      setTimeout(speakNext, 60);
     });
   }
 
   cancel(): void {
+    this.speakSession++;
     if (hasSynthesis()) window.speechSynthesis.cancel();
   }
 }

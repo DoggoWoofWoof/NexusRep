@@ -214,6 +214,10 @@ export function HcpExperience({ app }: { app?: AppState }) {
 
   async function deckStep(action: "start" | "next" | "previous" | "jump", query?: string, displayText?: string) {
     if (pending) return;
+    // Same barge-in as ask(): a deck command interrupts whatever is still being spoken.
+    const gen = ++playGenRef.current;
+    voiceRef.current?.cancel();
+    setSpeaking(false);
     const label = displayText?.trim() || (action === "next" ? "Please keep going." : action === "previous" ? "Can you go back to the prior point?" : action === "jump" && query ? `Can you talk about ${query}?` : "Can you walk me through the approved information?");
     setPending(true);
     setMsgs((m) => [...m, { role: "hcp", text: label }]);
@@ -231,8 +235,10 @@ export function HcpExperience({ app }: { app?: AppState }) {
       setMsgs((m) => [...m, { role: "rep", text: data.response }]);
       cueSlide(data.detailAidSlideId, data.response);
       setPending(false);
-      if (videoOn) void playRepSegment(data.response);
-      else void speak(data.response);
+      if (playGenRef.current === gen) {
+        if (videoOn) void playRepSegment(data.response);
+        else void speak(data.response);
+      }
     } finally {
       setPending(false);
     }
@@ -338,7 +344,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
                   <button onClick={() => request("human")} style={ghostMd}>Request human rep</button>
                   <button onClick={() => request("msl")} style={ghostMd}>Request MSL</button>
                   <button onClick={() => request("ae")} style={{ ...ghostMd, color: "var(--dn-accent-orange)" }}>Report side effect</button>
-                  <button onClick={() => { setVideoOn((v) => !v); setVideoMuted(false); setCallMicOn(true); greetingSwappedRef.current = false; }} title="Live video representative (DocNexus Agent)" style={{ ...ghostMd, color: videoOn ? "#fff" : "var(--dn-fg)", background: videoOn ? "var(--dn-brand-base)" : "#fff" }}>{videoOn ? "🎥 Video on" : "🎥 Video rep"}</button>
+                  <button onClick={() => { playGenRef.current++; voiceRef.current?.cancel(); setSpeaking(false); setVideoOn((v) => !v); setVideoMuted(false); setCallMicOn(true); greetingSwappedRef.current = false; }} title="Live video representative (DocNexus Agent)" style={{ ...ghostMd, color: videoOn ? "#fff" : "var(--dn-fg)", background: videoOn ? "var(--dn-brand-base)" : "#fff" }}>{videoOn ? "🎥 Video on" : "🎥 Video rep"}</button>
                   {!videoOn && <button onClick={() => setThreeD((v) => !v)} style={{ ...ghostMd, color: threeD ? "#fff" : "var(--dn-fg)", background: threeD ? "var(--dn-brand-base)" : "#fff" }}>{threeD ? "🧑 3D: on" : "🧑 3D avatar"}</button>}
                   <button
                     onClick={() => {

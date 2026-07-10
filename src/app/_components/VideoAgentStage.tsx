@@ -12,7 +12,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import { createVideoTransport, type VideoCallTransport } from "./video-transport";
 
 type ConvResp = { provider: string; configured: boolean; conversationUrl: string | null; token: string | null; note: string; reachableLlm?: boolean; sessionId?: string };
-type Stage = "loading" | "unconfigured" | "joining" | "live" | "error";
+type Stage = "loading" | "unconfigured" | "joining" | "live" | "ended" | "error";
 
 /** Imperative handle so the HCP view can make the agent SPEAK a gated answer
  *  (verbatim, via the transport's echo) — used for typed turns while on video. */
@@ -195,7 +195,15 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
 
         await transport.join({
           onTrack: (kind, stream) => {
-            if (kind === "video" && videoRef.current) { videoRef.current.srcObject = stream; void videoRef.current.play?.(); setHasVideo(true); }
+            if (kind === "video" && videoRef.current) {
+              videoRef.current.srcObject = stream;
+              void videoRef.current.play?.();
+              setHasVideo(true);
+              // A dying track (vendor shutdown, network) must not leave a frozen black
+              // frame — drop back to the status area, which explains what happened.
+              const track = stream.getVideoTracks()[0];
+              if (track) track.onended = () => setHasVideo(false);
+            }
             if (kind === "audio" && audioRef.current) { audioRef.current.srcObject = stream; void audioRef.current.play?.(); }
             // Fallback: if the agent never emits an utterance event, still start recording a few
             // seconds after the video track arrives so we never miss a clip. The PRIMARY start is
@@ -207,6 +215,13 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // does after an echo (started/stopped speaking, utterances). Harmless.
             const w = window as unknown as { __nexusrepEvents?: { type: string; role: string; text: string }[] };
             w.__nexusrepEvents = [...(w.__nexusrepEvents ?? []).slice(-40), e];
+            // The vendor ended the call (credits exhausted, duration cap, account limit).
+            // Without this the pane just froze to black with no explanation.
+            if (/shutdown|call_ended|conversation.ended/i.test(e.type)) {
+              setHasVideo(false);
+              setNote("The video call was ended by the provider — this usually means the account is out of conversational credits or hit a limit. Close the video and try again once that's resolved.");
+              setStage("ended");
+            }
           },
           onUtterance: ({ speaker, text }) => {
             // ASR silence/noise artifacts are not speech — never caption or log them.
@@ -279,7 +294,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
           {stage === "loading" && "Starting the video rep…"}
           {stage === "joining" && "Connecting to the DocNexus Agent…"}
           {stage === "live" && !hasVideo && "The agent is joining — video starts in a few seconds…"}
-          {stage === "unconfigured" && note}
+          {(stage === "unconfigured" || stage === "ended") && note}
           {stage === "error" && `Couldn't start the video rep: ${note}`}
         </div>
       )}
