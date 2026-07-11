@@ -358,7 +358,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{hintsCard}{askBar("Ask")}{tryChips}</div>
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginRight: 2 }}>Guided overview</span>
-                  <button onClick={() => void deckStep("start")} disabled={pending} style={ghostMd}>Start overview</button>
+                  <button onClick={() => void ask(`Can you give me a quick overview of ${displayName}?`)} disabled={pending} style={ghostMd}>Start overview</button>
                   <button onClick={() => void deckStep("previous")} disabled={pending} style={ghostMd}>Go back</button>
                   <button onClick={() => void deckStep("next")} disabled={pending} style={ghostMd}>Continue</button>
                 </div>

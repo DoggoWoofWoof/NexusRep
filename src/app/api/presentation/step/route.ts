@@ -32,10 +32,10 @@ function parseAction(v: unknown): PresentationAction {
 }
 
 function hcpText(action: PresentationAction, query?: string): string {
-  if (action === "next") return "Next slide.";
-  if (action === "previous") return "Previous slide.";
-  if (action === "jump") return query?.trim() ? `Show me the ${query.trim()} slide.` : "Jump to the relevant slide.";
-  return "Walk me through the approved deck.";
+  if (action === "next") return "Please continue to the next point.";
+  if (action === "previous") return "Can we go back to the prior point?";
+  if (action === "jump") return query?.trim() ? `Can you talk about ${query.trim()}?` : "Can you bring up the most relevant point?";
+  return "Can you walk me through the approved information?";
 }
 
 function normalized(s: string): string {
@@ -68,7 +68,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   // The walkthrough must never bypass the policy router: user-supplied text (a typed
   // jump query or the display text) can carry an adverse-event mention or an off-label
   // ask even when the client treated it as a deck command. Synthetic action strings
-  // ("Next slide.") stay on the zero-risk constant; anything the HCP actually typed is
+  // stay on the zero-risk constant; anything the HCP actually typed is
   // classified, and risky turns leave the deck flow for the REAL pipeline (AE→PV,
   // off-label refusal→MSL, medical info, human handoff — with follow-ups and audit).
   const supplied = Boolean(displayText || (action === "jump" && query?.trim()));

@@ -97,5 +97,7 @@ Modes to show: **🎙 Voice** (real browser speech), **⛶ Full screen**, **3D a
 
 ## Known limitations (say them if asked)
 - Live DocNexus data needs platform credentials or a valid token file; otherwise a modeled cardiology cohort (clearly labeled).
-- Vendor realtime/voice/CRM are mock adapters (browser voice is real); Postgres/pgvector
-  ready but in-memory for the demo. PDF ingestion is next (PPTX is real).
+- Vendor realtime uses the real DocNexus Agent/Tavus path when `TAVUS_API_KEY` is set;
+  Playwright E2E intentionally blanks vendor keys so tests do not spend credits. CRM stays
+  a simulated outbox adapter. Postgres/pgvector are ready, with local demos usually running
+  on PGlite or memory depending on `.env.local`.

@@ -138,10 +138,10 @@ function guidedItems(items: DeckItem[], guidance: string[] | undefined): DeckIte
 
 function lead(action: PresentationAction, title?: string): string {
   const where = slidePhrase(title);
-  if (action === "next") return `Next, let's move to ${where}.`;
+  if (action === "next") return `Let's move to ${where}.`;
   if (action === "previous") return `Let's go back to ${where}.`;
-  if (action === "jump") return `Let's jump to ${where}.`;
-  return `Let's walk through the approved deck. We'll start with ${where}.`;
+  if (action === "jump") return `Let's bring up ${where}.`;
+  return `Sure. I'll give you a concise, slide-led overview and start with ${where}.`;
 }
 
 function pick<T>(items: T[], seed: string): T {
@@ -162,21 +162,21 @@ function overviewLead(index: number, total: number, title: string | undefined, s
   const variants =
     index === 0
       ? [
-          `Sure. I’ll keep it high-level and anchor it in the slides, starting with ${where}.`,
-          `At a high level, I’d frame the story in a few parts. First, ${where}.`,
-          `Let me set the stage briefly. I’ll use ${where} as the starting point.`,
+          `Sure. I'll keep it high-level and anchor it in the slides, starting with ${where}.`,
+          `At a high level, I'll frame the story in a few parts. First, ${where}.`,
+          `Let me set the stage briefly. I'll use ${where} as the starting point.`,
         ]
       : isLast
         ? [
-            `To close, I’d show ${where} so the routing options are clear.`,
+            `To close, I'll show ${where} so the routing options are clear.`,
             `Before we wrap the overview, ${where} is the practical handoff point.`,
-            `I’d finish by bringing up ${where} for the next step.`,
+            `I'll finish by bringing up ${where} for the next step.`,
           ]
         : [
-            `From there, I’d bring up ${where} to keep the story grounded.`,
+            `From there, I'll bring up ${where} to keep the story grounded.`,
             `A useful place to pause next is ${where}.`,
-            `Then I’d move the discussion to ${where}.`,
-            `The next supporting point I’d put on screen is ${where}.`,
+            `Then I'll move the discussion to ${where}.`,
+            `The next supporting point I'll put on screen is ${where}.`,
           ];
   return pick(variants, `${seed}:${index}`);
 }
@@ -194,17 +194,17 @@ function planLead(index: number, total: number, title: string | undefined, step:
   const brief = /\b(short|brief(?:ly)?|concise|high[- ]level|quick)\b/.test(guide);
   if (index === 0) {
     return brief
-      ? `I’ll start briefly with ${where}.`
-      : `I’ll start the overview with ${where} so the discussion is anchored in approved material.`;
+      ? `I'll start briefly with ${where}.`
+      : `I'll start the overview with ${where} so the discussion is anchored in the slide.`;
   }
   if (isLast) {
     return brief
-      ? `To close, I’d show ${where}.`
-      : `To close this section, I’d bring up ${where} and keep the next step clear.`;
+      ? `To close, I'll show ${where}.`
+      : `To close this section, I'll bring up ${where} and keep the next step clear.`;
   }
   return brief
-    ? `Next, I’d put ${where} on screen.`
-    : `For this section, I’d put ${where} on screen and use the approved points there.`;
+    ? `Next, I'll put ${where} on screen.`
+    : `For this section, I'll put ${where} on screen and use the points there.`;
 }
 
 function resolvePlannedItems(items: DeckItem[], plan: PresentationPlan | undefined): PlannedDeckItem[] {
@@ -312,7 +312,7 @@ export class PresentationSkill {
     const item = items[index]!;
     const title = item.slide?.title ?? item.slide?.label;
     const intro = overview ? overviewLead(index, items.length, title, String(item.answer.id)) : lead(action, title);
-    // The presentation intro is already the human slide cue ("Next, let's move to ...").
+    // The presentation intro is already the human slide cue ("Let's move to ...").
     // Do not add the generic response-builder slide sentence here, or a walkthrough
     // repeats itself on every slide.
     const text = `${intro} ${item.answer.text}`;

@@ -48,7 +48,7 @@ The rep can reword the approved answer body when an LLM composer is configured, 
 
 If the brand wants different ISI wording, do not coach it in the live answer. In Build -> Approved knowledge, edit the ISI as a proposed safety block, submit it for MLR review, then approve it. After approval, the new block becomes the exact ISI the agent uses live and the previous active block is retired.
 
-The deck walkthrough is also first-party. In the HCP preview, "Walk through deck" and "Next slide" call NexusRep's presentation skill, which selects the next retrievable passage from the active approved document by slide order, speaks the approved text, appends exact ISI, logs the turn, and moves the approved deck. Tavus can render the avatar for that output, but it does not own the deck logic.
+The guided overview is also first-party. In the HCP preview, a natural request like "Can you give me a quick overview?" calls NexusRep's presentation skill, which selects retrievable passages from the active approved document by slide order, speaks slide-led segments from approved text, appends exact ISI, logs each turn, and moves the approved deck. Tavus can render the avatar for that output, but it does not own the deck logic.
 
 ## 4. How Coaching Changes The Rep
 

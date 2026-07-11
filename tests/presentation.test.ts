@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createContainer } from "@lib/container";
 
 describe("NexusRep first-party presentation skill", () => {
-  it("starts the approved deck walkthrough from the first active slide", async () => {
+  it("starts the slide-led overview from the first active slide", async () => {
     const c = await createContainer();
     const step = await c.presentation.step({
       action: "start",
@@ -11,7 +11,7 @@ describe("NexusRep first-party presentation skill", () => {
 
     expect(step?.detailAidSlideId).toBe("slide_title");
     expect(step?.sourceIds).toEqual(["ans_title"]);
-    expect(step?.text).toContain("Let's walk through the approved deck");
+    expect(step?.text).toContain("slide-led overview");
     expect(step?.text).toContain("Milvexian is presented");
   });
 
@@ -25,7 +25,7 @@ describe("NexusRep first-party presentation skill", () => {
 
     expect(step?.detailAidSlideId).toBe("slide_moa");
     expect(step?.sourceIds).toEqual(["ans_moa"]);
-    expect(step?.text).toContain("Next, let's move");
+    expect(step?.text).toContain("Let's move");
   });
 
   it("jumps to the best approved slide for a topic query", async () => {

@@ -106,15 +106,12 @@ test.describe("HCP doctor view", () => {
     await expect(page.getByText(/Important Safety Information/i)).toBeVisible();
   });
 
-  test("walks through the approved deck using the first-party presentation skill", async ({ page }) => {
+  test("delivers a slide-led overview using the first-party presentation skill", async ({ page }) => {
     await startHcpSession(page);
     await page.getByRole("button", { name: /Start overview/i }).click();
-    await expect(page.getByText(/Let's walk through the approved deck/i)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/start the overview|start briefly|Milvexian slide/i).first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/Milvexian|Factor XIa/i).first()).toBeVisible();
-    await page.getByRole("button", { name: /Continue/i }).click();
-    await expect(page.getByText(/Next, let's move/i)).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(/Mechanism|Factor XIa/i).first()).toBeVisible();
-    await page.getByRole("button", { name: /Continue/i }).click();
+    await expect(page.getByText(/Mechanism|Factor XIa/i).first()).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText(/LIBREXIA|program/i).first()).toBeVisible({ timeout: 15_000 });
   });
 

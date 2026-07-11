@@ -9,7 +9,24 @@
 
 ## 1. Current build status
 
-### Latest: Agent gallery + vendor-neutral realtime layer (2026-07-10)
+### Latest: Human presentation flow + Tavus key check (2026-07-11)
+
+- **HCP "Start overview" now launches the multi-slide presentation overview** from a natural
+  doctor prompt ("quick overview") instead of a one-slide deck command. The rep delivers the
+  brand pitch slide by slide, while the ask bar remains interruptible so the doctor can ask
+  questions between segments.
+- **Presentation cues are less synthetic**: server-generated step text now uses presenter
+  language ("slide-led overview", "let's move", "bring up the slide") instead of "walk through
+  the approved deck" / "next slide" command phrasing. The spoken medical body remains approved
+  source text and still passes the final compliance gate.
+- **Tavus key check:** all five supplied Tavus keys authenticate. Non-billing `test_mode`
+  conversation creation returns `402` for test1-test3 and succeeds for test4-test5; `.env.local`
+  is already using test4, so no secret was rotated or committed.
+- **How to verify:** `npm run typecheck`, `npm test`, and the HCP E2E overview test should show
+  title -> mechanism -> LIBREXIA program through the presentation skill. Playwright still blanks
+  Tavus/LLM keys by design to avoid spending vendor credits.
+
+### Agent gallery + vendor-neutral realtime layer (2026-07-10)
 
 - **New Studio mode: "Agent"** (between Build and Pitch & Script): browse the video-agent
   gallery — your own trained agents + the vendor's stock library — with **search**, data-derived
@@ -505,12 +522,12 @@ Fixed the "Session review" replay and recording trust issues:
   knowledge" so uploaded files, pending review passages, retrievable passages from active
   documents, and active ISI are visibly distinct. MLR approval is document/safety-block level;
   "passages" are only NexusRep's internal retrieval units.
-- **NexusRep now has its own presentation skill.** `PresentationSkill` walks the active
+- **NexusRep now has its own presentation skill.** `PresentationSkill` presents from the active
   approved deck using the source slide order, supports start/next/previous/jump, speaks only
   linked active `ApprovedAnswer` blocks, returns the slide to show, and appends/verifies the
   active exact ISI through the same final compliance gate.
-- **HCP preview can demo deck walkthroughs without Tavus.** The doctor view has guided deck
-  controls ("Walk through deck", "Previous slide", "Next slide") that call
+- **HCP preview can demo guided overviews without Tavus.** The doctor view has guided overview
+  controls ("Start overview", "Go back", "Continue") that call
   `POST /api/presentation/step`, log the turn, update the approved slide, and speak through
   browser/3D/Tavus rendering depending on what is enabled. Tavus is now optional rendering,
   not the knowledge or presentation source of truth.
@@ -895,6 +912,23 @@ Proceeding one stage at a time, stopping for review after each:
 ---
 
 ## Implementation log
+
+### 2026-07-11 - Human slide-led pitch flow
+- **Changed:** the doctor-facing **Start overview** button now sends a natural HCP request
+  into `/api/presentation/overview`, so the product pitch uses the same multi-slide guided
+  overview that Training/Pitch & Script rehearses. It no longer starts with a one-slide
+  "deck command" that looked like automation scaffolding.
+- **Changed:** `PresentationSkill` framing copy now reads like a brand presenter cueing the
+  detail aid ("slide-led overview", "let's move", "bring up") while the medical/product
+  content remains the approved source block.
+- **Changed:** `/api/presentation/step` direct-call fallback text now logs doctor-like
+  requests ("Please continue to the next point") rather than synthetic "Next slide."
+  strings.
+- **Docs:** demo talk track and J&J script clarify that E2E intentionally mocks Tavus to
+  avoid credit spend, while the live app uses Tavus when the key is configured.
+- **Verified:** focused presentation/Tavus/hardening tests passed (32 tests),
+  `npm run typecheck` clean, `npm test` passed (257 pass, 1 guarded live DocNexus
+  test skipped), and `npm run e2e` passed (27 pass, 2 skipped).
 
 ### 2026-07-09 - Final natural Tavus recording + full deck usage verified
 - **Changed:** presentation overview now walks the approved deck in source order
