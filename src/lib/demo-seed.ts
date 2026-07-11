@@ -12,6 +12,8 @@ import { MILVEXIAN_COHORT } from "@modules/audience";
 import type { SessionService } from "@modules/sessions";
 import type { FollowUpService, FollowUpType } from "@modules/followups";
 import type { CrmOutbox } from "@modules/crm";
+import type { AuditService } from "@modules/audit";
+import { classify } from "@modules/compliance";
 import type { StudioService } from "@modules/aiRepStudio";
 import type { AIRepPersona } from "@modules/aiRepStudio";
 import type { BrandProfile } from "@modules/brand";
@@ -49,10 +51,25 @@ export interface SeedDeps {
   sessions: SessionService;
   followups: FollowUpService;
   crm: CrmOutbox;
+  audit: AuditService;
   aiRepId: AiRepId;
   brandId: BrandId;
   campaignId: CampaignId;
 }
+
+/** The demo conversations, as the questions doctors actually asked. Each is classified by
+ *  the REAL classifier at seed time, so the Overview "what HCPs are asking" mix and the
+ *  compliance rates are measured from the audit trail — not a hand-typed bar chart. */
+const SEED_QUESTIONS: { session: string; q: string; grounded?: string; route?: string }[] = [
+  { session: "session_sx4471", q: "What is it and how does it work?", grounded: "ans_moa" },
+  { session: "session_sx4471", q: "What's the program?", grounded: "ans_program" },
+  { session: "session_sx4455", q: "What is Milvexian and how does it work?", grounded: "ans_moa" },
+  { session: "session_sx4455", q: "Tell me about the LIBREXIA program", grounded: "ans_program" },
+  { session: "session_sx4455", q: "What's the development and FDA status?", grounded: "ans_program" },
+  { session: "session_sx4455", q: "What are the side effects?" },
+  { session: "session_sx4455", q: "Is it better than apixaban?", route: "medical_information" },
+  { session: "session_sx4459", q: "Can I use it for pediatric patients?", route: "off_label_refusal" },
+];
 
 /** Seed the real stores with demo history. Idempotent-friendly (deterministic ids). */
 export async function seedDemoHistory(deps: SeedDeps): Promise<void> {
@@ -103,6 +120,33 @@ export async function seedDemoHistory(deps: SeedDeps): Promise<void> {
   await deps.sessions.appendTurn(first, { speaker: "rep", text: "Here's what I can share on that: it is an investigational, orally administered Factor XIa (FXIa) inhibitor being studied as an anticoagulant. It is not approved by the FDA or any regulatory authority.\n\nImportant Safety Information: this is an investigational compound; its safety and efficacy have not been established.", sourceIds: ["ans_moa"], detailAidSlideId: "slide_moa", seed: "sx4471_t2", at: t(11) });
   await deps.sessions.appendTurn(first, { speaker: "hcp", text: "What's the program?", seed: "sx4471_t3", at: t(30) });
   await deps.sessions.appendTurn(first, { speaker: "rep", text: "Good question. It is being evaluated in the Phase 3 LIBREXIA program across three indications under study.", sourceIds: ["ans_program"], detailAidSlideId: "slide_program", seed: "sx4471_t4", at: t(33) });
+
+  // Record REAL audit events for the seeded conversations (idempotent) so the Overview
+  // question mix + compliance rates are measured from the classifier/gate, not hand-typed.
+  const alreadySeeded = (await deps.audit.allOfType("classification")).length > 0;
+  if (!alreadySeeded) {
+    for (let i = 0; i < SEED_QUESTIONS.length; i++) {
+      const { session, q, grounded, route } = SEED_QUESTIONS[i]!;
+      const sid = asId<"session_id">(session) as SessionId;
+      const cls = classify(q);
+      const decisionRoute = route ?? "approved_answer";
+      await deps.audit.record(sid, "classification", { ...cls }, undefined, `seedcls_${i}`);
+      await deps.audit.record(
+        sid,
+        "compliance_decision",
+        { decision: "approved", reasons: [], route: decisionRoute, isiRequired: cls.isiRequired },
+        undefined,
+        `seeddec_${i}`,
+      );
+      await deps.audit.record(
+        sid,
+        "response_output",
+        { route: decisionRoute, sourceIds: grounded ? [grounded] : [] },
+        undefined,
+        `seedout_${i}`,
+      );
+    }
+  }
 }
 
 /**

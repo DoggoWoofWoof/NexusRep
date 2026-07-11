@@ -78,4 +78,11 @@ export class AuditService {
     const rows = await this.log.list({ where: { sessionId } });
     return rows.sort((a, b) => a.seq - b.seq);
   }
+
+  /** All events of one type across every session — the source for aggregate analytics
+   *  (topic distribution from "classification", measured compliance from
+   *  "compliance_decision") instead of hardcoded illustrative numbers. */
+  async allOfType(type: AuditEventType): Promise<AuditRecord[]> {
+    return this.log.list({ where: { type } });
+  }
 }

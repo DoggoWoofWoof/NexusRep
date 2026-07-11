@@ -208,7 +208,7 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
     },
   };
   const metrics = new RuntimeMetrics();
-  const analytics = new AnalyticsService({ sessions, followups, crm, content, targeting, metrics });
+  const analytics = new AnalyticsService({ sessions, followups, crm, content, targeting, metrics, audit });
   // MLR review loop: on approval, publish the answer to retrieval so the rep can
   // cite it. Nothing parsed/ingested is retrievable until it clears this gate.
   const mlr = new MlrService(content, async (a) => {
@@ -293,7 +293,7 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
   // or an explicit createContainer({ seedHistory:true }) — used by tests). Off by
   // default so Sessions / Analytics / Follow-ups show ONLY real conversations.
   if (env.seedHistory || opts?.seedHistory) {
-    await seedDemoHistory({ sessions, followups, crm, aiRepId, brandId, campaignId });
+    await seedDemoHistory({ sessions, followups, crm, audit, aiRepId, brandId, campaignId });
   }
   // The rep itself (persona, guardrails, approved-content sign-off) is always seeded
   // so the Studio is launch-ready and the rep can actually answer — not fake activity.

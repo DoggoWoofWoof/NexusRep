@@ -13,6 +13,24 @@ import type { CrmOutbox } from "@modules/crm";
 import type { FollowUpService } from "@modules/followups";
 import type { SessionService } from "@modules/sessions";
 import type { TargetingService } from "@modules/audience";
+import type { AuditService } from "@modules/audit";
+import type { Intent } from "@modules/compliance";
+
+/** Real HCP-question intents → the buckets shown in "What HCPs are asking". Every bucket
+ *  is a genuine classifier intent, so the distribution is the measured question mix, not
+ *  an illustrative split. */
+const TOPIC_BUCKETS: { intent: Intent; label: string }[] = [
+  { intent: "product_info", label: "Product & mechanism" },
+  { intent: "trial_data", label: "Clinical program & data" },
+  { intent: "safety", label: "Safety information" },
+  { intent: "dosing", label: "Dosing / efficacy (→ Medical Info)" },
+  { intent: "administration", label: "Administration" },
+  { intent: "access", label: "Access & coverage" },
+  { intent: "comparative", label: "Comparative (→ Medical Info)" },
+  { intent: "off_label", label: "Off-label (refused)" },
+  { intent: "adverse_event", label: "Adverse events (→ PV)" },
+  { intent: "human_request", label: "Human / MSL requests" },
+];
 
 export type AnalyticsTab =
   | "targeting"
@@ -73,6 +91,20 @@ export interface AnalyticsDeps {
   content: ContentService;
   targeting: TargetingService;
   metrics: RuntimeMetrics;
+  audit: AuditService;
+}
+
+/** The measured question mix + a compliance rollup, aggregated from the audit trail. */
+export interface TopicSlice { label: string; count: number; pct: number }
+export interface ComplianceCounts {
+  decisions: number;
+  approved: number;
+  blocked: number;
+  grounded: number;        // approved answers carrying ≥1 source
+  ungroundedBlocked: number;
+  isiRequired: number;
+  isiDelivered: number;
+  unapprovedBlocked: number; // off-label / AE content stopped before output
 }
 
 function pct(n: number, d: number): string {
@@ -84,12 +116,18 @@ export class AnalyticsService {
 
   /** Compute all tabs at once (single pass over the stores). */
   async all(): Promise<Record<AnalyticsTab, Metric[]>> {
-    const [sessions, followups, crm, answers] = await Promise.all([
+    const [sessions, followups, crm, answers, cc] = await Promise.all([
       this.deps.sessions.list(),
       this.deps.followups.list(),
       this.deps.crm.list(),
       this.deps.content.listAnswers(),
+      this.complianceCounts(),
     ]);
+    // Measured compliance rates — "—" until there's a turn to measure, so the gate's
+    // guarantee is shown as a real number, never an unbacked "100%".
+    const groundedDen = cc.grounded + cc.ungroundedBlocked;
+    const groundedPct = groundedDen ? pct(cc.grounded, groundedDen) : "—";
+    const isiPct = cc.isiRequired ? pct(cc.isiDelivered, cc.isiRequired) : "—";
     const t = this.deps.targeting;
 
     const total = sessions.length;
@@ -127,15 +165,15 @@ export class AnalyticsService {
       ],
       content: [
         { key: "assets", tone: "blue", value: String(answers.length), label: "Approved answers live", sub: "Usable by the AI rep", drillTo: "studio" },
-        { key: "grounded", tone: "green", value: "100%", label: "Answers source-grounded", sub: "Every answer tied to an MLR source" },
+        { key: "grounded", tone: "green", value: groundedPct, label: "Answers source-grounded", sub: cc.grounded ? `${cc.grounded} answers tied to an MLR source` : "No answers delivered yet" },
         { key: "gaps", tone: gaps.length ? "red" : "green", value: String(gaps.length), label: "Content gaps", sub: gaps.length ? `No approved answer: ${gaps.join(", ")}` : "All target topics covered" },
-        { key: "unapproved", tone: "green", value: "0", label: "Unapproved answers", sub: "Blocked by the gate before output" },
+        { key: "unapproved", tone: cc.unapprovedBlocked ? "yellow" : "green", value: String(cc.unapprovedBlocked), label: "Unapproved answers blocked", sub: "Off-label / AE content stopped by the gate" },
       ],
       compliance: [
-        { key: "isi", tone: "green", value: "100%", label: "ISI delivery", sub: "Enforced by the compliance gate" },
+        { key: "isi", tone: cc.isiRequired && cc.isiDelivered < cc.isiRequired ? "red" : "green", value: isiPct, label: "ISI delivery", sub: cc.isiRequired ? `${cc.isiDelivered}/${cc.isiRequired} required deliveries` : "No ISI-required turns yet" },
         { key: "offlabel", tone: "fg", value: String(mslLike), label: "Off-label / MSL routings", sub: "Refused and routed to medical", drillTo: "followups" },
         { key: "ae", tone: aeCaptures ? "yellow" : "green", value: String(aeCaptures), label: "AE captures", sub: "Routed to pharmacovigilance", drillTo: "followups" },
-        { key: "unapproved2", tone: "green", value: "0", label: "Ungrounded responses", sub: "Spoken without a source" },
+        { key: "unapproved2", tone: cc.ungroundedBlocked ? "red" : "green", value: String(cc.ungroundedBlocked), label: "Ungrounded blocked", sub: "Caught by the gate before output" },
       ],
       crm_ops: [
         { key: "crm_success", tone: crmFailed ? "yellow" : "green", value: pct(crmSent, crm.length), label: "CRM export success", sub: `${crmSent}/${crm.length} delivered to connector`, drillTo: "followups" },
@@ -156,12 +194,68 @@ export class AnalyticsService {
     return (await this.all())[tab];
   }
 
+  /** Measured question mix: bucket every logged turn's classified intent. `total` is the
+   *  number of classified HCP turns — the UI shows the real bars only once there's enough
+   *  volume to be meaningful, and falls back to a labeled illustrative sample below that. */
+  async topicDistribution(): Promise<{ total: number; slices: TopicSlice[] }> {
+    const events = await this.deps.audit.allOfType("classification");
+    const counts = new Map<string, number>();
+    for (const e of events) {
+      const intent = String((e.payload as { intent?: unknown }).intent ?? "");
+      if (intent) counts.set(intent, (counts.get(intent) ?? 0) + 1);
+    }
+    const total = [...counts.values()].reduce((a, n) => a + n, 0);
+    const slices = TOPIC_BUCKETS.map((b) => ({ label: b.label, count: counts.get(b.intent) ?? 0 }))
+      .filter((s) => s.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .map((s) => ({ ...s, pct: total ? Math.round((s.count / total) * 100) : 0 }));
+    return { total, slices };
+  }
+
+  /** Compliance rollup measured from the audit trail — replaces asserted "100% / 0"
+   *  literals with real counts, so a gate regression would actually move the number. */
+  async complianceCounts(): Promise<ComplianceCounts> {
+    const [decisionsRaw, outputs] = await Promise.all([
+      this.deps.audit.allOfType("compliance_decision"),
+      this.deps.audit.allOfType("response_output"),
+    ]);
+    const c: ComplianceCounts = {
+      decisions: 0, approved: 0, blocked: 0, grounded: 0, ungroundedBlocked: 0,
+      isiRequired: 0, isiDelivered: 0, unapprovedBlocked: 0,
+    };
+    for (const e of decisionsRaw) {
+      const p = e.payload as { decision?: string; reasons?: string[]; route?: string; isiRequired?: boolean };
+      if (p.decision !== "approved" && p.decision !== "blocked") continue; // skip non-gate rows
+      c.decisions++;
+      const reasons = Array.isArray(p.reasons) ? p.reasons : [];
+      const approved = p.decision === "approved";
+      if (approved) c.approved++; else c.blocked++;
+      if (reasons.includes("ungrounded_response")) c.ungroundedBlocked++;
+      if (reasons.includes("off_label_in_answer") || reasons.includes("adverse_event_in_answer")) c.unapprovedBlocked++;
+      if (p.isiRequired && p.route === "approved_answer") {
+        c.isiRequired++;
+        if (approved && !reasons.includes("isi_missing")) c.isiDelivered++;
+      }
+    }
+    // Grounded = approved answers that actually carried a source id (measured from output).
+    for (const e of outputs) {
+      const p = e.payload as { route?: string; sourceIds?: unknown[] };
+      if (p.route === "approved_answer" && Array.isArray(p.sourceIds) && p.sourceIds.length > 0) c.grounded++;
+    }
+    return c;
+  }
+
   /** Real engagement funnel + session compliance breakdown (for the charts). */
   async overview(): Promise<{
     funnel: { label: string; count: number; pct: number }[];
     statusBreakdown: { label: string; count: number; tone: Metric["tone"] }[];
+    topicMix: { total: number; slices: TopicSlice[] };
   }> {
-    const [sessions, followups] = await Promise.all([this.deps.sessions.list(), this.deps.followups.list()]);
+    const [sessions, followups, topicMix] = await Promise.all([
+      this.deps.sessions.list(),
+      this.deps.followups.list(),
+      this.topicDistribution(),
+    ]);
     const target = this.deps.targeting.cohortSize();
     const started = sessions.length;
     const completed = sessions.filter((s) => s.durationSeconds > 0).length;
@@ -182,6 +276,7 @@ export class AnalyticsService {
         { label: "AE routed", count: byStatus("ae_routed"), tone: "yellow" },
         { label: "Blocked + escalated", count: byStatus("blocked_escalated"), tone: "red" },
       ],
+      topicMix,
     };
   }
 

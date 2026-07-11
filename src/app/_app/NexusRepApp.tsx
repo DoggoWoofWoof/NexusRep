@@ -264,17 +264,21 @@ function useAttention(): AttentionItem[] {
   return items;
 }
 
-function useCommandKpis(): { kpis: CommandKpi[]; live: boolean } {
+type TopicMix = { total: number; slices: { label: string; count: number; pct: number }[] };
+
+function useCommandKpis(): { kpis: CommandKpi[]; live: boolean; topicMix: TopicMix | null } {
   const [kpis, setKpis] = useState<CommandKpi[]>(COMMAND_KPIS);
   const [live, setLive] = useState(false);
+  const [topicMix, setTopicMix] = useState<TopicMix | null>(null);
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const res = await fetch("/api/analytics");
         if (!res.ok) return;
-        const json = (await res.json()) as { data?: Record<string, Metric[]> };
+        const json = (await res.json()) as { data?: Record<string, Metric[]>; topicMix?: TopicMix };
         if (!alive || !json.data) return;
+        if (json.topicMix) setTopicMix(json.topicMix);
         const d = json.data;
         const find = (cat: string, key: string) => (d[cat] ?? []).find((m) => m.key === key);
         const matches = [
@@ -305,11 +309,18 @@ function useCommandKpis(): { kpis: CommandKpi[]; live: boolean } {
     })();
     return () => { alive = false; };
   }, []);
-  return { kpis, live };
+  return { kpis, live, topicMix };
 }
 
 function OverviewScreen({ app }: { app: AppState }) {
-  const { kpis: commandKpis, live: kpisLive } = useCommandKpis();
+  const { kpis: commandKpis, live: kpisLive, topicMix } = useCommandKpis();
+  // Show the REAL question mix once there's enough classified volume to be meaningful;
+  // below that, keep the labeled illustrative sample so a sparse demo doesn't look broken.
+  const TOPIC_MIN = 8;
+  const topicLive = !!topicMix && topicMix.total >= TOPIC_MIN && topicMix.slices.length > 0;
+  const topicRows: [string, number, string][] = topicLive
+    ? topicMix!.slices.slice(0, 6).map((s) => [s.label, Math.round((s.pct / (topicMix!.slices[0]!.pct || 1)) * 100), `${s.pct}%`])
+    : [["What the product is / mechanism", 100, "34%"], ["The program", 72, "23%"], ["Investigational & FDA status", 58, "19%"], ["Dosing / efficacy (→ Medical Info)", 44, "14%"], ["Comparative questions (→ Medical Info)", 32, "10%"]];
   const brand = useBrand();
   // Real "needs coaching" list: sessions whose compliance status isn't clean, from the live API.
   const [coachRows, setCoachRows] = useState<{ id: string; hcp: string; comp: string }[] | null>(null);
@@ -361,10 +372,10 @@ function OverviewScreen({ app }: { app: AppState }) {
         <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "18px 20px", boxShadow: "var(--dn-shadow-card)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
             <span style={{ font: "600 13px/1 var(--dn-font-sans)" }}>What HCPs are asking</span>
-            {samplePill}
+            {!topicLive && samplePill}
           </div>
-          <div style={{ font: "400 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 16 }}>Illustrative topic mix — per-topic session analytics land with the topic-distribution metric</div>
-          {[["What the product is / mechanism", 100, "34%"], ["The program", 72, "23%"], ["Investigational & FDA status", 58, "19%"], ["Dosing / efficacy (→ Medical Info)", 44, "14%"], ["Comparative questions (→ Medical Info)", 32, "10%"]].map(([label, pct, val]) => (
+          <div style={{ font: "400 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 16 }}>{topicLive ? `Measured across ${topicMix!.total} classified questions this campaign` : "Illustrative topic mix — the real distribution appears once sessions accrue"}</div>
+          {topicRows.map(([label, pct, val]) => (
             <div key={label as string} style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 10 }}>
               <span style={{ width: 150, flexShrink: 0, font: "500 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{label}</span>
               <span style={{ flex: 1, height: 13, borderRadius: 4, background: "var(--dn-surface-2)", overflow: "hidden" }}><span style={{ display: "block", height: "100%", borderRadius: 4, background: "var(--dn-brand-light)", width: `${pct}%` }} /></span>
