@@ -2,8 +2,9 @@
 
 > The living reference for the NexusRep build: what exists, what's real vs mocked,
 > how to run/test/demo it, and what's next. Updated after every meaningful step
-> (brief §23). Companion docs: product brief `docs/NEXUSREP_IMPLEMENTATION_BRIEF.md`,
-> vendor analysis `docs/VENDOR_EVAL.md`, agent/compliance rules in root `CLAUDE.md`.
+> (brief §23). Companion docs: architecture map `docs/ARCHITECTURE.md`, product brief
+> `docs/NEXUSREP_IMPLEMENTATION_BRIEF.md`, vendor analysis `docs/VENDOR_EVAL.md`,
+> agent/compliance rules in root `CLAUDE.md`.
 
 ---
 
