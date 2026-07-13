@@ -24,6 +24,8 @@ export interface VideoCallTransport {
   speak(text: string): boolean;
   /** Send typed doctor text into the PAL as user input, so Tavus runs its fast response path. */
   respond(text: string): boolean;
+  /** Immediately stop the replica's current speech (barge-in flush). False if not connected. */
+  interrupt(): boolean;
   /** Enable/disable the doctor's microphone on the call (push-to-mute). */
   setMicEnabled(on: boolean): void;
   leave(): void;
@@ -136,6 +138,18 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
         respond();
       }
       return true;
+    },
+
+    interrupt(): boolean {
+      if (!call) return false;
+      try {
+        // Immediately stop whatever the replica is saying — used the moment the doctor starts
+        // talking, so a new question doesn't wait out the current answer (no queueing).
+        call.sendAppMessage({ message_type: "conversation", event_type: "conversation.interrupt", conversation_id: conversationId }, "*");
+        return true;
+      } catch {
+        return false;
+      }
     },
 
     setMicEnabled(on: boolean): void {

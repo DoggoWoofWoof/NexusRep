@@ -476,8 +476,14 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // latency; from there → vendor_started_speaking is our endpoint + Tavus TTS. See
             // window.__nexusrepLatency() for the per-turn breakdown.
             if (/hcp|user|human|participant|remote/i.test(e.role)) {
-              if (/start(?:ed)?[_\s.-]*speak/i.test(e.type)) recordTiming({ type: "hcp_started_speaking", reason: e.type });
-              else if (/stop(?:ped)?[_\s.-]*speak|done[_\s.-]*speak/i.test(e.type)) recordTiming({ type: "hcp_stopped_speaking", reason: e.type });
+              if (/start(?:ed)?[_\s.-]*speak/i.test(e.type)) {
+                recordTiming({ type: "hcp_started_speaking", reason: e.type });
+                // The doctor started talking → flush the replica's current speech NOW so the new
+                // question isn't queued behind a still-playing answer (barge-in, immediate).
+                transportRef.current?.interrupt();
+              } else if (/stop(?:ped)?[_\s.-]*speak|done[_\s.-]*speak/i.test(e.type)) {
+                recordTiming({ type: "hcp_stopped_speaking", reason: e.type });
+              }
             }
             // The vendor ended the call (credits exhausted, duration cap, account limit).
             // Without this the pane just froze to black with no explanation.
