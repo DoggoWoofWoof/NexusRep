@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { AppState } from "./NexusRepApp";
-import { createRecognizer, setSpeechLanguage, speechVoiceHint, BrowserVoiceProvider, type ClientRecognizer } from "@lib/browser-speech";
+import { createRecognizer, setSpeechLanguage, speechVoiceHint, toneSpeechOpts, BrowserVoiceProvider, type ClientRecognizer } from "@lib/browser-speech";
 import { LiveAvatar, type LiveAvatarHandle } from "../_components/LiveAvatar";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { SlideView } from "../_components/SlideView";
@@ -77,7 +77,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setSpeaking(true);
     try {
       if (threeD && liveRef.current?.isReady()) await liveRef.current.speak(text);
-      else await voiceRef.current?.speak(text, { voiceHint: speechVoiceHint() });
+      else await voiceRef.current?.speak(text, { voiceHint: speechVoiceHint(), ...toneSpeechOpts(brand?.voiceStyle) });
     } finally { setSpeaking(false); }
   }
 

@@ -19,9 +19,13 @@ export async function GET(): Promise<NextResponse> {
   const c = await getContainer();
   // Resolve the profile from the Setup Assistant's answers so anything the brand user set
   // BY CHATTING (name, greeting, indication, talking points, audience) drives the live rep.
-  const draft = (await c.studio.get(c.demo.aiRepId))?.draft;
+  const snap = await c.studio.get(c.demo.aiRepId);
+  const draft = snap?.draft;
   const setupAnswers = setupAnswersOf(draft);
   const brand = resolveBrandProfile(c.brand, setupAnswers);
+  // The persona tone chosen in the Studio also drives the doctor view's TTS delivery, so the
+  // rep sounds the same to doctors as it does in preview/training.
+  const voiceStyle = snap?.rep.persona.voiceStyle;
 
   // The on-screen deck = the authored profile deck + LIVE approved content (uploads that
   // cleared MLR). This is what lets a brand configured purely by chat + upload render real
@@ -49,5 +53,5 @@ export async function GET(): Promise<NextResponse> {
       ? derived
       : brand.tryQuestions;
 
-  return NextResponse.json({ ...toPublicBrand(brand), tryQuestions, deck: mergeLiveDeck(brand.deck, live) });
+  return NextResponse.json({ ...toPublicBrand(brand), voiceStyle, tryQuestions, deck: mergeLiveDeck(brand.deck, live) });
 }
