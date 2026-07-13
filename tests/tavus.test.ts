@@ -88,6 +88,37 @@ describe("Tavus realtime adapter", () => {
     await tavus.endSession();
     expect(calls.some((c) => c.url.endsWith("/end"))).toBe(true);
   });
+
+  it("reuses an existing persona by name (survives restart) instead of creating a duplicate PAL", async () => {
+    const calls: { url: string; method?: string; body: Record<string, unknown> | null }[] = [];
+    vi.stubGlobal("fetch", (async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      calls.push({ url: u, method, body: init?.body ? JSON.parse(String(init.body)) : null });
+      // The account already has this brand's persona (as after a redeploy — the in-memory cache is
+      // empty on boot). The lookup GET must find it so we DON'T mint another one.
+      if (u.includes("/personas") && method === "GET") {
+        return new Response(JSON.stringify({ data: [{ persona_id: "existing_pal", persona_name: "NexusRep compliant rep · reuse_brand" }] }), { status: 200 });
+      }
+      if (u.endsWith("/personas")) return new Response(JSON.stringify({ persona_id: "NEWLY_CREATED" }), { status: 200 }); // POST create — must NOT happen
+      if (u.includes("/personas/")) return new Response("{}", { status: 200 }); // PATCH in place
+      if (u.endsWith("/conversations")) return new Response(JSON.stringify({ conversation_id: "c9", conversation_url: "https://tavus.daily.co/c9", status: "active" }), { status: 200 });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch);
+
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1" });
+    await tavus.startSession({
+      sessionId: "hcp-2",
+      systemPrompt: "sp",
+      personaCacheKey: "reuse_brand",
+      customLlm: { baseUrl: "https://app.example/api/tavus/llm", model: "nexusrep-compliance" },
+      agentId: "r1",
+    });
+
+    const convo = calls.find((c) => c.url.endsWith("/conversations"))!;
+    expect(convo.body?.persona_id).toBe("existing_pal"); // reused the one already on the account
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/personas"))).toBe(false); // no new PAL
+  });
 });
 
 describe("Tavus custom-LLM endpoint preserves the compliance gate", () => {

@@ -105,9 +105,21 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
    */
   private async ensurePersona(config: RealtimeSessionConfig): Promise<string> {
     const cacheKey = config.personaCacheKey ?? "default";
+    const personaName = cacheKey === "default" ? "NexusRep compliant rep" : `NexusRep compliant rep · ${cacheKey}`;
     const layers = this.layersFor(config);
     const layerSignature = JSON.stringify(layers);
-    const existing = config.personaId ?? this.cfg.personaId ?? createdPersonas.get(cacheKey);
+    // Reuse order: explicit config/env id → this-process cache → an EXISTING persona with our name
+    // already on the account → only then create. The name lookup is what makes reuse survive a
+    // process restart/redeploy: `createdPersonas` is in-memory, so without it every deploy (and
+    // every idle spin-down) minted a brand-new PAL — the "why does it change PALs" leak.
+    let existing = config.personaId ?? this.cfg.personaId ?? createdPersonas.get(cacheKey);
+    if (!existing) {
+      const found = await this.findPersonaByName(personaName);
+      if (found) {
+        existing = found;
+        createdPersonas.set(cacheKey, found); // skip the lookup for the rest of this process
+      }
+    }
     if (existing) {
       const patches: Record<string, unknown>[] = [];
       if (config.systemPrompt && config.systemPrompt !== personaPrompts.get(cacheKey)) {
@@ -134,8 +146,9 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
     }
 
     const body = {
-      // Stable, per-brand name (not per-session) — one persona per brand, reused across sessions.
-      persona_name: cacheKey === "default" ? "NexusRep compliant rep" : `NexusRep compliant rep · ${cacheKey}`,
+      // Stable, per-brand name (not per-session) — one persona per brand, reused across sessions
+      // (and found by name after a restart, so we never create a second one for the same brand).
+      persona_name: personaName,
       system_prompt: config.systemPrompt,
       default_replica_id: config.agentId ?? this.cfg.replicaId,
       pipeline_mode: "full",
@@ -156,6 +169,19 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
       });
     personaCreations.set(cacheKey, creation);
     return creation;
+  }
+
+  /** Find an existing persona on the account by its exact name (best-effort). This is what lets
+   *  reuse survive a process restart — otherwise the in-memory cache is empty on boot and we'd
+   *  create a duplicate PAL. Returns undefined on any error so the caller falls back to creating. */
+  private async findPersonaByName(name: string): Promise<string | undefined> {
+    try {
+      const res = await this.api<{ data?: { persona_id?: string; persona_name?: string }[] }>("/personas?limit=100", { method: "GET" });
+      const list = Array.isArray(res) ? (res as { persona_id?: string; persona_name?: string }[]) : res.data ?? [];
+      return list.find((p) => p.persona_name === name)?.persona_id;
+    } catch {
+      return undefined;
+    }
   }
 
   private layersFor(config: RealtimeSessionConfig): Record<string, unknown> {
