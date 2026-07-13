@@ -141,10 +141,11 @@ export const env = {
   composerMaxTokens: Math.round(clampNum(process.env.NEXUSREP_COMPOSER_MAX_TOKENS, 400, 50, 4000)),
 
   // ── Brand-console auth (multi-user demo directory) ───────────────────────────
-  // The gate is ON when NEXUSREP_AUTH=1 (or the legacy NEXUSREP_APP_PASSWORD is set). OFF by
-  // default so local dev and E2E stay open. The user directory + per-user data profile live in
-  // auth-session.ts; the doctor link (/hcp) is NEVER gated — doctors reach the rep by link.
-  authEnabled: process.env.NEXUSREP_AUTH === "1" || (process.env.NEXUSREP_APP_PASSWORD ?? "").length > 0,
+  // The gate is ON by default (any deploy asks for sign-in) and only OFF when explicitly
+  // disabled with NEXUSREP_AUTH=0 — which the E2E config sets so tests drive the console
+  // directly. The user directory + per-user data profile live in auth-session.ts; the doctor
+  // link (/hcp) is NEVER gated — doctors reach the rep by link, not by login.
+  authEnabled: process.env.NEXUSREP_AUTH !== "0",
   /** Secret for signing the session cookie (stable across restarts so sessions survive). */
   appSessionSecret: process.env.NEXUSREP_SESSION_SECRET || process.env.NEXUSREP_APP_PASSWORD || "nexusrep-demo-session-secret",
 } as const;

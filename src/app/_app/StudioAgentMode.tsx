@@ -11,7 +11,7 @@
  * shapes) — no vendor names, ids, or vocabulary anywhere in this file.
  */
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useAgents, setAgentsCache, type AgentInfo, type AgentsPayload } from "../_components/useAgents";
 import { BrowserVoiceProvider, toneSpeechOpts } from "@lib/browser-speech";
 
@@ -59,33 +59,57 @@ function galleryHoverStop(): void {
   galleryVoice?.cancel();
 }
 
-/** Thumbnail that plays on hover AND speaks a short tone preview. The video element is mounted
- *  ONLY while hovered — a 90-cell gallery used to mount 90 <video> tags at once (each opening a
- *  connection for preload="metadata"), which made scrolling stutter. Default is a cheap
- *  gradient+initials poster. Memoized so filtering/typing doesn't re-reconcile every cell. */
+/** Thumbnail that SHOWS the agent's first frame once the card scrolls into view, and PLAYS the
+ *  clip on hover. The <video> is mounted lazily via IntersectionObserver — only cells near the
+ *  viewport load (preload="metadata" → first frame shown, paused), so a 90-cell gallery stays
+ *  smooth instead of opening 90 connections at once. Hovering plays it (and speaks a short tone
+ *  preview); leaving pauses and rewinds. Memoized so filtering/typing doesn't re-reconcile cells. */
 const AgentThumb = memo(function AgentThumb({ agent, voiceStyle }: { agent: AgentInfo; voiceStyle?: string }) {
-  const [hover, setHover] = useState(false);
+  const [inView, setInView] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const initials = agent.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
-  const poster = (
-    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, var(--dn-surface-2), var(--dn-border))" }}>
-      <span style={{ font: "700 22px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{initials || "?"}</span>
-    </div>
-  );
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || !agent.thumbnailUrl) return;
+    const io = new IntersectionObserver(
+      (entries) => { if (entries.some((e) => e.isIntersecting)) { setInView(true); io.disconnect(); } },
+      { root: null, rootMargin: "200px" }, // load a little before it's visible for a seamless scroll
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [agent.thumbnailUrl]);
+
+  const onEnter = () => {
+    galleryHoverSpeak(agent.name, voiceStyle);
+    void videoRef.current?.play().catch(() => {});
+  };
+  const onLeave = () => {
+    galleryHoverStop();
+    const v = videoRef.current;
+    if (v) { v.pause(); v.currentTime = 0; }
+  };
+
   return (
     <div
-      onMouseEnter={() => { setHover(true); galleryHoverSpeak(agent.name, voiceStyle); }}
-      onMouseLeave={() => { setHover(false); galleryHoverStop(); }}
+      ref={wrapRef}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
       style={{ position: "relative", width: "100%", aspectRatio: "4 / 3", borderRadius: 9, overflow: "hidden", background: "#0a1a33" }}
     >
-      {poster}
-      {hover && agent.thumbnailUrl && (
+      {/* gradient+initials placeholder — sits under the video, shows until (and if) it loads */}
+      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, var(--dn-surface-2), var(--dn-border))" }}>
+        <span style={{ font: "700 22px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{initials || "?"}</span>
+      </div>
+      {inView && agent.thumbnailUrl && (
         <video
+          ref={videoRef}
           src={agent.thumbnailUrl}
           muted
           playsInline
           loop
-          autoPlay
-          preload="none"
+          preload="metadata"
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
       )}

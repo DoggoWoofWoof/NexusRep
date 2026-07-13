@@ -54,12 +54,16 @@ describe("multi-user console auth", () => {
     expect(a2.usernameFromCookie(cookie)).toBeNull(); // signed under the old secret
   });
 
-  it("is disabled (open) when neither NEXUSREP_AUTH nor a password is set", async () => {
+  it("is on by default and only disabled with NEXUSREP_AUTH=0 (E2E opt-out)", async () => {
     vi.resetModules();
-    delete process.env.NEXUSREP_AUTH;
-    delete process.env.NEXUSREP_APP_PASSWORD;
-    const a = await import("@lib/auth-session");
-    expect(a.appAuthEnabled()).toBe(false);
+    process.env.NEXUSREP_AUTH = "0";
+    const off = await import("@lib/auth-session");
+    expect(off.appAuthEnabled()).toBe(false);
+
+    vi.resetModules();
+    delete process.env.NEXUSREP_AUTH; // unset → gate ON (any deploy asks for sign-in)
+    const on = await import("@lib/auth-session");
+    expect(on.appAuthEnabled()).toBe(true);
   });
 });
 
