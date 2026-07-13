@@ -340,6 +340,9 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
       /* keep the seeded brand fallback */
     }
   };
+  // Load ISI status on mount so the assistant can flag a missing/critical safety statement even
+  // before an upload happens this session.
+  useEffect(() => { void loadSafety(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Remove a non-active source document (module fail-safe blocks docs with live passages).
   const removeSourceDoc = async (id: string, title: string) => {
@@ -494,12 +497,30 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
     if (serverKey) void post({ action: "section", section: serverKey, status: "needs_input" });
   };
 
+  // What the assistant should EXPLICITLY surface once documents exist: critical items it filled
+  // (confirm) or couldn't find (provide). ISI is compliance-critical — a rep can't go live without
+  // an approved one, so a missing ISI is flagged as a required, blocking action.
+  const fieldVal = (sk: string, fk: string) => snap?.sections.find((s) => s.key === sk)?.fields.find((f) => f.key === fk)?.value ?? "";
+  const started = (sourceDocs?.length ?? 0) > 0 || Boolean(fieldVal("profile", "brand"));
+  const hasIsi = Boolean(safety?.active?.text?.trim());
+  const setupNotes: string[] = [];
+  if (started) {
+    setupNotes.push(
+      hasIsi
+        ? "✓ I extracted an Important Safety Information statement from your documents — please review and approve it in the queue below (required before launch)."
+        : "⚠ I couldn't find an Important Safety Information (ISI) statement in your documents. An ISI is required before the rep can go live — add or paste it in Approved knowledge below.",
+    );
+    if (fieldVal("escalation", "msl_contact")) setupNotes.push("I set escalation routing (clinical → Medical Information, adverse events → Pharmacovigilance) as a safe default — confirm or edit it below.");
+    setupNotes.push("Everything I filled from your documents is a suggestion — review and confirm each section on the right before launch. Anything I couldn't find, I'll ask you for here.");
+  }
+
   const messages: { role: "assistant" | "user"; text: string }[] = [{ role: "assistant", text: "I'll set up your AI rep. Answer a few questions and I'll draft each section on the right." }];
   topics.slice(0, step).forEach((t) => {
     messages.push({ role: "assistant", text: t.q });
     if (confirmed[t.key]) messages.push({ role: "user", text: `Use ${confirmed[t.key]}.` });
   });
   if (step < topics.length) messages.push({ role: "assistant", text: topics[step]!.q });
+  for (const n of setupNotes) messages.push({ role: "assistant", text: n });
 
   const statusOf = (key: string): string => status[key] ?? "needs input";
   const statusStyle = (key: string): React.CSSProperties => {

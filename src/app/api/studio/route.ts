@@ -147,6 +147,8 @@ export async function POST(req: Request): Promise<NextResponse> {
         ? body.hcpIds.filter((x): x is string => typeof x === "string" && c.targeting.has(x))
         : [];
       if (!hcpIds.length) return bad("hcpIds (valid cohort members) required");
+      const isiGap = await missingIsi(c);
+      if (isiGap) return bad(isiGap);
       return done(await c.studio.launch(id, hcpIds));
     }
     case "greeting": {
@@ -162,11 +164,29 @@ export async function POST(req: Request): Promise<NextResponse> {
     case "repState": {
       const allowed = ["draft", "in_review", "ready", "live"] as const;
       if (!allowed.includes(body.repState as never)) return bad(`repState must be one of ${allowed.join(", ")}`);
+      if (body.repState === "live") {
+        const isiGap = await missingIsi(c);
+        if (isiGap) return bad(isiGap);
+      }
       return done(await c.studio.setRepState(id, body.repState as (typeof allowed)[number]));
     }
     default:
       return bad("unknown action");
   }
+}
+
+/**
+ * Compliance fail-safe: a rep cannot go LIVE without an approved Important Safety Information
+ * statement — ISI must be delivered verbatim when required, so launching without one is blocked.
+ * If the uploaded documents didn't contain an ISI, this is where the gap surfaces: the brand user
+ * must add/confirm the ISI (Build → Approved knowledge → ISI) before launch. Returns an error
+ * message to show, or null when an active ISI exists.
+ */
+async function missingIsi(c: Awaited<ReturnType<typeof getContainer>>): Promise<string | null> {
+  const isi = await c.content.latestActiveSafetyStatement();
+  return isi
+    ? null
+    : "An approved Important Safety Information (ISI) statement is required before the rep can go live. Your documents didn't include one — add or confirm the ISI in Build → Approved knowledge, then launch.";
 }
 
 function bad(msg: string): NextResponse {
