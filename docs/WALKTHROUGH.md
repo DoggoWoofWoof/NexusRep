@@ -33,9 +33,10 @@
   browser round-trip and lets Tavus start its own response pipeline sooner.
 - **Tuned Tavus response timing:** PAL personas are created/patched with
   `conversational_flow.turn_taking_patience = low` and `sparrow-1`, while keeping
-  `speculative_inference = true`. The Tavus custom-LLM endpoint defaults to the fast
-  deterministic approved builder (`NEXUSREP_TAVUS_COMPOSE=llm` opts back into LLM rephrasing
-  at the cost of avatar latency).
+  `speculative_inference = true`. Tavus still always calls our custom-LLM endpoint, and
+  that endpoint now inherits the normal live composer policy: grounded LLM rephrasing when
+  model keys are present; deterministic approved text only when no composer exists, the
+  composer times out/errors, or `NEXUSREP_TAVUS_COMPOSE=deterministic` is explicitly forced.
 - **Fixed transcript/slide sync edges:** typed video echo turns keep the exact gated text +
   slide id until the remote Tavus audio stream shows actual speech energy, so captions and
   slides no longer run ahead of the avatar voice. `window.__nexusrepTiming` records

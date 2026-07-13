@@ -61,15 +61,16 @@ TAVUS_API_KEY=<key>
 TAVUS_REPLICA_ID=<stock or custom replica id>
 NEXUSREP_PUBLIC_URL=https://<publicly-reachable-app-url>   # so Tavus can call our LLM endpoint
 TAVUS_LLM_KEY=<any shared secret>                          # optional, authenticates Tavus→us
-NEXUSREP_TAVUS_COMPOSE=deterministic                       # default, fastest avatar path
 ```
 With no key, `getRealtimeProvider()` returns the mock and the HCP view uses the built-in
 free 3D avatar — the app never breaks.
 
-`NEXUSREP_TAVUS_COMPOSE=llm` opts Tavus video replies back into LLM-rephrased answer bodies.
-That can sound more fluid, but it adds model latency before Tavus can speak. The default
-`deterministic` path still runs retrieval, validation, final compliance gate, ISI cadence,
-source IDs, slide IDs, audit, and follow-up creation.
+Tavus video replies inherit the normal live answer-composition setting: when `NEXUSREP_COMPOSE`
+resolves to `llm` and a Claude/OpenAI-compatible key is present, Tavus receives the same
+grounded LLM-rephrased answers as typed chat. Leave `NEXUSREP_TAVUS_COMPOSE` unset in normal
+deploys. Set `NEXUSREP_TAVUS_COMPOSE=deterministic` only as an explicit emergency/cost/latency
+fallback; even then Tavus still calls our custom-LLM endpoint, and retrieval, validation,
+final compliance gate, ISI cadence, source IDs, slide IDs, audit, and follow-up creation still run.
 
 ## Verified against the live API (2026-07-08)
 
@@ -94,9 +95,11 @@ Tavus latency has three separate parts:
 2. **Turn detection**: `layers.conversational_flow` uses `sparrow-1` with
    `turn_taking_patience: "low"` and `voice_isolation: "near"` so the PAL responds quickly
    after the HCP stops speaking while still filtering background noise.
-3. **Answer generation**: Tavus calls our custom LLM endpoint. For video, the default is
-   deterministic approved composition so the endpoint can return gated text quickly. LLM
-   rephrasing is available only when explicitly opted in.
+3. **Answer generation**: Tavus calls our custom LLM endpoint. The endpoint runs the same
+   NexusRep composer policy as the rest of the live rep: grounded LLM rephrase when keyed,
+   deterministic approved text only when no composer is available or when explicitly forced.
+   If the composer errors or exceeds the hot-path timeout, the orchestrator falls back to
+   approved deterministic text rather than keeping Tavus silent.
 
 Typed video input uses Tavus `conversation.respond`, not the slower
 browser-fetch-then-`conversation.echo` path. `conversation.echo` is reserved for exact

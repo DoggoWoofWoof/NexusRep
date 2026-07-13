@@ -36,6 +36,12 @@ function numeric(raw: string | undefined, fallback: number): number {
 
 const tavusApiKey = process.env.TAVUS_API_KEY ?? "";
 
+const composeMode = pick<"deterministic" | "llm">(
+  process.env.NEXUSREP_COMPOSE,
+  ["deterministic", "llm"],
+  process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY ? "llm" : "deterministic",
+);
+
 export const env = {
   dataDriver: pick<DataDriver>(process.env.NEXUSREP_DATA_DRIVER, ["memory", "postgres"], "memory"),
   databaseUrl: process.env.DATABASE_URL ?? "",
@@ -84,11 +90,7 @@ export const env = {
   // (grounding-validated + gated); "deterministic" speaks approved blocks verbatim.
   // Auto-selects "llm" when a provider key is present (same pattern as Tavus) —
   // set NEXUSREP_COMPOSE=deterministic to force verbatim-only.
-  composeMode: pick<"deterministic" | "llm">(
-    process.env.NEXUSREP_COMPOSE,
-    ["deterministic", "llm"],
-    process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY ? "llm" : "deterministic",
-  ),
+  composeMode,
 
   // ── HCP audience source (DocNexus advanced-search) ──────────────────────────
   // Where the targeting cohort comes from. "docnexus" calls the hosted claims
@@ -131,13 +133,15 @@ export const env = {
   tavusPersonaId: process.env.TAVUS_PERSONA_ID ?? "",
   /** Shared secret Tavus presents to our custom-LLM endpoint (Authorization: Bearer). */
   tavusLlmKey: process.env.TAVUS_LLM_KEY ?? "",
-  /** Tavus avatar speed path: default deterministic so the custom-LLM endpoint can gate and
-   *  return approved text quickly. Set NEXUSREP_TAVUS_COMPOSE=llm only when you accept extra
-   *  avatar latency for model-rephrased wording. */
+  /** Tavus avatar composition path. It still ALWAYS uses Tavus custom LLM, meaning Tavus
+   *  calls our /api/tavus/llm endpoint and the full NexusRep graph runs. By default it
+   *  inherits NEXUSREP_COMPOSE: with Claude/OpenAI keys present, Tavus gets the same
+   *  grounded LLM rephrase path as typed chat; set NEXUSREP_TAVUS_COMPOSE=deterministic
+   *  only as an explicit emergency/cost/latency fallback. */
   tavusComposeMode: pick<"deterministic" | "llm">(
     process.env.NEXUSREP_TAVUS_COMPOSE,
     ["deterministic", "llm"],
-    "deterministic",
+    composeMode,
   ),
   /** Publicly-reachable base URL of THIS app (for Tavus custom-LLM + callback). */
   publicBaseUrl: process.env.NEXUSREP_PUBLIC_URL ?? "http://localhost:3000",
