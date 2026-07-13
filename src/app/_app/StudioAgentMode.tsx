@@ -14,7 +14,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useAgents, setAgentsCache, type AgentInfo, type AgentsPayload } from "../_components/useAgents";
 import { OpenAiVoiceProvider } from "@lib/browser-speech";
-import { previewScript, voiceForName, PREVIEW_VOICES } from "@lib/agent-preview";
+import { previewScript, voiceForName, PREVIEW_VOICES, DEFAULT_VOICE } from "@lib/agent-preview";
 
 const card: React.CSSProperties = { background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)" };
 const cardHead: React.CSSProperties = { padding: "12px 14px 10px", borderBottom: "1px solid var(--dn-border)", font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" };
@@ -146,8 +146,9 @@ export function StudioAgentMode() {
   // "Video off voice" options (collapsible). The rep's voice when video is off (and, with the
   // whole-conversation toggle, throughout). "" = app default; else a chosen OpenAI voice. Persisted.
   const [voiceOptionsOpen, setVoiceOptionsOpen] = useState(false);
-  const [openaiVoice, setOpenaiVoice] = useState("");
+  const [openaiVoice, setOpenaiVoice] = useState(DEFAULT_VOICE);
   const [wholeConvo, setWholeConvo] = useState(false);
+  const [trainOpen, setTrainOpen] = useState(false);
 
   // A configured-deployment load problem (e.g. the vendor list timed out) shows above the grid;
   // action feedback (msg, set by post) takes precedence. Unconfigured notes render in the empty state.
@@ -182,7 +183,7 @@ export function StudioAgentMode() {
   const active = agents.find((a) => a.id === activeId) ?? null;
 
   // Reflect the PERSISTED video-off voice + scope, syncing the controls to what's saved server-side.
-  useEffect(() => { setOpenaiVoice(data?.voiceId ?? ""); }, [data?.voiceId]);
+  useEffect(() => { setOpenaiVoice(data?.voiceId ?? DEFAULT_VOICE); }, [data?.voiceId]);
   useEffect(() => { setWholeConvo(Boolean(data?.voiceWholeConvo)); }, [data?.voiceWholeConvo]);
   const changeVoice = (v: string) => {
     setOpenaiVoice(v);
@@ -295,12 +296,11 @@ export function StudioAgentMode() {
           </div>
           {voiceOptionsOpen && (
             <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={hint}>The rep&apos;s voice <strong>when video is off</strong> — same video, same script, only the voice changes. Leave it on Default, or pick a specific voice.</div>
+              <div style={hint}>The rep&apos;s voice <strong>when video is off</strong> — same video, same script, only the voice changes. Pick the one that sounds most natural.</div>
               <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                 <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-fg-muted)" }}>Voice</span>
                 <div style={{ display: "flex", gap: 7 }}>
-                  <select value={openaiVoice} onChange={(e) => changeVoice(e.target.value)} disabled={busy === "voice"} style={{ ...input, cursor: "pointer", flex: 1 }}>
-                    <option value="">Default</option>
+                  <select value={openaiVoice || DEFAULT_VOICE} onChange={(e) => changeVoice(e.target.value)} disabled={busy === "voice"} style={{ ...input, cursor: "pointer", flex: 1 }}>
                     {PREVIEW_VOICES.map((v) => <option key={v} value={v}>{cap(v)}</option>)}
                   </select>
                   <button onClick={() => hearVoice(active?.name ?? data?.selectedName ?? "your rep", openaiVoice)} title="Hear this voice" style={{ padding: "0 12px", borderRadius: 8, border: "1px solid var(--dn-border)", background: "var(--dn-surface-2)", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-fg)", cursor: "pointer", whiteSpace: "nowrap" }}>▶ Hear</button>
@@ -315,23 +315,31 @@ export function StudioAgentMode() {
         </div>
 
         <div style={card}>
-          <div style={cardHead}>Train your own agent</div>
-          <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 9 }}>
-            <div style={hint}>Turn footage of a real presenter into a personal agent — their face and voice. The video must include the presenter&apos;s <strong>spoken consent</strong>, and training takes a few hours.</div>
-            <input value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="Agent name (e.g. Dr. Patel — cardiology rep)" style={input} />
-            <input value={createUrl} onChange={(e) => setCreateUrl(e.target.value)} placeholder="Training footage URL (https://…, 2+ min of talking)" style={input} />
-            <label style={{ ...hint, display: "flex", gap: 7, alignItems: "flex-start", cursor: "pointer" }}>
-              <input type="checkbox" checked={createAck} onChange={(e) => setCreateAck(e.target.checked)} style={{ marginTop: 1 }} />
-              <span>I understand this uses one of my plan&apos;s <strong>custom-agent slots</strong> and the footage includes consent.</span>
-            </label>
-            <button
-              onClick={() => void create()}
-              disabled={!data?.configured || !createAck || createName.trim().length < 2 || !/^https:\/\//.test(createUrl.trim()) || busy !== null}
-              style={{ padding: "9px 0", border: "none", borderRadius: 9, background: "var(--dn-brand-base)", color: "#fff", font: "600 12px/1 var(--dn-font-sans)", cursor: "pointer", opacity: !data?.configured || !createAck || createName.trim().length < 2 || !/^https:\/\//.test(createUrl.trim()) || busy !== null ? 0.5 : 1 }}
-            >
-              {busy === "create" ? "Starting training…" : "Start training"}
-            </button>
+          <div
+            onClick={() => setTrainOpen((v) => !v)}
+            style={{ ...cardHead, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", borderBottom: trainOpen ? "1px solid var(--dn-border)" : "none" }}
+          >
+            <span>Train your own agent</span>
+            <span style={{ color: "var(--dn-fg-subtle)", fontSize: 13 }}>{trainOpen ? "▾" : "▸"}</span>
           </div>
+          {trainOpen && (
+            <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 9 }}>
+              <div style={hint}>Turn footage of a real presenter into a personal agent — their face and voice. The video must include the presenter&apos;s <strong>spoken consent</strong>, and training takes a few hours.</div>
+              <input value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="Agent name (e.g. Dr. Patel — cardiology rep)" style={input} />
+              <input value={createUrl} onChange={(e) => setCreateUrl(e.target.value)} placeholder="Training footage URL (https://…, 2+ min of talking)" style={input} />
+              <label style={{ ...hint, display: "flex", gap: 7, alignItems: "flex-start", cursor: "pointer" }}>
+                <input type="checkbox" checked={createAck} onChange={(e) => setCreateAck(e.target.checked)} style={{ marginTop: 1 }} />
+                <span>I understand this uses one of my plan&apos;s <strong>custom-agent slots</strong> and the footage includes consent.</span>
+              </label>
+              <button
+                onClick={() => void create()}
+                disabled={!data?.configured || !createAck || createName.trim().length < 2 || !/^https:\/\//.test(createUrl.trim()) || busy !== null}
+                style={{ padding: "9px 0", border: "none", borderRadius: 9, background: "var(--dn-brand-base)", color: "#fff", font: "600 12px/1 var(--dn-font-sans)", cursor: "pointer", opacity: !data?.configured || !createAck || createName.trim().length < 2 || !/^https:\/\//.test(createUrl.trim()) || busy !== null ? 0.5 : 1 }}
+              >
+                {busy === "create" ? "Starting training…" : "Start training"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

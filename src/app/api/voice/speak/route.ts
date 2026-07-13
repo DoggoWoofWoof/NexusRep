@@ -38,7 +38,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   const tone = toneKey(body.tone);
   const voice = typeof body.voice === "string" && VOICES.includes(body.voice)
     ? body.voice
-    : (process.env.OPENAI_TTS_VOICE && VOICES.includes(process.env.OPENAI_TTS_VOICE) ? process.env.OPENAI_TTS_VOICE : "shimmer");
+    : (process.env.OPENAI_TTS_VOICE && VOICES.includes(process.env.OPENAI_TTS_VOICE) ? process.env.OPENAI_TTS_VOICE : "echo");
   const key = `${voice}::${tone}::${text}`;
 
   const hit = clipCache.get(key);

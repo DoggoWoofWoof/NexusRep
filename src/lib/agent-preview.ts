@@ -18,8 +18,13 @@ export function previewScript(name: string): string {
   return `Hi, I'm ${who}. I could be the face and voice of your AI rep. If you'd like that, select me and move to the next step.`;
 }
 
-/** The OpenAI TTS voices selectable for the video-off rep voice (and the synthetic preview). */
-export const PREVIEW_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"] as const;
+/** OpenAI TTS voices selectable for the video-off rep voice — curated to the most natural /
+ *  human-like ones (the harsher/robotic alloy, onyx, fable are dropped). OpenAI's speech API has
+ *  no "Aria"-style named voice; these are the full natural set it offers. `echo` is the default. */
+export const PREVIEW_VOICES = ["echo", "nova", "shimmer", "sage", "coral", "ash", "ballad"] as const;
+
+/** Default video-off voice when the user hasn't picked one (also the /api/voice/speak fallback). */
+export const DEFAULT_VOICE = "echo";
 
 /** Deterministic default synthetic voice for an agent (stable: same name → same voice). */
 export function voiceForName(name: string): string {

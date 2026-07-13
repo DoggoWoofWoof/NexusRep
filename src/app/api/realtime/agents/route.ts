@@ -53,7 +53,12 @@ async function buildPayload(): Promise<Payload> {
   } else {
     note = "Live video agents aren't connected on this deployment — the built-in 3D avatar represents the rep meanwhile.";
   }
-  return { configured, selected, selectedName, voiceId, voiceWholeConvo, defaultReplicaId: env.tavusReplicaId || null, agents, note };
+  // Default rep = Charlie. env.tavusReplicaId is the configured Charlie replica; if a deployment
+  // doesn't set it, fall back to a ready gallery agent named "Charlie" so the default is Charlie
+  // by name, not a hardcoded id. (The realtime call defaults the same way via env.tavusReplicaId.)
+  const charlie = agents.find((a) => /\bcharlie\b/i.test(a.name) && a.status === "ready");
+  const defaultReplicaId = (env.tavusReplicaId || charlie?.id) ?? null;
+  return { configured, selected, selectedName, voiceId, voiceWholeConvo, defaultReplicaId, agents, note };
 }
 
 export async function GET(): Promise<NextResponse> {
