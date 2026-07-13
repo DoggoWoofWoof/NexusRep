@@ -77,25 +77,28 @@ export interface AppState {
   /** Session id whose evidence the Session-detail view should load. */
   selectedSessionId: string | null;
   setSelectedSessionId: (id: string | null) => void;
+  /** Signed-in user's display name (null when auth is off — falls back to the demo operator). */
+  userName: string | null;
 }
 
 /** Shared-password gate for the brand console — a dark, standalone sign-in in the DocNexus
  *  house style. Doctors never see this; they open the rep from their invite link. The password
  *  is entered by the user; on success the server sets an httpOnly session cookie and we reveal
  *  the console. */
-function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
+function LoginScreen({ onSuccess }: { onSuccess: (name: string | null) => void }) {
+  const [user, setUser] = useState("");
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const [focused, setFocused] = useState(false);
+  const [focus, setFocus] = useState<"user" | "pw" | "">("");
   const submit = async () => {
-    if (!pw || busy) return;
+    if (!user || !pw || busy) return;
     setBusy(true);
     setErr("");
     try {
-      const res = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "login", password: pw }) });
-      if (res.ok) { onSuccess(); return; }
-      setErr("Incorrect password.");
+      const res = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "login", username: user, password: pw }) });
+      if (res.ok) { const d = (await res.json().catch(() => ({}))) as { name?: string }; onSuccess(typeof d.name === "string" ? d.name : null); return; }
+      setErr("Incorrect username or password.");
     } catch {
       setErr("Couldn't reach the server — try again.");
     } finally {
@@ -121,36 +124,44 @@ function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
             <p style={{ font: "400 13.5px/1.5 var(--dn-font-sans)", color: "rgba(255,255,255,.65)", margin: "7px 0 0" }}>The AI Rep Studio for Life Sciences.</p>
             <p style={{ font: "600 11px/1 var(--dn-font-sans)", letterSpacing: ".14em", textTransform: "uppercase", color: "rgba(255,255,255,.36)", margin: "16px 0 0" }}>Sign in to continue</p>
           </div>
-          {/* field */}
-          <label htmlFor="nx-pw" style={{ display: "block", font: "600 10.5px/1 var(--dn-font-sans)", letterSpacing: ".12em", textTransform: "uppercase", color: "rgba(255,255,255,.55)", marginBottom: 8 }}>Workspace password</label>
-          <input
-            id="nx-pw"
-            type="password"
-            value={pw}
-            autoFocus
-            autoComplete="current-password"
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
-            onChange={(e) => { setPw(e.target.value); setErr(""); }}
-            onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
-            placeholder="Enter password"
-            style={{
-              width: "100%", boxSizing: "border-box", padding: "11px 14px", borderRadius: 10,
-              border: `1px solid ${err ? "rgba(248,113,113,.7)" : focused ? "rgba(96,165,250,.6)" : "rgba(255,255,255,.15)"}`,
-              background: focused ? "rgba(255,255,255,.06)" : "rgba(255,255,255,.04)",
-              color: "#fff", font: "400 14px/1 var(--dn-font-sans)", outline: "none",
-              boxShadow: focused ? "0 0 0 3px rgba(59,130,246,.22)" : "none", transition: "border-color .15s ease, box-shadow .15s ease, background .15s ease",
-            }}
-          />
+          {/* fields */}
+          {(["user", "pw"] as const).map((f) => {
+            const isPw = f === "pw";
+            const active = focus === f;
+            return (
+              <div key={f} style={{ marginBottom: isPw ? 0 : 14 }}>
+                <label htmlFor={`nx-${f}`} style={{ display: "block", font: "600 10.5px/1 var(--dn-font-sans)", letterSpacing: ".12em", textTransform: "uppercase", color: "rgba(255,255,255,.55)", marginBottom: 8 }}>{isPw ? "Password" : "Username"}</label>
+                <input
+                  id={`nx-${f}`}
+                  type={isPw ? "password" : "text"}
+                  value={isPw ? pw : user}
+                  autoFocus={!isPw}
+                  autoComplete={isPw ? "current-password" : "username"}
+                  onFocus={() => setFocus(f)}
+                  onBlur={() => setFocus("")}
+                  onChange={(e) => { if (isPw) setPw(e.target.value); else setUser(e.target.value); setErr(""); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
+                  placeholder={isPw ? "Enter password" : "Enter username"}
+                  style={{
+                    width: "100%", boxSizing: "border-box", padding: "11px 14px", borderRadius: 10,
+                    border: `1px solid ${err ? "rgba(248,113,113,.7)" : active ? "rgba(96,165,250,.6)" : "rgba(255,255,255,.15)"}`,
+                    background: active ? "rgba(255,255,255,.06)" : "rgba(255,255,255,.04)",
+                    color: "#fff", font: "400 14px/1 var(--dn-font-sans)", outline: "none",
+                    boxShadow: active ? "0 0 0 3px rgba(59,130,246,.22)" : "none", transition: "border-color .15s ease, box-shadow .15s ease, background .15s ease",
+                  }}
+                />
+              </div>
+            );
+          })}
           {err && <p role="alert" style={{ font: "500 12.5px/1.4 var(--dn-font-sans)", color: "#f87171", textAlign: "center", margin: "12px 0 0" }}>{err}</p>}
           <button
             onClick={() => void submit()}
-            disabled={busy || !pw}
+            disabled={busy || !user || !pw}
             style={{
               width: "100%", marginTop: 18, padding: "11px 0", borderRadius: 10, border: "none",
               background: "linear-gradient(90deg, #3b82f6, #4f46e5)", color: "#fff",
               font: "600 14px/1 var(--dn-font-sans)", letterSpacing: ".01em",
-              cursor: busy || !pw ? "default" : "pointer", opacity: busy || !pw ? 0.45 : 1,
+              cursor: busy || !user || !pw ? "default" : "pointer", opacity: busy || !user || !pw ? 0.45 : 1,
               boxShadow: "0 10px 26px -8px rgba(59,130,246,.5)", transition: "opacity .15s ease",
             }}
           >
@@ -181,13 +192,13 @@ export function NexusRepApp() {
   // Simple console auth: ask /api/auth whether a password gate is on and whether this browser
   // already holds a valid session. null = still checking. Fails OPEN if the check errors so a
   // transient blip never locks a legitimately-open (ungated) deployment out of its own console.
-  const [auth, setAuth] = useState<{ enabled: boolean; authed: boolean } | null>(null);
+  const [auth, setAuth] = useState<{ enabled: boolean; authed: boolean; name?: string | null } | null>(null);
   useEffect(() => {
     let alive = true;
     fetch("/api/auth")
       .then((r) => r.json())
-      .then((d) => { if (alive) setAuth({ enabled: !!d.enabled, authed: !!d.authed }); })
-      .catch(() => { if (alive) setAuth({ enabled: false, authed: true }); });
+      .then((d) => { if (alive) setAuth({ enabled: !!d.enabled, authed: !!d.authed, name: d.name ?? null }); })
+      .catch(() => { if (alive) setAuth({ enabled: false, authed: true, name: null }); });
     return () => { alive = false; };
   }, []);
   const logout = async () => {
@@ -203,10 +214,15 @@ export function NexusRepApp() {
   const toggleActivation = (id: string) =>
     setActivation((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
 
+  const account = auth?.name
+    ? { initials: auth.name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "U", name: auth.name, role: "Brand user" }
+    : { initials: DEMO_USER.initials, name: DEMO_USER.shortName, role: DEMO_USER.role };
+
   const app: AppState = {
     nav, setNav, mode, setMode, activation, toggleActivation,
     drawerId, setDrawerId, sessionHcpId, setSessionHcpId, studioMode, setStudioMode,
     selectedSessionId, setSelectedSessionId,
+    userName: auth?.name ?? null,
   };
 
   if (mode === "hcp") {
@@ -219,7 +235,7 @@ export function NexusRepApp() {
     return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--dn-bg)", color: "var(--dn-fg-subtle)", font: "500 13px/1 var(--dn-font-sans)" }}>Loading…</div>;
   }
   if (auth.enabled && !auth.authed) {
-    return <LoginScreen onSuccess={() => setAuth({ enabled: true, authed: true })} />;
+    return <LoginScreen onSuccess={(name) => setAuth({ enabled: true, authed: true, name })} />;
   }
 
   return (
@@ -266,10 +282,10 @@ export function NexusRepApp() {
           </div>
         </div>
         <div style={{ padding: navCollapsed ? "10px 8px" : "11px 14px", borderTop: "1px solid rgba(255,255,255,.08)", display: "flex", alignItems: "center", justifyContent: navCollapsed ? "center" : "flex-start", gap: 10 }}>
-          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "var(--dn-brand-light)", display: "flex", alignItems: "center", justifyContent: "center", font: "600 12px/1 var(--dn-font-sans)", color: "#fff" }}>{DEMO_USER.initials}</div>
+          <div style={{ width: 30, height: 30, borderRadius: "50%", background: "var(--dn-brand-light)", display: "flex", alignItems: "center", justifyContent: "center", font: "600 12px/1 var(--dn-font-sans)", color: "#fff" }}>{account.initials}</div>
           {!navCollapsed && <div style={{ lineHeight: 1.3 }}>
-            <div style={{ font: "600 12px/1.2 var(--dn-font-sans)", color: "#fff" }}>{DEMO_USER.shortName}</div>
-            <div style={{ font: "400 11px/1.2 var(--dn-font-sans)", color: "rgba(255,255,255,.5)" }}>{DEMO_USER.role}</div>
+            <div style={{ font: "600 12px/1.2 var(--dn-font-sans)", color: "#fff" }}>{account.name}</div>
+            <div style={{ font: "400 11px/1.2 var(--dn-font-sans)", color: "rgba(255,255,255,.5)" }}>{account.role}</div>
           </div>}
           {!navCollapsed && auth?.enabled && (
             <span onClick={() => void logout()} title="Sign out" style={{ marginLeft: "auto", font: "600 10.5px/1 var(--dn-font-sans)", color: "rgba(255,255,255,.55)", cursor: "pointer" }}>Sign out</span>
@@ -460,7 +476,7 @@ function OverviewScreen({ app }: { app: AppState }) {
             <span style={{ font: "600 11px/1.2 var(--dn-font-sans)", letterSpacing: ".08em", textTransform: "uppercase", color: "var(--dn-brand-light)" }}>Command Center</span>
             {!kpisLive && samplePill}
           </div>
-          <h1 style={{ font: "600 26px/1.2 var(--dn-font-sans)", letterSpacing: "-0.02em", margin: 0 }}>{`Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}, ${DEMO_USER.firstName}`}</h1>
+          <h1 style={{ font: "600 26px/1.2 var(--dn-font-sans)", letterSpacing: "-0.02em", margin: 0 }}>{`Good ${new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}, ${(app.userName?.trim().split(/\s+/)[0]) || DEMO_USER.firstName}`}</h1>
           <div style={{ font: "400 13px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginTop: 5 }}>{brand?.campaign.title ?? "AI Rep Studio"}</div>
         </div>
         <div style={{ display: "flex", gap: 9 }}>

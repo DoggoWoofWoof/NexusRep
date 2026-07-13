@@ -1,26 +1,30 @@
 /**
- * Brand-console auth — thin controller. A shared password (NEXUSREP_APP_PASSWORD) unlocks the
- * console and sets a signed, httpOnly session cookie. OFF when no password is configured, so
- * local/E2E stay open. The doctor link (/hcp) and the runtime turn / presentation / realtime
- * endpoints it uses are intentionally NOT gated — doctors reach the rep by link, not by login.
+ * Brand-console auth — thin controller. A small fixed demo directory (auth-session.ts): each
+ * user signs in with a username + password and gets their OWN isolated container. OFF when the
+ * gate is disabled, so local/E2E stay open. The doctor link (/hcp) and the runtime turn /
+ * presentation / realtime endpoints it uses are intentionally NOT gated.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { appAuthEnabled, cookieIsValid, passwordMatches, sessionToken, SESSION_COOKIE } from "@lib/auth-session";
+import { appAuthEnabled, verifyCredentials, sessionCookieFor, usernameFromCookie, findUser, SESSION_COOKIE } from "@lib/auth-session";
 
 export const dynamic = "force-dynamic";
 
 /** Session status — the client gate reads this to decide whether to show the login screen. */
 export async function GET(req: NextRequest): Promise<NextResponse> {
+  const username = usernameFromCookie(req.cookies.get(SESSION_COOKIE)?.value);
+  const user = username ? findUser(username) : undefined;
   return NextResponse.json({
     enabled: appAuthEnabled(),
-    authed: cookieIsValid(req.cookies.get(SESSION_COOKIE)?.value),
+    authed: Boolean(user),
+    username: user?.username ?? null,
+    name: user?.name ?? null,
   });
 }
 
-/** { action: "login", password } → set the session cookie; { action: "logout" } → clear it. */
+/** { action:"login", username, password } → set the session cookie; { action:"logout" } → clear. */
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const body = (await req.json().catch(() => ({}))) as { action?: unknown; password?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { action?: unknown; username?: unknown; password?: unknown };
 
   if (body.action === "logout") {
     const res = NextResponse.json({ ok: true, authed: false });
@@ -28,20 +32,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return res;
   }
 
-  // Gate disabled → nothing to unlock.
   if (!appAuthEnabled()) return NextResponse.json({ ok: true, authed: true, enabled: false });
 
-  if (typeof body.password === "string" && passwordMatches(body.password)) {
-    const res = NextResponse.json({ ok: true, authed: true });
-    res.cookies.set(SESSION_COOKIE, sessionToken(), {
+  const username = typeof body.username === "string" ? body.username : "";
+  const password = typeof body.password === "string" ? body.password : "";
+  const user = verifyCredentials(username, password);
+  if (user) {
+    const res = NextResponse.json({ ok: true, authed: true, username: user.username, name: user.name });
+    res.cookies.set(SESSION_COOKIE, sessionCookieFor(user.username), {
       httpOnly: true,
       sameSite: "lax",
       path: "/",
       maxAge: 60 * 60 * 24 * 7, // one week
-      secure: process.env.NODE_ENV === "production", // http on localhost, https on Render
+      secure: process.env.NODE_ENV === "production",
     });
     return res;
   }
 
-  return NextResponse.json({ ok: false, authed: false, error: "Incorrect password." }, { status: 401 });
+  return NextResponse.json({ ok: false, authed: false, error: "Incorrect username or password." }, { status: 401 });
 }

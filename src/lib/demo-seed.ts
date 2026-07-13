@@ -154,6 +154,24 @@ export async function seedDemoHistory(deps: SeedDeps): Promise<void> {
  * persisted state and Launch is enabled. Uses the real setup-answer + rule
  * pipeline — nothing here bypasses the compliance-aware rule status.
  */
+/**
+ * A "clean slate" studio: just a DRAFT rep so the console renders (not a null snapshot), with
+ * no setup answers, guardrails, coaching rules, approved-content sign-off, or live state. The
+ * user builds it from scratch via the Setup Assistant. Used for the "clean" demo accounts.
+ */
+export async function seedDraftStudio(deps: { studio: StudioService; aiRepId: AiRepId; brandId: BrandId; campaignId: CampaignId; brand: BrandProfile }): Promise<void> {
+  const b = deps.brand;
+  const persona: AIRepPersona = {
+    id: asPersonaId<"persona_id">(`persona_${b.brandId}`),
+    type: "brand_persona",
+    displayName: `${b.displayName} Medical AI Specialist`,
+    voiceStyle: "clinical",
+    disclosureText: b.greeting,
+    greeting: b.greeting,
+  };
+  await deps.studio.getOrCreate({ aiRepId: deps.aiRepId, brandId: deps.brandId, campaignId: deps.campaignId, persona });
+}
+
 export async function seedDemoStudio(deps: { studio: StudioService; aiRepId: AiRepId; brandId: BrandId; campaignId: CampaignId; brand: BrandProfile }): Promise<void> {
   // Everything brand-specific comes from the active BrandProfile — swap the profile and
   // the seeded rep re-themes itself. Nothing here is hardcoded to Milvexian.

@@ -65,6 +65,7 @@ export default defineConfig({
       TAVUS_REPLICA_ID: "",
       // Console auth gate OFF for E2E regardless of .env.local — tests drive the console directly.
       NEXUSREP_APP_PASSWORD: "",
+      NEXUSREP_AUTH: "0",
     },
   },
 });

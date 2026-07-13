@@ -1,50 +1,86 @@
 /**
- * The console auth gate: OFF unless a password is set, correct password mints a cookie that
- * validates, wrong/empty password is rejected, and a tampered cookie is rejected. Uses env
- * mutation because appAuthEnabled/passwordMatches read the frozen env snapshot at call time.
+ * Multi-user console auth: the demo directory verifies credentials, signs a per-user cookie that
+ * round-trips (and rejects tampering / a different secret), and maps each user to a data profile
+ * (demo = clone the seeded demo, clean = unbuilt). Uses env mutation + module reset because the
+ * auth helpers read the frozen env snapshot at import time.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-async function freshAuth(password: string) {
+async function freshAuth() {
   vi.resetModules();
-  process.env.NEXUSREP_APP_PASSWORD = password;
-  delete process.env.NEXUSREP_SESSION_SECRET;
+  process.env.NEXUSREP_AUTH = "1";
+  process.env.NEXUSREP_SESSION_SECRET = "test-secret";
   return import("@lib/auth-session");
 }
 
 afterEach(() => {
-  delete process.env.NEXUSREP_APP_PASSWORD;
+  delete process.env.NEXUSREP_AUTH;
   delete process.env.NEXUSREP_SESSION_SECRET;
   vi.resetModules();
 });
 
-describe("brand-console auth session", () => {
-  it("is disabled (open) when no password is configured", async () => {
-    const a = await freshAuth("");
-    expect(a.appAuthEnabled()).toBe(false);
-    expect(a.cookieIsValid(undefined)).toBe(true); // no cookie needed when open
-    expect(a.passwordMatches("anything")).toBe(false);
-  });
-
-  it("accepts the right password and its minted cookie; rejects wrong/empty/tampered", async () => {
-    const a = await freshAuth("s3cret-demo");
+describe("multi-user console auth", () => {
+  it("verifies correct credentials and rejects wrong / unknown (username case-insensitive)", async () => {
+    const a = await freshAuth();
     expect(a.appAuthEnabled()).toBe(true);
-    expect(a.passwordMatches("s3cret-demo")).toBe(true);
-    expect(a.passwordMatches("s3cret-demoX")).toBe(false);
-    expect(a.passwordMatches("")).toBe(false);
-
-    const token = a.sessionToken();
-    expect(a.cookieIsValid(token)).toBe(true);
-    expect(a.cookieIsValid(undefined)).toBe(false);
-    expect(a.cookieIsValid("")).toBe(false);
-    expect(a.cookieIsValid(token.slice(0, -1) + (token.endsWith("0") ? "1" : "0"))).toBe(false); // tampered
+    expect(a.verifyCredentials("mahek", "mahek123")?.username).toBe("mahek");
+    expect(a.verifyCredentials("MAHEK", "mahek123")?.username).toBe("mahek");
+    expect(a.verifyCredentials("mahek", "wrong")).toBeNull();
+    expect(a.verifyCredentials("nobody", "x")).toBeNull();
+    expect(a.verifyCredentials("swastik", "swastik123")?.username).toBe("swastik");
   });
 
-  it("a cookie minted under one secret does not validate under another", async () => {
-    const a1 = await freshAuth("pw-one");
-    const stale = a1.sessionToken();
-    const a2 = await freshAuth("pw-two");
-    expect(a2.cookieIsValid(stale)).toBe(false);
+  it("maps each user to a data profile (demo clones, clean is fresh)", async () => {
+    const a = await freshAuth();
+    expect(a.userData("mahek")).toBe("demo");
+    expect(a.userData("lorick")).toBe("demo");
+    expect(a.userData("nimit")).toBe("demo");
+    expect(a.userData("swastik")).toBe("clean");
+    expect(a.userData("clean")).toBe("clean");
+    expect(a.userData(null)).toBeNull();
+  });
+
+  it("signs a cookie that round-trips the username; tampered / cross-secret rejected", async () => {
+    const a = await freshAuth();
+    const cookie = a.sessionCookieFor("nimit");
+    expect(a.usernameFromCookie(cookie)).toBe("nimit");
+    expect(a.usernameFromCookie(undefined)).toBeNull();
+    expect(a.usernameFromCookie("nimit.deadbeef")).toBeNull(); // bad signature
+
+    vi.resetModules();
+    process.env.NEXUSREP_SESSION_SECRET = "different-secret";
+    const a2 = await import("@lib/auth-session");
+    expect(a2.usernameFromCookie(cookie)).toBeNull(); // signed under the old secret
+  });
+
+  it("is disabled (open) when neither NEXUSREP_AUTH nor a password is set", async () => {
+    vi.resetModules();
+    delete process.env.NEXUSREP_AUTH;
+    delete process.env.NEXUSREP_APP_PASSWORD;
+    const a = await import("@lib/auth-session");
+    expect(a.appAuthEnabled()).toBe(false);
+  });
+});
+
+describe("per-user data isolation (container)", () => {
+  it("a demo user clones the seeded demo; a clean user starts empty", async () => {
+    const { getContainerForUser } = await import("@lib/container");
+    const [mahek, clean] = await Promise.all([getContainerForUser("mahek"), getContainerForUser("clean")]);
+
+    const [mahekSessions, mahekFollowups] = await Promise.all([mahek.sessions.list(), mahek.followups.list()]);
+    const [cleanSessions, cleanFollowups] = await Promise.all([clean.sessions.list(), clean.followups.list()]);
+
+    // Demo user: the seeded history is present.
+    expect(mahekSessions.length).toBeGreaterThan(0);
+    expect(mahekFollowups.length).toBeGreaterThan(0);
+    // Clean user: a genuine blank slate — no sessions, follow-ups, or approved content.
+    expect(cleanSessions.length).toBe(0);
+    expect(cleanFollowups.length).toBe(0);
+    expect((await clean.content.listAnswers()).length).toBe(0);
+    // Demo user DID get approved content.
+    expect((await mahek.content.listAnswers()).length).toBeGreaterThan(0);
+    // Isolation: separate container instances.
+    expect(mahek).not.toBe(clean);
   });
 });

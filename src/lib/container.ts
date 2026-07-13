@@ -11,7 +11,8 @@
 import { asId, type AiRepId, type BrandId, type CampaignId, type ContentAssetId, type DetailAidSlideId, type HcpId, type MlrApprovalId, type SessionId, type TenantId } from "@lib/ids";
 import { InMemoryVectorIndex } from "@lib/vector-index";
 import { getRepositoryFactory } from "@lib/db";
-import type { RepositoryFactory } from "@lib/repository";
+import { MemoryRepositoryFactory, type RepositoryFactory } from "@lib/repository";
+import { appAuthEnabled, usernameFromCookie, userData, SESSION_COOKIE } from "@lib/auth-session";
 import { ContentService, PresentationSkill, firstAvailableComposer, resolveComposer, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
 import { configureClassifierLexicon, resolveClassifier } from "@modules/compliance";
 import { env } from "@lib/env";
@@ -28,7 +29,7 @@ import { StudioService, toneDirective } from "@modules/aiRepStudio";
 import { activeSteering } from "@modules/rules";
 import { MlrService } from "@modules/mlr";
 import { getBrandProfile, setupAnswersOf, type BrandProfile, resolveBrandProfile } from "@modules/brand";
-import { seedDemoHistory, seedDemoStudio } from "@lib/demo-seed";
+import { seedDemoHistory, seedDemoStudio, seedDraftStudio } from "@lib/demo-seed";
 
 export interface AppContainer {
   content: ContentService;
@@ -103,7 +104,7 @@ function activeMlr(seed: string): MlrMetadata {
 }
 
 /** Build a fully-wired, demo-seeded container. Synchronous wiring; async seeding. */
-export async function createContainer(opts?: { seedHistory?: boolean; repos?: RepositoryFactory }): Promise<AppContainer> {
+export async function createContainer(opts?: { seedHistory?: boolean; seedContent?: boolean; seedStudio?: "full" | "draft"; repos?: RepositoryFactory }): Promise<AppContainer> {
   // Canonical persistence: in-memory (default) or embedded Postgres (PGlite) when
   // NEXUSREP_DATA_DRIVER=postgres. Persist across restarts by setting PGLITE_DATA_DIR;
   // default it to a local data dir so the postgres demo is durable out of the box.
@@ -112,6 +113,11 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
   }
   // Tests inject a shared factory to prove restart semantics (seed-if-absent).
   const repos = opts?.repos ?? getRepositoryFactory();
+  // Per-user containers vary WHAT is seeded: "demo" users clone the full demo (content + rep +
+  // history); "clean" users get only a bare draft rep. Defaults preserve single-tenant behavior.
+  const seedContent = opts?.seedContent ?? true;
+  const seedStudioMode = opts?.seedStudio ?? "full";
+  const seedHistory = opts?.seedHistory ?? env.seedHistory;
   const index = new InMemoryVectorIndex();
   const content = new ContentService(repos);
   const presentation = new PresentationSkill(content);
@@ -222,6 +228,9 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
     await index.upsert({ refId: a.id, metadata: { audience: a.mlr.audience, indication: a.mlr.indication, market: a.mlr.market }, text: `${a.topic} ${a.text}` });
   });
 
+  // Approved content (asset, slides, answers, ISI) + the rebuilt retrieval index — seeded for
+  // "demo"/default containers, skipped for "clean" ones (they ingest their own through MLR).
+  if (seedContent) {
   const assetId = asId<"content_asset_id">("asset_detail_aid") as ContentAssetId;
   const asset: ContentAsset = {
     id: assetId,
@@ -295,16 +304,19 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
     mlr: activeMlr("isi"),
   };
   if (!(await content.getSafetyStatement(isi.id))) await content.addSafetyStatement(isi);
+  } // end if (seedContent)
 
   // Fake past sessions/follow-ups only when explicitly demoing (NEXUSREP_SEED_HISTORY=1
   // or an explicit createContainer({ seedHistory:true }) — used by tests). Off by
   // default so Sessions / Analytics / Follow-ups show ONLY real conversations.
-  if (env.seedHistory || opts?.seedHistory) {
+  if (seedHistory) {
     await seedDemoHistory({ sessions, followups, crm, audit, aiRepId, brandId, campaignId });
   }
-  // The rep itself (persona, guardrails, approved-content sign-off) is always seeded
-  // so the Studio is launch-ready and the rep can actually answer — not fake activity.
-  await seedDemoStudio({ studio, aiRepId, brandId, campaignId, brand });
+  // The rep: a full launch-ready build (persona, guardrails, sign-off, live) for "demo"/default
+  // containers, or a bare DRAFT for "clean" users so their Studio renders (not a null snapshot)
+  // and they build it from scratch via the Setup Assistant.
+  if (seedStudioMode === "full") await seedDemoStudio({ studio, aiRepId, brandId, campaignId, brand });
+  else await seedDraftStudio({ studio, aiRepId, brandId, campaignId, brand });
 
   return {
     content,
@@ -328,18 +340,52 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
 }
 
 type ContainerGlobal = typeof globalThis & {
-  __nexusrepContainerPromise?: Promise<AppContainer> | null;
+  __nexusrepContainers?: Map<string, Promise<AppContainer>>;
 };
 
 const containerGlobal = globalThis as ContainerGlobal;
 
-/** Lazily-built singleton for the running app (tests build their own fresh containers). */
-export function getContainer(): Promise<AppContainer> {
-  if (!containerGlobal.__nexusrepContainerPromise) {
-    containerGlobal.__nexusrepContainerPromise = createContainer().catch((error) => {
-      containerGlobal.__nexusrepContainerPromise = null;
-      throw error;
-    });
+function containerCache(): Map<string, Promise<AppContainer>> {
+  if (!containerGlobal.__nexusrepContainers) containerGlobal.__nexusrepContainers = new Map();
+  return containerGlobal.__nexusrepContainers;
+}
+
+/** Build options for a signed-in user, or {} for the shared default (auth off — unchanged
+ *  single-tenant behavior on the env driver). Each signed-in user gets an ISOLATED in-memory
+ *  container: "demo" users clone the full seeded demo; "clean" users get a bare draft studio. */
+function optsForUser(userId: string | null): Parameters<typeof createContainer>[0] {
+  if (!userId) return {};
+  return userData(userId) === "demo"
+    ? { seedHistory: true, seedContent: true, seedStudio: "full", repos: new MemoryRepositoryFactory() }
+    : { seedHistory: false, seedContent: false, seedStudio: "draft", repos: new MemoryRepositoryFactory() };
+}
+
+/** Per-user container cache. Key "__default__" is the shared (auth-off / doctor-link) container. */
+export function getContainerForUser(userId: string | null): Promise<AppContainer> {
+  const key = userId ?? "__default__";
+  const cache = containerCache();
+  if (!cache.has(key)) {
+    cache.set(key, createContainer(optsForUser(userId)).catch((error) => { cache.delete(key); throw error; }));
   }
-  return containerGlobal.__nexusrepContainerPromise;
+  return cache.get(key)!;
+}
+
+/** Resolve the signed-in user from the request cookie. Request-scoped via next/headers; returns
+ *  null when auth is off or when called outside a request (e.g. tests) so we fall back to the
+ *  shared default. Kept internal so every route keeps calling getContainer() unchanged. */
+async function currentUserId(): Promise<string | null> {
+  if (!appAuthEnabled()) return null;
+  try {
+    const { cookies } = await import("next/headers");
+    const jar = await cookies();
+    return usernameFromCookie(jar.get(SESSION_COOKIE)?.value);
+  } catch {
+    return null;
+  }
+}
+
+/** The container for the CURRENT request's signed-in user (or the shared default). Routes are
+ *  unchanged: getContainer() now transparently returns the right per-user container. */
+export function getContainer(): Promise<AppContainer> {
+  return currentUserId().then(getContainerForUser);
 }
