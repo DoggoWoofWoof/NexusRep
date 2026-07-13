@@ -1,8 +1,15 @@
 # Tavus CVI integration — feature map
 
 How every Tavus Conversational Video Interface (CVI) feature links to NexusRep, and
-what activates when you set `TAVUS_API_KEY`. Contract sourced from docs.tavus.io
-(base `https://tavusapi.com/v2`, auth header `x-api-key`).
+what activates when you set `TAVUS_API_KEY`. Contract sourced from `tavus.txt`
+(docs.tavus.io bundled export): base `https://tavusapi.com/v2`, auth header
+`x-api-key`.
+
+Tavus's current docs use **PAL** for the behavior/knowledge/pipeline object and
+**Face** for the visual likeness + voice. Their legacy `persona` / `replica`
+endpoints and request fields still work, and the code keeps those adapter-local
+names where Tavus still requires them. NexusRep public/domain language should say
+**agent**, **PAL**, or **face**, not expose `replica` to users.
 
 ## The one rule that shapes everything
 
@@ -10,37 +17,42 @@ Tavus must **never generate an answer to an HCP** — that would bypass the comp
 gate. So Tavus is the **face + voice + ears + transport**, and **our orchestrator is the
 brain**. We do this with Tavus's **custom-LLM layer**: the persona's `layers.llm.base_url`
 points at our OpenAI-compatible endpoint, so Tavus sends each transcribed HCP turn to us,
-we run classify → route → grounding → compliance gate, and the replica speaks **only our
+we run classify → route → grounding → compliance gate, and the face speaks **only our
 approved text**.
 
 ```
-HCP speaks → Tavus STT → POST /api/tavus/llm/chat/completions
-  → our orchestrator (gate) → approved text (SSE) → Tavus TTS → replica speaks it
+HCP speaks OR typed text is sent with conversation.respond
+  → Tavus STT / PAL turn pipeline
+  → POST /api/tavus/llm/chat/completions
+  → our orchestrator (gate) → approved text (SSE) → Tavus TTS → face speaks it
 ```
 
 ## Feature-by-feature mapping
 
 | Tavus feature | NexusRep mapping | Status |
 |---|---|---|
-| **Persona (PAL)** `system_prompt`, `context`, `layers` | Built per session by `TavusRealtimeProvider.ensurePersona` (or reuse `TAVUS_PERSONA_ID`) | ✅ wired |
-| **Replica / Face** (video avatar) | `RealtimeSessionConfig.replicaId` ← `TAVUS_REPLICA_ID` | ✅ wired (needs a replica id) |
+| **PAL / Persona** `system_prompt`, `context`, `layers` | Built/reused per brand by `TavusRealtimeProvider.ensurePersona` (or reuse `TAVUS_PERSONA_ID`) | ✅ wired |
+| **Face / Replica** (video avatar) | `RealtimeSessionConfig.agentId` ← Studio Agent selection or `TAVUS_REPLICA_ID` fallback | ✅ wired |
 | **Create Conversation** → `conversation_url` | `startSession()` → `RealtimeSession.transportUrl` (+ `token`) | ✅ wired |
 | **Custom greeting** | `RealtimeSessionConfig.customGreeting` → `custom_greeting` | ✅ wired |
 | **Conversational context** | `config.context` → `conversational_context` (no PHI) | ✅ wired |
-| **Custom LLM** (`layers.llm.base_url`) | → `POST /api/tavus/llm/chat/completions` = our compliance orchestrator | ✅ wired + tested |
-| **Tool / function calling** | `config.tools[{name,description,parameters}]` → persona `layers.llm.tools`; escalation routing also handled inside our LLM endpoint | ✅ wired (server side) |
-| **Echo / interrupt** (verbatim speech) | `sendSystemEvent` recorded for client replay over the Daily data channel; used to force **verbatim ISI** | 🟡 server-recorded; client replay is the last-mile UI |
+| **Custom LLM** (`layers.llm.base_url`) | → `POST /api/tavus/llm/chat/completions` = our compliance orchestrator, OpenAI-compatible SSE | ✅ wired + tested |
+| **LLM speculative inference** | `layers.llm.speculative_inference = true` | ✅ wired |
+| **Conversational Flow** | `sparrow-1`, `turn_taking_patience: "low"`, `pal_interruptibility: "medium"`, `voice_isolation: "near"` | ✅ wired for lower response latency |
+| **Text Respond Interaction** | typed HCP text in video mode uses `conversation.respond`, so Tavus runs the same PAL/custom-LLM path as mic input | ✅ wired |
+| **Echo / interrupt** (verbatim speech) | `conversation.echo` remains for platform-controlled scripted segments, e.g. guided overview; `conversation.interrupt` supports barge-in | ✅ wired client-side |
+| **Tool / function calling** | `config.tools[{name,description,parameters}]` → legacy inline `layers.llm.tools`; routing also handled inside our LLM endpoint. For new external tools, prefer Tavus tool registry. | 🟡 legacy-compatible; registry not needed yet |
 | **STT hotwords** (drug names) | `config.hotwords` → `layers.stt.hotwords` (Milvexian, LIBREXIA, Factor XIa) | ✅ wired |
 | **TTS voice** | `config.voice.voiceId` → `layers.tts.external_voice_id` | ✅ wired |
 | **Language / multilingual** | `config.language` → conversation `properties.language` | ✅ wired |
 | **Audio-only mode** | `config.audioOnly` → `audio_only` | ✅ wired |
 | **End conversation** | `endSession()` → `POST /conversations/{id}/end` | ✅ wired |
-| **Transport (Daily/WebRTC)** | `transportUrl` is a Daily room; client joins with `@daily-co/daily-js` | 🟡 needs the client join component (below) |
-| **Utterance / tool_call events** | Received client-side over the Daily data channel | 🟡 client-side listener |
+| **Transport (Daily/WebRTC)** | `transportUrl` is a Daily room; client joins with `@daily-co/daily-js` | ✅ wired |
+| **Utterance / started-speaking events** | Received client-side over the Daily data channel; our captions/slides are driven from the audited NexusRep session and remote audio timing | ✅ wired |
 | **Perception (Raven vision)** | Persona `layers.perception` — available, not needed for the HCP rep | ⚪ optional |
-| **Guardrails / objectives / memory / documents** | Persona-level — our compliance gate already enforces this; can be layered on | ⚪ optional |
-| **Recording / transcription / callbacks** | `properties.enable_recording`, `callback_url` — wire a `/api/tavus/webhook` when needed. Keep raw patient data out of recordings (hard rule) | ⚪ optional |
-| **Avatar as a separate provider** | Not needed — in Tavus mode the avatar IS the realtime replica | ✅ by design |
+| **Guardrails / objectives / memory / documents** | Persona/PAL-level — our compliance gate and first-party RAG are authoritative; Tavus docs/KB are not product truth | ⚪ optional |
+| **Recording / transcription / callbacks** | `properties.enable_recording`, `callback_url`; `/api/tavus/webhook` handles `application.recording_ready`. Prefer `system.pal_joined` over legacy `system.replica_joined`. | ✅ wired |
+| **Avatar as a separate provider** | Not needed — in Tavus mode the face is the realtime video surface | ✅ by design |
 
 ## Activate it
 
@@ -49,9 +61,15 @@ TAVUS_API_KEY=<key>
 TAVUS_REPLICA_ID=<stock or custom replica id>
 NEXUSREP_PUBLIC_URL=https://<publicly-reachable-app-url>   # so Tavus can call our LLM endpoint
 TAVUS_LLM_KEY=<any shared secret>                          # optional, authenticates Tavus→us
+NEXUSREP_TAVUS_COMPOSE=deterministic                       # default, fastest avatar path
 ```
 With no key, `getRealtimeProvider()` returns the mock and the HCP view uses the built-in
 free 3D avatar — the app never breaks.
+
+`NEXUSREP_TAVUS_COMPOSE=llm` opts Tavus video replies back into LLM-rephrased answer bodies.
+That can sound more fluid, but it adds model latency before Tavus can speak. The default
+`deterministic` path still runs retrieval, validation, final compliance gate, ISI cadence,
+source IDs, slide IDs, audit, and follow-up creation.
 
 ## Verified against the live API (2026-07-08)
 
@@ -64,7 +82,30 @@ Two things the docs don't spell out that the live API enforces (both fixed):
 1. A custom LLM requires **both** `base_url` **and** `api_key` — we always send a non-empty
    `api_key` (defaults to the `TAVUS_LLM_KEY` shim).
 2. You may **not** set `tts.external_voice_id` with the default STT engine — omit it and the
-   replica uses its own default voice.
+   face uses its own default voice.
+
+## Latency policy
+
+Tavus latency has three separate parts:
+
+1. **Join/cold start**: the PAL/Face joins the Daily room. We reuse one PAL per brand,
+   patch it when prompt/layers change, and explicitly end conversations on close to avoid
+   concurrent-session buildup.
+2. **Turn detection**: `layers.conversational_flow` uses `sparrow-1` with
+   `turn_taking_patience: "low"` and `voice_isolation: "near"` so the PAL responds quickly
+   after the HCP stops speaking while still filtering background noise.
+3. **Answer generation**: Tavus calls our custom LLM endpoint. For video, the default is
+   deterministic approved composition so the endpoint can return gated text quickly. LLM
+   rephrasing is available only when explicitly opted in.
+
+Typed video input uses Tavus `conversation.respond`, not the slower
+browser-fetch-then-`conversation.echo` path. `conversation.echo` is reserved for exact
+platform-controlled speech such as guided overview segments where NexusRep is deliberately
+driving slide-by-slide narration.
+
+`window.__nexusrepTiming` records client-side timing markers (`typed_respond_sent`,
+`echo_queued`, `vendor_started_speaking`, `caption_release`) for live Render/Tavus latency
+debugging.
 
 ## Client join — built
 
@@ -72,7 +113,7 @@ Two things the docs don't spell out that the live API enforces (both fixed):
 `{ provider, configured, conversationUrl, token, reachableLlm }`.
 `src/app/_components/VideoAgentStage.tsx` is vendor-agnostic: it picks a client transport by the
 returned `provider` name (`src/app/_components/video-transport.ts` — the ONLY client file that
-knows Tavus's Daily/echo/utterance protocol), renders the agent's video + audio, and is toggled
+knows Tavus's Daily/respond/echo/utterance protocol), renders the agent's video + audio, and is toggled
 by the **"Video rep"** button on `/hcp`. With no key it reports `configured:false` and the view
 stays on the built-in 3D avatar. Closing the preview POSTs `/api/realtime/conversation/end` so
 the vendor conversation frees its concurrent-session slot immediately.
