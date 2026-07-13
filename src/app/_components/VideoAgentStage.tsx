@@ -66,6 +66,9 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   // A caption armed while this is true is released at once (the voice is already out); one armed
   // before it flips releases when speaking starts — so the caption lands WITH the voice, either order.
   const repSpeakingRef = useRef(false);
+  // The doctor question (hcp_final_utterance.at) whose latency we've already reported, so each turn
+  // logs its ASR/think breakdown exactly once when the replica starts speaking.
+  const lastLatencyTurnRef = useRef(0);
 
   // Make the agent speak our (already gated) text verbatim, via the transport.
   const speakAgent = (text: string, detailAidSlideId?: string | null): boolean => {
@@ -195,6 +198,33 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
       await new Promise((resolve) => window.setTimeout(resolve, 60));
     }
     return { started: false, peak };
+  }
+
+  // When the replica starts speaking, the doctor's turn is fully measured: log its per-stage
+  // latency ONCE — to the browser console AND to the server (so it shows in Render logs beside
+  // [tavus-llm-latency], giving the whole pipeline in one place).
+  function reportTurnLatency() {
+    const t = ((window as unknown as { __nexusrepTiming?: TimingEvent[] }).__nexusrepTiming) ?? [];
+    const q = [...t].reverse().find((e) => e.type === "hcp_final_utterance");
+    if (!q || q.at === lastLatencyTurnRef.current) return; // greeting / already-reported turn
+    lastLatencyTurnRef.current = q.at;
+    const stopped = [...t].reverse().find((e) => e.type === "hcp_stopped_speaking" && e.at <= q.at);
+    const repText = [...t].reverse().find((e) => e.type === "rep_final_utterance" && e.at >= q.at);
+    const now = Date.now();
+    const payload = {
+      question: (q.text ?? "").slice(0, 60),
+      asrMs: stopped ? q.at - stopped.at : null, // speech end → transcript (ASR / turn detection)
+      thinkToVoiceMs: now - q.at, // transcript → replica audio (our endpoint + Tavus TTS)
+      transcriptToVoiceMs: repText ? now - repText.at : null, // rep text ready → audio (~TTS render)
+    };
+    // eslint-disable-next-line no-console
+    console.info("[nexusrep-latency]", payload);
+    const sid = sessionIdRef.current;
+    void fetch("/api/metrics/latency", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, sessionId: sid }),
+    }).catch(() => { /* metrics are best-effort */ });
   }
 
   async function recordAgentAudioActivity(reason: string) {
@@ -430,6 +460,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             ) {
               repSpeakingRef.current = true;
               recordTiming({ type: "vendor_started_speaking", reason: e.type });
+              reportTurnLatency();
               void notifyPendingRepEcho("vendor_started");
               void recordAgentAudioActivity(e.type);
             }

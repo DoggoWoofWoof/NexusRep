@@ -187,8 +187,8 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
       // latency tuning on Render without manually recreating every Tavus persona.
       tts_engine: this.cfg.tts?.engine ?? "cartesia",
       tts_model_name: this.cfg.tts?.model ?? "sonic-3",
-      tts_emotion_control: this.cfg.tts?.emotionControl ?? true,
-      voice_settings: { speed: this.cfg.tts?.speed ?? 1.08 },
+      tts_emotion_control: this.cfg.tts?.emotionControl ?? false,
+      voice_settings: { speed: this.cfg.tts?.speed ?? 1.0 },
       ...(config.voice?.voiceId ? { external_voice_id: config.voice.voiceId } : {}),
     };
     layers.conversational_flow = {

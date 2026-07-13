@@ -64,10 +64,12 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
       if (existing) {
         try { await existing.destroy(); } catch { /* already gone */ }
       }
-      // Doctor mic starts OFF. The HCP view's red mic button is the single source of intent:
-      // click to unmute/talk, click again to mute. Without this, Tavus joined with the mic live
-      // even though the UI said it was muted.
-      call = Daily.createCallObject({ audioSource: false, videoSource: false }) as unknown as CallObj;
+      // Doctor mic starts OFF but must be re-enableable by the red mic button. We ACQUIRE the mic
+      // (audioSource:true) yet JOIN MUTED (setLocalAudio(false) below) — so clicking the mic simply
+      // unmutes an existing track. Creating with audioSource:false leaves NO track, and then
+      // setLocalAudio(true) can't turn the mic on at all (the doctor's voice never reaches Tavus →
+      // no ASR, no turn, no logs — the "voice mode doesn't work" regression).
+      call = Daily.createCallObject({ audioSource: true, videoSource: false }) as unknown as CallObj;
       call.on("track-started", (raw) => {
         const ev = raw as { participant?: { local?: boolean }; track?: MediaStreamTrack };
         if (ev?.participant?.local || !ev?.track) return;

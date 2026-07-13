@@ -41,6 +41,7 @@ export function getRealtimeProvider(): RealtimeProvider {
         engine: env.tavusTtsEngine,
         model: env.tavusTtsModel,
         speed: env.tavusTtsSpeed,
+        emotionControl: env.tavusTtsEmotionControl,
       },
     });
   }

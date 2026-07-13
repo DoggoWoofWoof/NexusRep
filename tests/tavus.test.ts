@@ -74,8 +74,8 @@ describe("Tavus realtime adapter", () => {
     expect(layers?.tts).toMatchObject({
       tts_engine: "cartesia",
       tts_model_name: "sonic-3",
-      tts_emotion_control: true,
-      voice_settings: { speed: 1.08 },
+      tts_emotion_control: false, // steady pacing by default (emotion control rushed the sentence start)
+      voice_settings: { speed: 1.0 }, // natural pace (1.08 read as rushed)
     });
     expect(layers?.conversational_flow).toMatchObject({ turn_detection_model: "sparrow-1", turn_taking_patience: "low" });
 
