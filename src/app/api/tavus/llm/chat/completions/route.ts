@@ -11,9 +11,9 @@
  */
 
 import { asId } from "@lib/ids";
-import { getContainer } from "@lib/container";
+import { getContainer, getContainerForUser } from "@lib/container";
 import { env } from "@lib/env";
-import { getActiveCallSession } from "@lib/active-call";
+import { getActiveCall } from "@lib/active-call";
 
 export const dynamic = "force-dynamic";
 
@@ -85,13 +85,16 @@ export async function POST(req: Request): Promise<Response> {
   } else if (isProbe) {
     reply = "Connection confirmed.";
   } else {
-    const c = await getContainer();
+    // The live call recorded WHICH per-user container owns its session. Tavus calls us without a
+    // cookie, so we can't resolve the user here — we MUST use the recorded owner, or we'd load the
+    // default container, miss the session, and start a fresh one every turn (the ISI-repeat bug).
+    const activeCall = getActiveCall();
+    const c = activeCall ? await getContainerForUser(activeCall.userId) : await getContainer();
     mark("container");
     // Tavus supplies ASR + avatar transport only. The actual turn goes through the same
     // ConversationService used by typed chat, so mic and chat share one NexusRep path:
     // log HCP turn -> orchestrate -> gate -> log rep turn/source/slide -> CRM/follow-up.
-    const activeCall = getActiveCallSession();
-    let sessionId = asId<"session_id">(activeCall ?? (c.demo.sessionId as string));
+    let sessionId = asId<"session_id">(activeCall?.sessionId ?? (c.demo.sessionId as string));
     if (!(await c.sessions.get(sessionId))) {
       const fresh = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId, seed: sessionId === c.demo.sessionId ? "demo" : undefined });
       sessionId = fresh.id;
@@ -115,7 +118,8 @@ export async function POST(req: Request): Promise<Response> {
     mark(`turn_${output.route}`);
     turnInfo = {
       sessionId, // same across a call → session threads; changing → the bug that re-delivers ISI
-      activeCall: activeCall ?? null, // null means we fell back to the demo session (no live call registered)
+      activeCall: activeCall?.sessionId ?? null, // null → fell back to demo (no live call registered)
+      owner: activeCall?.userId ?? null, // which per-user container owns the call's session
       route: output.route,
       isi: output.isiAttached, // true on more than one turn of the SAME sessionId = an ISI-repeat bug
     };

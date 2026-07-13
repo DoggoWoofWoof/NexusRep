@@ -383,8 +383,9 @@ export function getContainerForUser(userId: string | null): Promise<AppContainer
 
 /** Resolve the signed-in user from the request cookie. Request-scoped via next/headers; returns
  *  null when auth is off or when called outside a request (e.g. tests) so we fall back to the
- *  shared default. Kept internal so every route keeps calling getContainer() unchanged. */
-async function currentUserId(): Promise<string | null> {
+ *  shared default. Exported so the realtime call can record WHICH container owns the call's
+ *  session, letting the vendor's cookie-less callback (/api/tavus/llm) reload the SAME one. */
+export async function currentUserId(): Promise<string | null> {
   if (!appAuthEnabled()) return null;
   try {
     const { cookies } = await import("next/headers");

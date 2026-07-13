@@ -9,11 +9,11 @@
 
 import { NextResponse } from "next/server";
 import { asId } from "@lib/ids";
-import { getContainer } from "@lib/container";
+import { getContainerForUser, currentUserId } from "@lib/container";
 import { env } from "@lib/env";
 import { getRealtimeProvider, resolveDefaultAgentId } from "@modules/vendors";
 import { resolveBrandProfile, setupAnswersOf } from "@modules/brand";
-import { setActiveCallSession } from "@lib/active-call";
+import { setActiveCall } from "@lib/active-call";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +41,12 @@ export async function POST(req: Request): Promise<NextResponse> {
 
 async function startConversation(req: Request): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as { hcpId?: unknown };
-  const c = await getContainer();
+  // Resolve the container owner explicitly (not just getContainer()) so we can record it: the
+  // vendor's cookie-less callback (/api/tavus/llm) must reload THIS SAME per-user container to find
+  // the call's session. Without it the callback hit the default container, missed the session, and
+  // started a fresh one per turn — re-delivering the ISI every reply.
+  const ownerUserId = await currentUserId();
+  const c = await getContainerForUser(ownerUserId);
   const provider = getRealtimeProvider();
   // Persona is brand config resolved from the Setup Assistant's answers — so what the brand
   // user set by chatting (name / greeting / audience) is what the live replica speaks.
@@ -62,7 +67,7 @@ async function startConversation(req: Request): Promise<NextResponse> {
   // Mark this as the active call so /api/tavus/llm logs the authoritative transcript here (with
   // slideIds), and log the opening greeting once server-side (Tavus speaks it directly, not via
   // the LLM endpoint, so the endpoint never sees it).
-  setActiveCallSession(hist.id);
+  setActiveCall({ sessionId: hist.id, userId: ownerUserId });
   if (persona.customGreeting) {
     await c.sessions.appendTurn(hist.id, { speaker: "rep", text: persona.customGreeting });
     await c.audit.record(hist.id, "response_output", { route: "greeting", text: persona.customGreeting, sourceIds: [], greeting: true });

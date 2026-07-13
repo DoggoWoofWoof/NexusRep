@@ -1,25 +1,36 @@
 /**
- * Tracks the most-recently-started live video call session. The realtime vendor's servers
- * call our compliance endpoint WITHOUT our session id, so this lets that endpoint log the
- * authoritative transcript — HCP + rep turns, each with the detail-aid slide the rep showed —
- * to the correct session (and fixes audit landing on the shared demo session).
+ * Tracks the most-recently-started live video call: its NexusRep session id AND the user whose
+ * container owns that session. The realtime vendor's servers call our compliance endpoint
+ * (/api/tavus/llm) WITHOUT the browser's auth cookie, so that endpoint can't resolve the
+ * signed-in user on its own — and the call's session lives in that user's per-user container.
+ * Recording BOTH here lets the vendor callback load the SAME container and the SAME session, so
+ * every turn threads one session (ISI once, disclosure once, slides continue). Without the userId,
+ * the callback fell back to the default container, never found the session, and started a FRESH
+ * session per turn — which re-delivered the ISI on every reply.
  *
- * Vendor-neutral: any realtime provider's callback route reads the same slot. Scope: one
- * active call at a time (the demo). A multi-tenant deployment would instead key the session
- * off the vendor conversation id, passed through a per-conversation callback URL.
+ * Vendor-neutral: any provider's callback reads the same slot. Scope: one active call at a time
+ * (the demo). A multi-tenant deployment would key this off the vendor conversation id via a
+ * per-conversation callback URL instead of a single global.
  */
 
-let activeCallSessionId: string | null = null;
-
-export function setActiveCallSession(id: string): void {
-  if (activeCallSessionId && activeCallSessionId !== id) {
-    // Known single-slot limitation: a second concurrent call supersedes the first —
-    // its subsequent replies would log to the NEW session. Loudly visible on purpose.
-    console.warn(`[realtime] active call superseded: ${activeCallSessionId} → ${id} (one concurrent video call per process)`);
-  }
-  activeCallSessionId = id;
+export interface ActiveCall {
+  sessionId: string;
+  /** Container owner (signed-in user), or null for the shared/default container (auth off, or a
+   *  public doctor link with no cookie). The vendor callback must resolve the SAME one. */
+  userId: string | null;
 }
 
-export function getActiveCallSession(): string | null {
-  return activeCallSessionId;
+let activeCall: ActiveCall | null = null;
+
+export function setActiveCall(call: ActiveCall): void {
+  if (activeCall && activeCall.sessionId !== call.sessionId) {
+    // Known single-slot limitation: a second concurrent call supersedes the first — its replies
+    // would then log to the NEW session. Loudly visible on purpose (one video call per process).
+    console.warn(`[realtime] active call superseded: ${activeCall.sessionId} → ${call.sessionId} (one concurrent video call per process)`);
+  }
+  activeCall = call;
+}
+
+export function getActiveCall(): ActiveCall | null {
+  return activeCall;
 }
