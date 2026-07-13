@@ -69,6 +69,10 @@ export async function POST(req: Request): Promise<Response> {
 
   // Run the HCP turn through our compliance-gated orchestrator.
   let reply = "I can only share approved information. Let me connect you with someone who can help.";
+  // Per-turn diagnostic — logged so a real call can prove ISI cadence: whether every turn threads
+  // the SAME session (sessionId stable across the call), and whether ISI was delivered this turn.
+  // If ISI re-appears within one call, `isi` here shows true on >1 turn for the same sessionId.
+  let turnInfo: Record<string, unknown> | undefined;
   // ASR silence/noise artifacts ("[BLANK_AUDIO]", "[inaudible]", …) are not speech — the
   // doctor said nothing. Answering them makes the agent reply to nobody and pollutes the
   // transcript with a fallback turn. Stay silent and log nothing.
@@ -86,7 +90,8 @@ export async function POST(req: Request): Promise<Response> {
     // Tavus supplies ASR + avatar transport only. The actual turn goes through the same
     // ConversationService used by typed chat, so mic and chat share one NexusRep path:
     // log HCP turn -> orchestrate -> gate -> log rep turn/source/slide -> CRM/follow-up.
-    let sessionId = asId<"session_id">(getActiveCallSession() ?? (c.demo.sessionId as string));
+    const activeCall = getActiveCallSession();
+    let sessionId = asId<"session_id">(activeCall ?? (c.demo.sessionId as string));
     if (!(await c.sessions.get(sessionId))) {
       const fresh = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId, seed: sessionId === c.demo.sessionId ? "demo" : undefined });
       sessionId = fresh.id;
@@ -108,6 +113,12 @@ export async function POST(req: Request): Promise<Response> {
     });
     reply = output.responseText;
     mark(`turn_${output.route}`);
+    turnInfo = {
+      sessionId, // same across a call → session threads; changing → the bug that re-delivers ISI
+      activeCall: activeCall ?? null, // null means we fell back to the demo session (no live call registered)
+      route: output.route,
+      isi: output.isiAttached, // true on more than one turn of the SAME sessionId = an ISI-repeat bug
+    };
   }
 
   const created = Math.floor(Date.now() / 1000);
@@ -118,6 +129,7 @@ export async function POST(req: Request): Promise<Response> {
     inputChars: text.length,
     outputChars: reply.length,
     totalMs: Date.now() - started,
+    ...(turnInfo ? { turn: turnInfo } : {}),
     timings,
   }));
 
