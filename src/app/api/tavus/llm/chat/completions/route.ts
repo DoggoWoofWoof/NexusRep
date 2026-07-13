@@ -36,7 +36,6 @@ function timingHeaders(timings: TimingStep[], extra?: Record<string, string>): H
     ...(extra ?? {}),
     "Server-Timing": timings.map((t) => `${safe(t.name)};dur=${Math.max(0, Math.round(t.dur))}`).join(", "),
     "X-NexusRep-Timing": compact,
-    "X-NexusRep-Tavus-Compose": env.tavusComposeMode,
   };
 }
 
@@ -95,6 +94,9 @@ export async function POST(req: Request): Promise<Response> {
     // The call's session carries the invited doctor's identity (set at conversation create).
     const hcpId = (await c.sessions.get(sessionId))?.hcpId ?? c.demo.hcpId;
     mark("session");
+    // Identical path to typed chat: the orchestrator picks the grounded LLM composer when a
+    // provider key is present and falls back to the deterministic builder otherwise. Tavus never
+    // composes its own answer — it always relays what this endpoint returns.
     const { output } = await c.conversation.turn({
       sessionId,
       hcpId,
@@ -103,7 +105,7 @@ export async function POST(req: Request): Promise<Response> {
       market: c.demo.market,
       investigational: c.demo.investigational,
       text,
-    }, env.tavusComposeMode === "llm" ? undefined : { composer: null });
+    });
     reply = output.responseText;
     mark(`turn_${output.route}`);
   }
@@ -112,7 +114,6 @@ export async function POST(req: Request): Promise<Response> {
   const model = "nexusrep-compliance";
   if (isAsrArtifact || isProbe) mark(isAsrArtifact ? "ignored_asr_artifact" : "connectivity_probe");
   console.info("[tavus-llm-latency]", JSON.stringify({
-    mode: env.tavusComposeMode,
     stream: body.stream !== false,
     inputChars: text.length,
     outputChars: reply.length,

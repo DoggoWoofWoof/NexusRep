@@ -68,12 +68,12 @@ NEXUSREP_TAVUS_TTS_SPEED=1.08                              # clamped 0.8-1.2
 With no key, `getRealtimeProvider()` returns the mock and the HCP view uses the built-in
 free 3D avatar — the app never breaks.
 
-Tavus video replies inherit the normal live answer-composition setting: when `NEXUSREP_COMPOSE`
-resolves to `llm` and a Claude/OpenAI-compatible key is present, Tavus receives the same
-grounded LLM-rephrased answers as typed chat. Leave `NEXUSREP_TAVUS_COMPOSE` unset in normal
-deploys. Set `NEXUSREP_TAVUS_COMPOSE=deterministic` only as an explicit emergency/cost/latency
-fallback; even then Tavus still calls our custom-LLM endpoint, and retrieval, validation,
-final compliance gate, ISI cadence, source IDs, slide IDs, audit, and follow-up creation still run.
+Tavus video replies use the exact same answer-composition path as typed chat — there is no
+separate Tavus compose toggle. When `NEXUSREP_COMPOSE` resolves to `llm` and a Claude/OpenAI
+key is present, Tavus receives grounded LLM-rephrased answers; with no key it gets the
+deterministic approved-block builder. Either way Tavus never composes its own answer: it always
+relays what our `/api/tavus/llm` endpoint returns, after retrieval, validation, the final
+compliance gate, ISI cadence, source IDs, slide IDs, audit, and follow-up creation have all run.
 
 ## Verified against the live API (2026-07-08)
 

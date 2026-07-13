@@ -138,16 +138,6 @@ export const env = {
   tavusPersonaId: process.env.TAVUS_PERSONA_ID ?? "",
   /** Shared secret Tavus presents to our custom-LLM endpoint (Authorization: Bearer). */
   tavusLlmKey: process.env.TAVUS_LLM_KEY ?? "",
-  /** Tavus avatar composition path. It still ALWAYS uses Tavus custom LLM, meaning Tavus
-   *  calls our /api/tavus/llm endpoint and the full NexusRep graph runs. By default it
-   *  inherits NEXUSREP_COMPOSE: with Claude/OpenAI keys present, Tavus gets the same
-   *  grounded LLM rephrase path as typed chat; set NEXUSREP_TAVUS_COMPOSE=deterministic
-   *  only as an explicit emergency/cost/latency fallback. */
-  tavusComposeMode: pick<"deterministic" | "llm">(
-    process.env.NEXUSREP_TAVUS_COMPOSE,
-    ["deterministic", "llm"],
-    composeMode,
-  ),
   /** Publicly-reachable base URL of THIS app (for Tavus custom-LLM + callback). */
   publicBaseUrl: process.env.NEXUSREP_PUBLIC_URL ?? "http://localhost:3000",
 

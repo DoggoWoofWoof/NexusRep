@@ -21,7 +21,7 @@ Rules — these are absolute:
 - Do NOT introduce yourself or say you are an AI representative in the answer body. The greeting/disclosure already handles that.
 - Do NOT write, paraphrase, shorten, or summarize Important Safety Information. The platform appends the exact required ISI after your answer when needed.
 - Return only the answer body. Do not include an "Important Safety Information" heading or block.
-- Follow the brand coaching below for tone, length, and what to emphasize. When it doesn't specify a length, keep it to about 2–4 sentences.`;
+- This answer is SPOKEN aloud by a video rep, so be crisp: follow the brand coaching below for tone, length, and emphasis, and when it doesn't specify a length keep it to about 2–3 sentences. Shorter answers reach the doctor faster and are quicker to speak.`;
 
 export interface ComposeInput {
   question: string;

@@ -67,10 +67,25 @@ function isStatusQuestion(question: string): boolean {
   return /\b(fda|approved|approval|regulatory|status|investigational|development|fast\s+track)\b/i.test(question);
 }
 
+/** Periods inside abbreviations ("U.S.", "e.g.", "Dr.") are NOT sentence boundaries. The
+ *  sentence splitter below requires whitespace/end after the terminal punctuation, so a mid-word
+ *  dot like the one in "U.S. FDA" would otherwise be skipped as unmatched text — dropping the "U."
+ *  and mangling the phrase to "S. FDA". Mask those dots to a sentinel before splitting, restore
+ *  after. (Regression: "U.S. FDA Fast Track" rendered as "S. FDA Fast Track".) */
+const ABBREV_DOT = String.fromCharCode(1); // sentinel that never occurs in approved copy; restored after splitting
+function maskAbbreviationDots(s: string): string {
+  return s
+    .replace(/\b(?:[A-Za-z]\.){2,}/g, (m) => m.replace(/\./g, ABBREV_DOT)) // U.S., U.S.A., e.g.
+    .replace(/\b(?:Dr|Mr|Mrs|Ms|St|No|vs|etc|Fig|Inc|Ltd|Co|approx|Prof)\./gi, (m) => m.replace(/\./g, ABBREV_DOT));
+}
+function unmaskAbbreviationDots(s: string): string {
+  return s.split(ABBREV_DOT).join(".");
+}
+
 function sanitizeApprovedBody(body: string, opts: { isiText?: string; disclosureGiven: boolean; question: string }): string {
   const isi = (opts.isiText ?? "").toLowerCase();
   if (!body.trim()) return body;
-  const sentences = body.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) ?? [body];
+  const sentences = maskAbbreviationDots(body).match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) ?? [body];
   const kept: string[] = [];
   for (const sentence of sentences) {
     const cleaned = stripDisclosureLead(stripSpeechMarkdown(sentence));
@@ -85,7 +100,7 @@ function sanitizeApprovedBody(body: string, opts: { isiText?: string; disclosure
     if (isi && /\bclinical questions?\b/.test(s) && /\bmedical information\b/.test(s) && /\bmedical information\b/.test(isi)) continue;
     kept.push(cleaned);
   }
-  const trimmed = kept.join("").replace(/\s+/g, " ").trim();
+  const trimmed = unmaskAbbreviationDots(kept.join("").replace(/\s+/g, " ").trim());
   return trimmed || stripSpeechMarkdown(body);
 }
 

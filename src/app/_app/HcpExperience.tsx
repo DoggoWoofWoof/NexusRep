@@ -104,8 +104,9 @@ export function HcpExperience({ app }: { app?: AppState }) {
 
   // One place that delivers a rep turn to the doctor, so every caller (ask / deckStep / overview)
   // behaves identically. Video: the live replica speaks and its utterance drives the caption
-  // (syncVideoRepTurn) — synced by construction. Off-video: the caption + slide appear the moment
-  // the voice starts (onStart); with the rep voice off, they appear immediately.
+  // (syncVideoRepTurn) — synced by construction, never held back. Off-video: the caption + slide
+  // appear the MOMENT the gated answer arrives (never gated on the voice — that would slow the
+  // transcript), and the voice then starts as soon as it's generated.
   async function deliverRep(text: string, slideId: string | null | undefined, gen: number) {
     if (playGenRef.current !== gen) return; // superseded by a newer turn (barge-in)
     if (videoOn) {
@@ -119,13 +120,12 @@ export function HcpExperience({ app }: { app?: AppState }) {
       await wait(estimateSpeechMs(text));
       return;
     }
-    const reveal = () => {
-      if (playGenRef.current !== gen) return;
-      showRep(text);
-      cueSlide(slideId, text);
-    };
-    if (voiceOn) { await speak(text, reveal); reveal(); }
-    else reveal();
+    // Transcript first, immediately — the caption is never delayed to match the voice.
+    showRep(text);
+    cueSlide(slideId, text);
+    // Then speak (kick the audio off the moment the text exists). Awaited so a multi-segment
+    // overview still paces one segment after the previous finishes.
+    if (voiceOn) await speak(text);
   }
 
   function slideCueDelay(text?: string): number {

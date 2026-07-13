@@ -10,7 +10,30 @@
 
 ## 1. Current build status
 
-### Latest: HCP runtime sync, latency, and repetition fixes (2026-07-13)
+### Latest: Tavus compose-path cleanup + abbreviation fix + fuzz cadence tests (2026-07-14)
+
+- **Root cause of the Render repetition, diagnosed and reproduced:** the repeated
+  "I'm an AI representative…" preamble, missing ISI dedup, and slide-that-never-switches all
+  come from **Tavus composing with its OWN LLM** (the persona system prompt) when it can't
+  reach/times out on our `/api/tavus/llm` endpoint. Locally (endpoint reachable) the current
+  code is correct: dynamic answers, ISI once, no preamble, slide switches. Fix on Render is
+  operational — keep the instance warm and `NEXUSREP_PUBLIC_URL` reachable so Tavus never
+  falls back. Warm endpoint latency is ~2.5–3s (grounded compose, gated before output — cannot
+  stream pre-gate); cold start adds ~4s one-time (absorbed at conversation-start, not per-turn).
+- **Removed the `NEXUSREP_TAVUS_COMPOSE` toggle:** Tavus now shares the *exact* compose path as
+  typed chat — there is no separate Tavus compose mode. Tavus always relays our endpoint's answer;
+  it never composes its own. (env, route, `.env.example`, docs, tests updated.)
+- **Fixed a mangled abbreviation:** the answer-body sentence splitter skipped the "U." in "U.S.
+  FDA", rendering it as "S. FDA Fast Track". Abbreviation dots ("U.S.", "e.g.", "Dr.") are now
+  masked before splitting and restored after. Regression-tested.
+- **Crisper spoken answers:** the composer default is now ~2–3 sentences (was 2–4) so replies
+  reach the doctor and finish speaking faster.
+- **Fuzzy / false-positive cadence tests** (`tests/hcp-cadence-fuzz.test.ts`): across a wide
+  spread of phrasings, the disclosure preamble never appears in a body, ISI delivers exactly once,
+  a slide is only referenced when a `detailAidSlideId` is attached, no dose is fabricated, and
+  "U.S. FDA" stays intact. 292 unit tests pass; tsc clean.
+
+### HCP runtime sync, latency, and repetition fixes (2026-07-13)
 
 - **Fixed repeated disclosure loops:** video greetings are now recorded as audit
   `response_output` events, so the composer knows the AI/investigational disclosure
@@ -35,10 +58,10 @@
   `conversational_flow.turn_taking_patience = low` and `sparrow-1`, while keeping
   `speculative_inference = true`, plus an explicit Cartesia/Sonic-3 TTS layer and
   `NEXUSREP_TAVUS_TTS_SPEED` (default `1.08`) so cached PALs do not sit on unknown
-  Tavus auto speech defaults. Tavus still always calls our custom-LLM endpoint, and
-  that endpoint now inherits the normal live composer policy: grounded LLM rephrasing when
-  model keys are present; deterministic approved text only when no composer exists, the
-  composer times out/errors, or `NEXUSREP_TAVUS_COMPOSE=deterministic` is explicitly forced.
+  Tavus auto speech defaults. Tavus always calls our custom-LLM endpoint and shares the exact
+  same composer policy as typed chat: grounded LLM rephrasing when model keys are present;
+  deterministic approved text only when no composer exists or the composer times out/errors.
+  There is no separate Tavus compose toggle — Tavus never composes its own answer.
 - **Kept transcript fast while measuring actual Tavus audio lag:** the UI no longer tries to
   "fix" latency by holding back the transcript. Instead, `/api/tavus/llm/chat/completions`
   emits `Server-Timing` / `X-NexusRep-Timing` and `[tavus-llm-latency]` server logs, while

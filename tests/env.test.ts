@@ -18,26 +18,25 @@ afterEach(() => {
 });
 
 describe("environment composition modes", () => {
-  it("lets Tavus inherit grounded LLM composition when a model key is configured", async () => {
+  it("auto-selects grounded LLM composition when a model key is configured", async () => {
     const { env } = await loadEnv({
       ANTHROPIC_API_KEY: "test-key",
       NEXUSREP_COMPOSE: undefined,
-      NEXUSREP_TAVUS_COMPOSE: undefined,
     });
 
+    // Tavus shares this one compose path — there is no separate Tavus compose toggle.
     expect(env.composeMode).toBe("llm");
-    expect(env.tavusComposeMode).toBe("llm");
   });
 
-  it("allows deterministic Tavus composition only as an explicit override", async () => {
+  it("falls back to deterministic composition when no model key is present", async () => {
     const { env } = await loadEnv({
-      ANTHROPIC_API_KEY: "test-key",
+      ANTHROPIC_API_KEY: undefined,
+      OPENAI_API_KEY: undefined,
+      THINKING_MACHINES_API_KEY: undefined,
       NEXUSREP_COMPOSE: undefined,
-      NEXUSREP_TAVUS_COMPOSE: "deterministic",
     });
 
-    expect(env.composeMode).toBe("llm");
-    expect(env.tavusComposeMode).toBe("deterministic");
+    expect(env.composeMode).toBe("deterministic");
   });
 });
 
