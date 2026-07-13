@@ -144,7 +144,13 @@ export class AnalyticsService {
     const crmFailed = crm.filter((c) => c.status === "failed" || c.status === "retrying").length;
 
     const coveredTopics = new Set(answers.map((a) => a.topic));
-    const gaps = this.deps.targetTopics.filter((topic) => !coveredTopics.has(topic));
+    // Target topics: the brand's explicit list if it declares one, else derive from the LIVE
+    // approved content (the public-info topics the rep actually covers) — so a self-serve rep gets
+    // a real content-gap signal with no hardcoded topic list. Gaps = target topics not yet covered.
+    const targetTopics = this.deps.targetTopics.length
+      ? this.deps.targetTopics
+      : [...coveredTopics].filter((t) => t && t !== "other");
+    const gaps = targetTopics.filter((topic) => !coveredTopics.has(topic));
 
     const seg = t.segmentCounts();
     const rt = this.deps.metrics.snapshot();
@@ -165,7 +171,7 @@ export class AnalyticsService {
       content: [
         { key: "assets", tone: "blue", value: String(answers.length), label: "Approved answers live", sub: "Usable by the AI rep", drillTo: "studio" },
         { key: "grounded", tone: "green", value: groundedPct, label: "Answers source-grounded", sub: cc.grounded ? `${cc.grounded} answers tied to an MLR source` : "No answers delivered yet" },
-        { key: "gaps", tone: gaps.length ? "red" : "green", value: String(gaps.length), label: "Content gaps", sub: gaps.length ? `No approved answer: ${gaps.join(", ")}` : this.deps.targetTopics.length ? "All target topics covered" : "No target topics configured yet" },
+        { key: "gaps", tone: gaps.length ? "red" : "green", value: String(gaps.length), label: "Content gaps", sub: gaps.length ? `No approved answer: ${gaps.join(", ")}` : targetTopics.length ? "All target topics covered" : "No target topics configured yet" },
         { key: "unapproved", tone: cc.unapprovedBlocked ? "yellow" : "green", value: String(cc.unapprovedBlocked), label: "Unapproved answers blocked", sub: "Off-label / AE content stopped by the gate" },
       ],
       compliance: [

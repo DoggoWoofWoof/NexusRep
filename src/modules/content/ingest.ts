@@ -68,6 +68,15 @@ const TOPIC_TERMS: { topic: string; terms: RegExp }[] = [
 /** Brand topic hints (BrandProfile.lexicon.topicSynonyms): topic → words that mark it. */
 export type TopicHints = Record<string, string[]>;
 
+// A block that opens with a safety heading (or is a dedicated ISI/safety asset) is the verbatim
+// Important Safety Information — extracted as a SafetyStatement so an uploaded PI/deck yields a
+// real ISI with no special filename. Heading-anchored so a passing safety mention in a normal
+// slide (e.g. an "Overview" or "Adverse Event Reporting" block) is NOT mistaken for the ISI.
+const ISI_HEADING = /^(important safety information|safety information|prescribing information|\bisi\b|boxed warning|black box warning)\b/i;
+function looksLikeIsi(text: string): boolean {
+  return ISI_HEADING.test(text.trim());
+}
+
 function inferTopic(text: string, hints?: TopicHints): string {
   // Brand hints win first — the brand knows its own vocabulary better than the generic list.
   const lower = text.toLowerCase();
@@ -181,6 +190,19 @@ export function ingestSource(raw: RawSource, idPrefix: string, opts?: { topicHin
         mlr: raw.mlr,
       });
       return;
+    }
+    // A safety-headed block in a normal deck/PI is ALSO captured as a verbatim SafetyStatement, so
+    // an uploaded prescribing-information/deck yields a real ISI (approved via MLR) without needing
+    // an "isi"-named file. It stays an approved answer + slide too (the deck keeps its safety slide).
+    if (looksLikeIsi(text)) {
+      safety.push({
+        id: asId<"safety_statement_id">(`${idPrefix}_isi_${i}`) as SafetyStatementId,
+        tenantId: asset.tenantId,
+        brandId: asset.brandId,
+        campaignId: asset.campaignId,
+        text,
+        mlr: raw.mlr,
+      });
     }
     const slideId = asId<"detail_aid_slide_id">(`${idPrefix}_slide_${i}`) as DetailAidSlideId;
     const topic = inferTopic(text, opts?.topicHints);

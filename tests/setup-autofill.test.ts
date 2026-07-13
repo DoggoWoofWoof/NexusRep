@@ -53,7 +53,7 @@ describe("inferSetupAnswersFromDocument", () => {
 
   it("returns nothing when every inferable field is already answered", async () => {
     const existing = Object.fromEntries(
-      ["brand", "indication", "therapeutic_area", "sponsor", "tagline", "talking_points", "hotwords", "try_questions", "target_specialties", "target_conditions"].map((k) => [k, "set"]),
+      ["brand", "indication", "therapeutic_area", "sponsor", "tagline", "talking_points", "hotwords", "try_questions", "target_specialties", "target_conditions", "msl_contact", "ae_routing"].map((k) => [k, "set"]),
     );
     let llmCalled = false;
     const out = await inferSetupAnswersFromDocument(DOC, existing, async () => ((llmCalled = true), LLM_JSON));
