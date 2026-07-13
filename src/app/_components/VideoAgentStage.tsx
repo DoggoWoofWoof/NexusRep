@@ -258,7 +258,10 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   }
 
 
-  async function notifyPendingRepEcho(reason = "vendor_started") {
+  // skipHydrate: release the caption NOW with the text/slide we already hold, without the
+  // best-effort session fetch. Used when the call is ENDING — otherwise the last answer the rep
+  // spoke would be dropped on unmount while its (held) caption was still waiting to be released.
+  async function notifyPendingRepEcho(reason = "vendor_started", skipHydrate = false) {
     const pending = pendingRepEchoRef.current;
     const notify = onRepTurnRef.current;
     if (!pending || pending.notified || !notify) return;
@@ -275,7 +278,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     if (pendingRepEchoRef.current?.seq !== seq) return;
     const sid = sessionIdRef.current;
     let notice: RepTurnNotice = { text: pending.text, detailAidSlideId: pending.detailAidSlideId };
-    if (serverLogsRef.current && sid) {
+    if (!skipHydrate && serverLogsRef.current && sid) {
       const hydrated = await hydratedRepTurn(sid, pending.text);
       notice = {
         ...hydrated,
@@ -482,6 +485,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // The vendor ended the call (credits exhausted, duration cap, account limit).
             // Without this the pane just froze to black with no explanation.
             if (/shutdown|call_ended|conversation.ended/i.test(e.type)) {
+              void notifyPendingRepEcho("call_ended", true); // flush the last spoken answer's caption
               setHasVideo(false);
               setNote("The video call was ended by the provider — this usually means the account is out of conversational credits or hit a limit. Close the video and try again once that's resolved.");
               setStage("ended");
@@ -529,7 +533,9 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
       })();
     }
     return () => {
-      clearPendingRepEcho();
+      // Flush (not drop) any held caption so the LAST answer the rep spoke still lands in the
+      // transcript when the doctor ends the call before its release fired. Synchronous (skipHydrate).
+      void notifyPendingRepEcho("unmount", true);
       transportRef.current?.leave();
       transportRef.current = null;
       void audioCtxRef.current?.close().catch(() => undefined);
