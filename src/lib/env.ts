@@ -139,6 +139,14 @@ export const env = {
   groundingMinCoverage: clampNum(process.env.NEXUSREP_GROUNDING_MIN_COVERAGE, 0.5, 0.1, 1),
   /** Max tokens per composed answer (default 400). */
   composerMaxTokens: Math.round(clampNum(process.env.NEXUSREP_COMPOSER_MAX_TOKENS, 400, 50, 4000)),
+
+  // ── Simple brand-console auth (shared password) ──────────────────────────────
+  // A lightweight gate for the brand console. OFF unless NEXUSREP_APP_PASSWORD is set, so
+  // local dev and E2E stay open by default. The doctor link (/hcp) is NEVER gated — doctors
+  // reach the rep by link, not by login.
+  appPassword: process.env.NEXUSREP_APP_PASSWORD ?? "",
+  /** Secret for signing the session cookie; defaults to the password (fine for one shared login). */
+  appSessionSecret: process.env.NEXUSREP_SESSION_SECRET || process.env.NEXUSREP_APP_PASSWORD || "",
 } as const;
 
 function clampNum(raw: string | undefined, fallback: number, min: number, max: number): number {

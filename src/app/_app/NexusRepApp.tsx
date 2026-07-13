@@ -79,6 +79,49 @@ export interface AppState {
   setSelectedSessionId: (id: string | null) => void;
 }
 
+/** Shared-password gate for the brand console. Doctors never see this — they open the rep from
+ *  their invite link. The password is entered by the user; on success the server sets an
+ *  httpOnly session cookie and we reveal the console. */
+function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!pw || busy) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "login", password: pw }) });
+      if (res.ok) { onSuccess(); return; }
+      setErr("Incorrect password.");
+    } catch {
+      setErr("Couldn't reach the server — try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(120deg,#04307a 0%,#0649ac 50%,#2563eb 100%)", fontFamily: "var(--dn-font-sans)", padding: 20 }}>
+      <div style={{ width: 372, maxWidth: "100%", background: "#fff", borderRadius: 16, boxShadow: "0 24px 60px -12px rgba(4,48,122,.55)", padding: "32px 30px" }}>
+        <div style={{ font: "700 15px/1 var(--dn-font-sans)", color: "var(--dn-brand-dark)", marginBottom: 5 }}>DocNexus · NexusRep</div>
+        <div style={{ font: "400 12.5px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginBottom: 20 }}>Enter the workspace password to open the AI Rep Studio.</div>
+        <input
+          type="password"
+          value={pw}
+          onChange={(e) => { setPw(e.target.value); setErr(""); }}
+          onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
+          placeholder="Workspace password"
+          autoFocus
+          style={{ width: "100%", boxSizing: "border-box", padding: "11px 13px", border: `1px solid ${err ? "var(--dn-danger)" : "var(--dn-border)"}`, borderRadius: 10, font: "400 13.5px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)", marginBottom: err ? 7 : 15 }}
+        />
+        {err && <div style={{ font: "500 11.5px/1.4 var(--dn-font-sans)", color: "var(--dn-danger)", marginBottom: 13 }}>{err}</div>}
+        <button onClick={() => void submit()} disabled={busy || !pw} style={{ width: "100%", padding: "11px 0", border: "none", borderRadius: 10, background: "var(--dn-brand-base)", color: "#fff", font: "600 13px/1 var(--dn-font-sans)", cursor: busy || !pw ? "default" : "pointer", opacity: busy || !pw ? 0.55 : 1 }}>{busy ? "Checking…" : "Enter"}</button>
+        <div style={{ font: "400 10.5px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 15, textAlign: "center" }}>Doctors don&apos;t sign in — they open the rep from their invite link.</div>
+      </div>
+    </div>
+  );
+}
+
 export function NexusRepApp() {
   const [mode, setMode] = useState<"brand" | "hcp">("brand");
   const [nav, setNavState] = useState<Screen>("overview");
@@ -92,6 +135,22 @@ export function NexusRepApp() {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const brand = useBrand();
   const attention = useAttention(); // real pending items, not a hardcoded "3"
+  // Simple console auth: ask /api/auth whether a password gate is on and whether this browser
+  // already holds a valid session. null = still checking. Fails OPEN if the check errors so a
+  // transient blip never locks a legitimately-open (ungated) deployment out of its own console.
+  const [auth, setAuth] = useState<{ enabled: boolean; authed: boolean } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/auth")
+      .then((r) => r.json())
+      .then((d) => { if (alive) setAuth({ enabled: !!d.enabled, authed: !!d.authed }); })
+      .catch(() => { if (alive) setAuth({ enabled: false, authed: true }); });
+    return () => { alive = false; };
+  }, []);
+  const logout = async () => {
+    try { await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }) }); } catch { /* clearing anyway */ }
+    setAuth({ enabled: true, authed: false });
+  };
 
   const setNav = (s: Screen) => {
     setNavState(s);
@@ -109,6 +168,15 @@ export function NexusRepApp() {
 
   if (mode === "hcp") {
     return <HcpExperience app={app} />;
+  }
+
+  // Console auth gate (doctor view above is never gated). While the check is in flight, show a
+  // brief splash so the console never flashes before a required login.
+  if (auth === null) {
+    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--dn-bg)", color: "var(--dn-fg-subtle)", font: "500 13px/1 var(--dn-font-sans)" }}>Loading…</div>;
+  }
+  if (auth.enabled && !auth.authed) {
+    return <LoginScreen onSuccess={() => setAuth({ enabled: true, authed: true })} />;
   }
 
   return (
@@ -160,6 +228,9 @@ export function NexusRepApp() {
             <div style={{ font: "600 12px/1.2 var(--dn-font-sans)", color: "#fff" }}>{DEMO_USER.shortName}</div>
             <div style={{ font: "400 11px/1.2 var(--dn-font-sans)", color: "rgba(255,255,255,.5)" }}>{DEMO_USER.role}</div>
           </div>}
+          {!navCollapsed && auth?.enabled && (
+            <span onClick={() => void logout()} title="Sign out" style={{ marginLeft: "auto", font: "600 10.5px/1 var(--dn-font-sans)", color: "rgba(255,255,255,.55)", cursor: "pointer" }}>Sign out</span>
+          )}
         </div>
       </aside>
 

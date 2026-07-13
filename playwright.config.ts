@@ -63,6 +63,8 @@ export default defineConfig({
       // No real Tavus in E2E — the A/V spike + video rep must use the mock (no network/credits).
       TAVUS_API_KEY: "",
       TAVUS_REPLICA_ID: "",
+      // Console auth gate OFF for E2E regardless of .env.local — tests drive the console directly.
+      NEXUSREP_APP_PASSWORD: "",
     },
   },
 });
