@@ -50,7 +50,7 @@ describe("Tavus latency tuning env", () => {
 
     expect(env.tavusTtsEngine).toBe("cartesia");
     expect(env.tavusTtsModel).toBe("sonic-3");
-    expect(env.tavusTtsSpeed).toBe(1.08);
+    expect(env.tavusTtsSpeed).toBe(1.0); // natural pace by default (1.08 read as rushed)
   });
 
   it("clamps Tavus TTS speed to the supported range", async () => {

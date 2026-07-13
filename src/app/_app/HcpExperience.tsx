@@ -307,8 +307,13 @@ export function HcpExperience({ app }: { app?: AppState }) {
     if (!rec || !rec.supported()) return;
     if (listening) { rec.stop(); setListening(false); return; }
     voiceRef.current?.cancel(); setSpeaking(false);
+    setInput("");
     setListening(true);
-    rec.start((text) => { setListening(false); setInput(""); void ask(text); }, () => setListening(false));
+    rec.start(
+      (text) => { setListening(false); setInput(""); void ask(text); }, // final phrase → ask
+      () => setListening(false), // ended (silence / error) — no dangling "Listening…"
+      (interim) => { if (interim) setInput(interim); }, // live text so the doctor sees it working
+    );
   }
   function toggleVideoMode() {
     interruptPlayback();

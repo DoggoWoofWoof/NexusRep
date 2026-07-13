@@ -273,22 +273,26 @@ export class OpenAiVoiceProvider implements ClientVoiceProvider {
 
 export interface ClientRecognizer {
   supported(): boolean;
-  /** Start listening; calls onResult with the final transcript, then onEnd. */
-  start(onResult: (text: string) => void, onEnd?: () => void): void;
+  /** Start listening; calls onResult with the final transcript, then onEnd. onInterim (if given)
+   *  streams live partial text so the UI can show what's being heard before the phrase finalizes. */
+  start(onResult: (text: string) => void, onEnd?: () => void, onInterim?: (text: string) => void): void;
   stop(): void;
   /** True when transcription runs on-device (no audio leaves the browser). */
   readonly onDevice?: boolean;
 }
 
+interface SpeechResultLike { readonly isFinal: boolean; readonly length: number; [i: number]: { transcript: string } }
 interface SpeechRecognitionLike {
   lang: string;
   interimResults: boolean;
   continuous: boolean;
-  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  maxAlternatives: number;
+  onresult: ((e: { resultIndex: number; results: ArrayLike<SpeechResultLike> }) => void) | null;
   onend: (() => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((e?: { error?: string }) => void) | null;
   start(): void;
   stop(): void;
+  abort(): void;
 }
 
 type RecognitionCtor = new () => SpeechRecognitionLike;
@@ -309,7 +313,7 @@ export class BrowserRecognizer implements ClientRecognizer {
     return getRecognitionCtor() !== null;
   }
 
-  start(onResult: (text: string) => void, onEnd?: () => void): void {
+  start(onResult: (text: string) => void, onEnd?: () => void, onInterim?: (text: string) => void): void {
     const Ctor = getRecognitionCtor();
     if (!Ctor) {
       onEnd?.();
@@ -317,21 +321,42 @@ export class BrowserRecognizer implements ClientRecognizer {
     }
     const rec = new Ctor();
     rec.lang = speechLocale;
-    rec.interimResults = false;
+    // interimResults → live "what I'm hearing" feedback so the doctor sees it working immediately;
+    // continuous=false → the engine finalizes on the natural end-of-question pause (fast auto-submit)
+    // instead of waiting for a second click. One tap: speak, and it answers.
+    rec.interimResults = true;
     rec.continuous = false;
-    rec.onresult = (e) => {
-      const first = e.results[0]?.[0]?.transcript ?? "";
-      if (first) onResult(first);
+    rec.maxAlternatives = 1;
+    let finalText = "";
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      this.rec = null;
+      const t = finalText.trim();
+      if (t) onResult(t); // deliver exactly once, on the finalized phrase
+      onEnd?.();
     };
-    rec.onend = () => onEnd?.();
-    rec.onerror = () => onEnd?.();
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = 0; i < e.results.length; i++) {
+        const r = e.results[i];
+        const t = r?.[0]?.transcript ?? "";
+        if (r?.isFinal) finalText += t;
+        else interim += t;
+      }
+      if (interim.trim()) onInterim?.(interim.trim());
+    };
+    rec.onend = finish;
+    rec.onerror = finish; // no-speech / aborted / network → end cleanly, no throw
     this.rec = rec;
-    rec.start();
+    try { rec.start(); } catch { finish(); }
   }
 
   stop(): void {
-    this.rec?.stop();
+    const r = this.rec;
     this.rec = null;
+    try { r?.stop(); } catch { /* already stopped */ }
   }
 }
 
@@ -519,17 +544,17 @@ class NullRecognizer implements ClientRecognizer {
 }
 
 /**
- * Pick a recognizer: on-device Whisper first (private, no audio leaves the
- * device), falling back to the browser Web Speech recognizer, then to a
- * no-op stub whose supported() is false. Callers use the shared
- * ClientRecognizer interface, so the choice is transparent.
+ * Pick a recognizer. Default is "browser" (Web Speech): one tap, live interim text, and it
+ * auto-submits on the end-of-question pause — fast and reliable on Chrome/Edge, which is what
+ * the doctor voice mode needs. Its audio goes to the browser's STT (a cloud vendor on Chrome) —
+ * the same posture as the video rep, which already streams the doctor's mic to Tavus. Pass
+ * "whisper" for fully on-device transcription (no audio leaves the browser) at the cost of a
+ * model download + slower push-to-talk. Either falls back to the other, then to a no-op stub.
  */
-export function createRecognizer(prefer: "whisper" | "browser" = "whisper"): ClientRecognizer {
-  if (prefer === "whisper") {
-    const w = new WhisperRecognizer();
-    if (w.supported()) return w;
-  }
-  const b = new BrowserRecognizer();
-  if (b.supported()) return b;
+export function createRecognizer(prefer: "browser" | "whisper" = "browser"): ClientRecognizer {
+  const browser = () => { const b = new BrowserRecognizer(); return b.supported() ? b : null; };
+  const whisper = () => { const w = new WhisperRecognizer(); return w.supported() ? w : null; };
+  const order = prefer === "whisper" ? [whisper, browser] : [browser, whisper];
+  for (const make of order) { const r = make(); if (r) return r; }
   return new NullRecognizer();
 }

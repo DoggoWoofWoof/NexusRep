@@ -62,6 +62,10 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   // written when the replica starts speaking, with the slide id already known.
   const pendingRepEchoRef = useRef<PendingRepEcho | null>(null);
   const pendingRepEchoSeqRef = useRef(0);
+  // True while the replica is currently producing audio (between started/stopped-speaking).
+  // A caption armed while this is true is released at once (the voice is already out); one armed
+  // before it flips releases when speaking starts — so the caption lands WITH the voice, either order.
+  const repSpeakingRef = useRef(false);
 
   // Make the agent speak our (already gated) text verbatim, via the transport.
   const speakAgent = (text: string, detailAidSlideId?: string | null): boolean => {
@@ -69,17 +73,8 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     if (!t) return false;
     const ok = transportRef.current?.speak(t) ?? false;
     if (!ok) return false;
-    clearPendingRepEcho();
-    const pending: PendingRepEcho = {
-      seq: ++pendingRepEchoSeqRef.current,
-      text: t,
-      detailAidSlideId: detailAidSlideId ?? null,
-      notified: false,
-      queuedAt: Date.now(),
-    };
     recordTiming({ type: "echo_queued", text: t, detailAidSlideId: detailAidSlideId ?? null });
-    pendingRepEchoRef.current = pending;
-    void notifyPendingRepEcho("echo_queued");
+    armRepCaption({ text: t, detailAidSlideId: detailAidSlideId ?? null });
     return true;
   };
   const applyMuted = (m: boolean) => { setMuted(m); onMutedChange?.(m); };
@@ -111,6 +106,27 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     const pending = pendingRepEchoRef.current;
     if (pending?.timer) window.clearTimeout(pending.timer);
     pendingRepEchoRef.current = null;
+  }
+
+  // Arm a rep caption and HOLD it until the replica's audio actually starts, so the caption lands
+  // with the voice instead of ahead of it (the greeting used to caption before it was spoken).
+  // If the replica is already speaking, release now; otherwise a started-speaking event releases it,
+  // and a safety timer releases it regardless so a caption can never get stuck or lost.
+  const CAPTION_SAFETY_MS = 2500;
+  function armRepCaption(input: { text: string; detailAidSlideId?: string | null }) {
+    const t = input.text.trim();
+    if (!t) return;
+    clearPendingRepEcho();
+    const pending: PendingRepEcho = {
+      seq: ++pendingRepEchoSeqRef.current,
+      text: t,
+      detailAidSlideId: input.detailAidSlideId ?? null,
+      notified: false,
+      queuedAt: Date.now(),
+    };
+    pendingRepEchoRef.current = pending;
+    if (repSpeakingRef.current) { void notifyPendingRepEcho("already_speaking"); return; }
+    pending.timer = window.setTimeout(() => { void notifyPendingRepEcho("safety_timeout"); }, CAPTION_SAFETY_MS);
   }
 
   function recordTiming(event: Omit<TimingEvent, "at">) {
@@ -211,11 +227,6 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     return notice;
   }
 
-  async function notifyAuthoritativeRepTurn(sessionId: string, utterance: string) {
-    const notify = onRepTurnRef.current;
-    if (!notify) return;
-    notify(await hydratedRepTurn(sessionId, utterance));
-  }
 
   async function notifyPendingRepEcho(reason = "vendor_started") {
     const pending = pendingRepEchoRef.current;
@@ -388,14 +399,22 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
                 recordTiming({ type: "vendor_final_utterance", reason: e.type, text: e.text });
               }
             }
-            // Started-speaking is a timing marker only. Echo captions are released immediately
-            // when queued; we do not hide a fast transcript to mask slower vendor audio.
+            // The replica's audio started → release the held caption so it lands WITH the voice.
             if (
               /start(?:ed)?[_\s.-]*speak|speech[_\s.-]*start|speaking[_\s.-]*start/i.test(e.type) &&
               (!e.role || /replica|assistant|agent|ai/i.test(e.role))
             ) {
+              repSpeakingRef.current = true;
               recordTiming({ type: "vendor_started_speaking", reason: e.type });
+              void notifyPendingRepEcho("vendor_started");
               void recordAgentAudioActivity(e.type);
+            }
+            // The replica finished speaking → the next turn's caption must wait for its own audio.
+            if (
+              /stop(?:ped)?[_\s.-]*speak|speech[_\s.-]*(?:stop|end)|speaking[_\s.-]*(?:stop|end)|done[_\s.-]*speak/i.test(e.type) &&
+              (!e.role || /replica|assistant|agent|ai/i.test(e.role))
+            ) {
+              repSpeakingRef.current = false;
             }
             // The vendor ended the call (credits exhausted, duration cap, account limit).
             // Without this the pane just froze to black with no explanation.
@@ -411,7 +430,6 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // Begin the recording at the agent's FIRST words (the greeting) so the clip trims
             // the connect boot + any idle before the rep speaks. No-op once already recording.
             if (speaker === "rep") maybeStartRec();
-            if (speaker === "rep") clearPendingRepEcho();
             // The doctor's SPOKEN words must appear in the captions like typed ones do —
             // without this, a voice-only conversation has no "You" lines at all.
             if (speaker === "hcp") onHcpUtterance?.(text);
@@ -423,7 +441,10 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // Only log from the client when the server can't (unreachable compliance endpoint).
             // When reachable, the server already logged this turn with its slideId.
             if (serverLogsRef.current) {
-              if (speaker === "rep") void notifyAuthoritativeRepTurn(sid, text);
+              // Greeting / voice-driven turn (a typed echo already armed its own caption with the
+              // slide id): arm the caption and let it release when the replica's audio starts, so
+              // it doesn't appear before the voice. Duplicate suppression happens caption-side.
+              if (speaker === "rep" && !pendingRepEchoRef.current) armRepCaption({ text });
               return;
             }
             void fetch("/api/sessions/utterance", {
