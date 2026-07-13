@@ -11,11 +11,14 @@ import { getDb } from "./pglite";
 import { PgRepository } from "./pg-repository";
 
 export class PgRepositoryFactory implements RepositoryFactory {
+  /** Optional table-name prefix so one PGlite database can hold isolated, PERSISTENT stores per
+   *  signed-in user (e.g. "u_swastik_") — every collection becomes u_swastik_sessions, etc. */
+  constructor(private readonly namespace = "") {}
   create<T extends Entity>(name: string): Repository<T> {
-    return new PgRepository<T>(getDb, name, false);
+    return new PgRepository<T>(getDb, this.namespace + name, false);
   }
   createAppendOnly<T extends Entity>(name: string): Repository<T> {
-    return new PgRepository<T>(getDb, name, true);
+    return new PgRepository<T>(getDb, this.namespace + name, true);
   }
 }
 

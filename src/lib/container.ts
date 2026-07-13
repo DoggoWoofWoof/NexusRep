@@ -10,7 +10,7 @@
 
 import { asId, type AiRepId, type BrandId, type CampaignId, type ContentAssetId, type DetailAidSlideId, type HcpId, type MlrApprovalId, type SessionId, type TenantId } from "@lib/ids";
 import { InMemoryVectorIndex } from "@lib/vector-index";
-import { getRepositoryFactory } from "@lib/db";
+import { getRepositoryFactory, PgRepositoryFactory } from "@lib/db";
 import { MemoryRepositoryFactory, type RepositoryFactory } from "@lib/repository";
 import { appAuthEnabled, usernameFromCookie, userData, SESSION_COOKIE } from "@lib/auth-session";
 import { ContentService, PresentationSkill, firstAvailableComposer, resolveComposer, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
@@ -350,14 +350,24 @@ function containerCache(): Map<string, Promise<AppContainer>> {
   return containerGlobal.__nexusrepContainers;
 }
 
-/** Build options for a signed-in user, or {} for the shared default (auth off — unchanged
- *  single-tenant behavior on the env driver). Each signed-in user gets an ISOLATED in-memory
- *  container: "demo" users clone the full seeded demo; "clean" users get a bare draft studio. */
+/** Each signed-in user gets an ISOLATED store. On the Postgres driver it's a per-user table
+ *  namespace (u_<user>_*) in the same PGlite database, so their data PERSISTS across restarts;
+ *  otherwise an isolated in-memory store (resets on restart — fine for local/dev). */
+function perUserRepos(userId: string): RepositoryFactory {
+  if (env.dataDriver === "postgres") {
+    return new PgRepositoryFactory(`u_${userId.toLowerCase().replace(/[^a-z0-9]/g, "_")}_`);
+  }
+  return new MemoryRepositoryFactory();
+}
+
+/** Build options for a signed-in user, or {} for the shared default (auth off / public doctor
+ *  link — unchanged single-tenant behavior on the env driver). "demo" users clone the full seeded
+ *  demo; "clean" users get a bare draft studio to build from scratch. */
 function optsForUser(userId: string | null): Parameters<typeof createContainer>[0] {
   if (!userId) return {};
   return userData(userId) === "demo"
-    ? { seedHistory: true, seedContent: true, seedStudio: "full", repos: new MemoryRepositoryFactory() }
-    : { seedHistory: false, seedContent: false, seedStudio: "draft", repos: new MemoryRepositoryFactory() };
+    ? { seedHistory: true, seedContent: true, seedStudio: "full", repos: perUserRepos(userId) }
+    : { seedHistory: false, seedContent: false, seedStudio: "draft", repos: perUserRepos(userId) };
 }
 
 /** Per-user container cache. Key "__default__" is the shared (auth-off / doctor-link) container. */
