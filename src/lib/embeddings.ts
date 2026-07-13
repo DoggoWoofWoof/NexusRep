@@ -66,11 +66,17 @@ function getPipe() {
   if (!pipePromise) {
     pipePromise = (async () => {
       const tf = (await import("@xenova/transformers")) as unknown as {
-        env: { allowLocalModels: boolean };
+        env: { allowLocalModels: boolean; HF_TOKEN?: string };
         pipeline: (task: string, model: string) => Promise<(t: string, o: object) => Promise<{ data: ArrayLike<number> }>>;
       };
       tf.env.allowLocalModels = false;
-      return tf.pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
+      // Hugging Face 403s anonymous downloads from many datacenter IPs (e.g. Render), which drops
+      // us to the lexical fallback. An HF_TOKEN (read-only is fine) authenticates the fetch so the
+      // neural model downloads. Optional — no token → lexical fallback, which still works.
+      const hfToken = process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN;
+      if (hfToken) tf.env.HF_TOKEN = hfToken;
+      const model = process.env.NEXUSREP_EMBEDDINGS_MODEL || "Xenova/all-MiniLM-L6-v2";
+      return tf.pipeline("feature-extraction", model);
     })();
   }
   return pipePromise;

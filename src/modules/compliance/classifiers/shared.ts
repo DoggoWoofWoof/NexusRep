@@ -46,10 +46,35 @@ function clamp01(n: unknown): number {
   return Math.max(0, Math.min(1, v));
 }
 
+/** Extract the FIRST balanced {…} JSON object from a model reply, ignoring code fences and any
+ *  prose the model appended after it. Models (even when told "JSON only") sometimes add a trailing
+ *  sentence or a second line — a raw JSON.parse then throws "Unexpected non-whitespace character
+ *  after JSON", which silently knocked out the LLM classifier and dropped us to keyword matching. */
+function extractJsonObject(raw: string): string {
+  const s = raw.replace(/```(?:json)?/gi, "").trim();
+  const start = s.indexOf("{");
+  if (start < 0) return s;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return s.slice(start, i + 1);
+  }
+  return s.slice(start); // unbalanced — let JSON.parse surface the real error
+}
+
 /** Parse + normalize model JSON into a trusted RiskClassification. Throws on unparseable input. */
 export function parseClassification(raw: string): RiskClassification {
-  const cleaned = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
-  const obj = JSON.parse(cleaned) as Record<string, unknown>;
+  const obj = JSON.parse(extractJsonObject(raw)) as Record<string, unknown>;
   const intent = INTENTS.includes(obj.intent as Intent) ? (obj.intent as Intent) : "other";
   return {
     intent,

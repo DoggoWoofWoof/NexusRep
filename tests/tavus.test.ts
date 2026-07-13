@@ -113,6 +113,7 @@ describe("Tavus realtime adapter", () => {
       personaCacheKey: "reuse_brand",
       customLlm: { baseUrl: "https://app.example/api/tavus/llm", model: "nexusrep-compliance" },
       agentId: "r1",
+      tools: [],
     });
 
     const convo = calls.find((c) => c.url.endsWith("/conversations"))!;
