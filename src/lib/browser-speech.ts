@@ -37,11 +37,12 @@ let previewAudio: HTMLAudioElement | null = null;
 /** Play a cached, tone-styled preview clip from /api/voice/preview — a ONE-TIME server TTS
  *  generation, then instant free playback (no live video call). Falls back to the provided
  *  browser-voice callback when there's no clip (no/invalid TTS key, or any error). Client-only. */
-export async function playTonePreview(tone: string | undefined, opts?: { text?: string; fallback?: () => void }): Promise<void> {
+export async function playTonePreview(tone: string | undefined, opts?: { text?: string; voice?: string; fallback?: () => void }): Promise<void> {
   stopTonePreview();
   try {
     const qs = new URLSearchParams({ tone: tone || "professional" });
     if (opts?.text) qs.set("text", opts.text);
+    if (opts?.voice) qs.set("voice", opts.voice);
     const res = await fetch(`/api/voice/preview?${qs.toString()}`);
     if (!res.ok || res.status === 204) { opts?.fallback?.(); return; }
     const blob = await res.blob();

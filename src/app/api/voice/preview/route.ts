@@ -10,6 +10,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { isTtsVoice } from "@lib/tts-voices";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +40,11 @@ export async function GET(req: Request): Promise<NextResponse> {
   const tone = toneKey(searchParams.get("tone"));
   // Cap keeps clips short (~30s max) and bounds the injection/cost surface.
   const text = (searchParams.get("text") || DEFAULT_PHRASE).slice(0, 400);
-  const key = `${tone}::${text}`;
+  // Per-name voice: the client maps the agent name → a stable voice; we validate it against the
+  // allowed set (else the configured/default voice). Same (voice, tone, text) → same cached clip.
+  const qVoice = searchParams.get("voice");
+  const voice = isTtsVoice(qVoice) ? qVoice : (process.env.OPENAI_TTS_VOICE || "alloy");
+  const key = `${voice}::${tone}::${text}`;
 
   const hit = clipCache.get(key);
   if (hit) return audio(hit);
@@ -54,7 +59,7 @@ export async function GET(req: Request): Promise<NextResponse> {
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts",
-        voice: process.env.OPENAI_TTS_VOICE || "alloy",
+        voice,
         input: text,
         instructions: TONE_INSTRUCTIONS[tone],
         response_format: "mp3",

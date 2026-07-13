@@ -14,6 +14,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useAgents, setAgentsCache, type AgentInfo, type AgentsPayload } from "../_components/useAgents";
 import { BrowserVoiceProvider, toneSpeechOpts, playTonePreview, stopTonePreview } from "@lib/browser-speech";
+import { voiceForName } from "@lib/tts-voices";
 
 const card: React.CSSProperties = { background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)" };
 const cardHead: React.CSSProperties = { padding: "12px 14px 10px", borderBottom: "1px solid var(--dn-border)", font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" };
@@ -68,10 +69,12 @@ function previewLineFor(agentName: string): string {
     ? `Hi, I'm ${name}. This is how I'll sound when I speak with your doctors.`
     : "This is how your rep will sound when it speaks with a doctor.";
 }
-/** Play `text` in the selected tone: cached server clip, else the browser voice. */
-function speakPreview(text: string, style?: string): void {
+/** Play `text` in the selected tone + the given voice: cached server clip, else the browser voice.
+ *  `voice` is derived from the agent name, so the same name always previews in the same voice. */
+function speakPreview(text: string, style?: string, voice?: string): void {
   void playTonePreview(style, {
     text,
+    voice,
     fallback: () => {
       if (!galleryVoice) { galleryVoice = new BrowserVoiceProvider(); void galleryVoice.warmup(); }
       galleryVoice.cancel();
@@ -81,8 +84,9 @@ function speakPreview(text: string, style?: string): void {
 }
 function galleryHoverSpeak(agentName: string, style?: string): void {
   if (hoverTimer) clearTimeout(hoverTimer);
+  const name = repFirstName(agentName);
   const line = previewLineFor(agentName);
-  hoverTimer = setTimeout(() => speakPreview(line, style), 280);
+  hoverTimer = setTimeout(() => speakPreview(line, style, voiceForName(name)), 280);
 }
 function galleryHoverStop(): void {
   if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
@@ -297,7 +301,7 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
                   void onVoiceStyle(v.value);
                   const name = repFirstName(active?.name ?? data?.selectedName ?? "");
                   const intro = name ? `Hi, I'm ${name}, and this is my ${v.label.toLowerCase()} voice.` : `This is my ${v.label.toLowerCase()} voice.`;
-                  speakPreview(`${intro} ${v.demo}`, v.value);
+                  speakPreview(`${intro} ${v.demo}`, v.value, voiceForName(name));
                 }} title={`${v.blurb} — tap to hear it`} style={{ padding: "7px 12px", borderRadius: 16, border: voiceStyle === v.value ? "1.5px solid var(--dn-brand-base)" : "1px solid var(--dn-border)", background: voiceStyle === v.value ? "var(--dn-brand-base)" : "#fff", color: voiceStyle === v.value ? "#fff" : "var(--dn-fg-muted)", font: "600 11px/1 var(--dn-font-sans)", cursor: "pointer" }}>{v.label}</button>
               ))}
             </div>
