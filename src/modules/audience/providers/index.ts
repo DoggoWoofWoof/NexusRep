@@ -63,16 +63,32 @@ export interface LoadedCohort {
   source: string;
 }
 
+/** Process-wide cache of SUCCESSFUL live cohort loads, keyed by the exact query. The cohort is
+ *  aggregate market data (non-PHI, identical for a given query), so with multi-user containers
+ *  every user that resolves to the same targeting query reuses one fetch instead of re-hitting
+ *  the claims backend per login. Fallbacks are NOT cached, so a degraded load still self-heals. */
+const liveCohortCache = new Map<string, LoadedCohort>();
+function cohortKey(q: AudienceQuery): string {
+  return JSON.stringify({ s: q.specialties ?? [], d: q.diagnosisCodes ?? [], l: q.limit ?? null });
+}
+
 /** Load the targeting cohort, falling back to the modeled cohort on any failure.
  *  One retry before giving up: a cold-boot timeout or token refresh shouldn't silently
  *  swap the live claims cohort for sample data for the rest of the process lifetime. */
 export async function loadCohort(query: AudienceQuery = MILVEXIAN_AUDIENCE_QUERY, attempts = 2): Promise<LoadedCohort> {
+  const key = cohortKey(query);
+  const cached = liveCohortCache.get(key);
+  if (cached) return cached; // a prior live success for this exact query — reused across containers
   const provider = getAudienceProvider();
   let lastError: unknown;
   for (let attempt = 1; attempt <= Math.max(1, attempts); attempt++) {
     try {
       const cohort = await provider.fetchCohort(query);
-      if (cohort.length) return { cohort, source: provider.name };
+      if (cohort.length) {
+        const loaded = { cohort, source: provider.name };
+        liveCohortCache.set(key, loaded); // cache only real successes; fallbacks stay retryable
+        return loaded;
+      }
       return { cohort: MILVEXIAN_COHORT, source: `${provider.name}(fallback:empty)` };
     } catch (e) {
       lastError = e;
