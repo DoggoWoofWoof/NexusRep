@@ -12,6 +12,7 @@ import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { setupAnswersOf } from "@modules/brand";
 import { llmComplete } from "@modules/content";
+import { resolveTargetingCodes } from "@modules/audience";
 import { inferSetupAnswersFromDocument } from "@modules/setupAssistant";
 import { extractSourceText, ingestSource, type RawSource } from "@modules/content";
 import type { ContentAsset, MlrMetadata } from "@modules/content";
@@ -93,11 +94,32 @@ export async function POST(req: Request): Promise<NextResponse> {
     try {
       const existing = setupAnswersOf((await c.studio.get(c.demo.aiRepId))?.draft);
       const inferred = await inferSetupAnswersFromDocument(text, existing, llmComplete);
-      for (const [k, v] of Object.entries(inferred.filled)) {
+      const filled: Record<string, string> = { ...inferred.filled };
+
+      // `target_conditions` is plain-language indications, NOT a stored setup key: resolve it to
+      // canonical ICD-10 codes via the DocNexus resolver and store those as `diagnosis_codes`
+      // (never AI-guessed codes). Only when the user hasn't already set diagnosis codes.
+      const conditions = filled.target_conditions;
+      delete filled.target_conditions;
+      if (conditions && !existing.diagnosis_codes?.trim()) {
+        const terms = conditions.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
+        const codes = await resolveTargetingCodes(terms).catch(() => [] as string[]);
+        if (codes.length) filled.diagnosis_codes = codes.join(", ");
+        else console.warn("[ingest] condition→ICD resolver returned nothing for:", terms);
+      }
+
+      for (const [k, v] of Object.entries(filled)) {
         await c.studio.answer(c.demo.aiRepId, k, v);
       }
-      if (Object.keys(inferred.filled).length) {
-        setupAutofill = { filled: Object.keys(inferred.filled), values: inferred.filled };
+      // Writing targeting directly (not via the studio route) means the cached cohort is stale —
+      // re-query the audience so the derived specialties/codes take effect. Fire-and-forget: the
+      // live claims query is slow (~20-35s), so we don't block the upload response on it; the
+      // Audience view picks up the new cohort once the background re-query completes.
+      if (filled.target_specialties || filled.diagnosis_codes) {
+        void c.audienceRuntime.reloadForBrandChange().catch((e) => console.warn("[ingest] cohort reload after autofill failed:", e instanceof Error ? e.message : e));
+      }
+      if (Object.keys(filled).length) {
+        setupAutofill = { filled: Object.keys(filled), values: filled };
       } else {
         console.warn("[ingest] setup autofill found nothing to fill (open keys already answered or extraction empty)", inferred.skipped);
       }

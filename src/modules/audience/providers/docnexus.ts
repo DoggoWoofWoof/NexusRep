@@ -101,20 +101,30 @@ export class DocNexusAudienceProvider implements AudienceProvider {
   }
 
   private async headers(): Promise<Record<string, string>> {
-    const h: Record<string, string> = { "Content-Type": "application/json" };
-    const hasRefreshLogin = Boolean(this.config.refreshToken && this.config.cognitoClientId && this.config.cognitoRegion);
-    if (this.config.apiKey) h["X-Api-Key"] = this.config.apiKey;
-    else if (this.config.idToken || this.config.idTokenFile || hasRefreshLogin) {
-      // The refresh trio alone (the documented Render path: no token file, no inline token)
-      // must reach loadIdToken too — it used to be skipped entirely, so the deployed
-      // provider sent NO auth header and every live query 401'd into the modeled fallback.
-      const loaded = await loadIdToken(this.config);
-      if (loaded?.header === "authorization") h.Authorization = `Bearer ${loaded.token}`;
-      else if (loaded) h["x-id-token"] = loaded.token;
-    }
-    else if (this.config.bearer) h["Authorization"] = `Bearer ${this.config.bearer}`;
-    return h;
+    return docnexusAuthHeaders(this.config);
   }
+}
+
+/**
+ * Resolve the DocNexus auth headers from a config — shared by the cohort query AND the code
+ * resolver (both hit the same platform, same Cognito). API key → X-Api-Key; otherwise a
+ * platform access token (inline, file, or minted from the Cognito refresh trio) as Bearer /
+ * x-id-token; else a static bearer. Returns just Content-Type when nothing is configured.
+ */
+export async function docnexusAuthHeaders(config: DocNexusConfig): Promise<Record<string, string>> {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  const hasRefreshLogin = Boolean(config.refreshToken && config.cognitoClientId && config.cognitoRegion);
+  if (config.apiKey) h["X-Api-Key"] = config.apiKey;
+  else if (config.idToken || config.idTokenFile || hasRefreshLogin) {
+    // The refresh trio alone (the documented Render path: no token file, no inline token)
+    // must reach loadIdToken too — it used to be skipped entirely, so the deployed
+    // provider sent NO auth header and every live query 401'd into the modeled fallback.
+    const loaded = await loadIdToken(config);
+    if (loaded?.header === "authorization") h.Authorization = `Bearer ${loaded.token}`;
+    else if (loaded) h["x-id-token"] = loaded.token;
+  }
+  else if (config.bearer) h["Authorization"] = `Bearer ${config.bearer}`;
+  return h;
 }
 
 // One in-memory refreshed token per process (Render has no token file to cache into).
@@ -346,7 +356,7 @@ function mapRows(rows: DocNexusRow[]): HCPFeatures[] {
   const mapped = rows
     .filter((r) => r.type_1_npi != null)
     .map((r) => {
-      const specialty = Array.isArray(r.specialties) ? r.specialties[0] ?? "Cardiology" : r.specialties ?? "Cardiology";
+      const specialty = Array.isArray(r.specialties) ? r.specialties[0] ?? "Provider" : r.specialties ?? "Provider";
       const name = `Dr. ${[r.first_name, r.last_name].filter(Boolean).join(" ") || String(r.type_1_npi)}`;
       return {
         id: asId<"hcp_id">(`hcp_${r.type_1_npi}`) as HcpId,

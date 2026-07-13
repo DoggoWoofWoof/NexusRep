@@ -108,8 +108,10 @@ export const env = {
   docnexusTokenRefreshScript: process.env.DOCNEXUS_TOKEN_REFRESH_SCRIPT ?? "scripts/docnexus-platform-token.mjs",
   docnexusTokenRefreshTimeoutMs: numeric(process.env.DOCNEXUS_TOKEN_REFRESH_TIMEOUT_MS, 120000),
   docnexusBearer,
-  // Claims aggregates can take ~8s; default 20s so real queries don't abort.
-  docnexusTimeoutMs: numeric(process.env.DOCNEXUS_TIMEOUT_MS, 20000),
+  // Real claims aggregates over several specialties + diagnosis codes are slow — measured ~21s
+  // for a 4-specialty cardiology query. Default 35s so a normal live query completes instead of
+  // aborting into the modeled fallback (override with DOCNEXUS_TIMEOUT_MS).
+  docnexusTimeoutMs: numeric(process.env.DOCNEXUS_TIMEOUT_MS, 35000),
   // Browserless Cognito refresh (server deploys): captured once by the token script.
   docnexusRefreshToken: process.env.DOCNEXUS_REFRESH_TOKEN ?? "",
   docnexusCognitoClientId: process.env.DOCNEXUS_COGNITO_CLIENT_ID ?? "",

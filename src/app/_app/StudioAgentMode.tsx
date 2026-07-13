@@ -39,23 +39,53 @@ function settingOf(a: AgentInfo): string | null {
 const isDeprecated = (a: AgentInfo): boolean => /deprecated/i.test(a.name);
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+const toneLabel = (style?: string): string => (style === "warm" ? "warm" : style === "clinical" ? "clinical" : "professional");
+
 // A short browser-voice sample of the built-in rep TONE (professional / warm / clinical), so
-// tapping a tone lets you hear how the rep's OWN voice is styled. (Gallery agents play their own
-// replica voice on hover — see AgentThumb — which is unrelated to this tone control.)
+// tapping a tone lets you hear how the rep's OWN voice is styled. (Gallery agents speak their own
+// intro on hover — see AgentThumb — which is unrelated to this tone control.)
 let toneSampleVoice: OpenAiVoiceProvider | null = null;
 function sampleTone(style?: string): void {
   if (!toneSampleVoice) { toneSampleVoice = new OpenAiVoiceProvider(); void toneSampleVoice.warmup(); }
   toneSampleVoice.cancel();
-  const label = style === "warm" ? "warm" : style === "clinical" ? "clinical" : "professional";
-  void toneSampleVoice.speak(`This is the ${label} tone for your rep's built-in voice.`, { tone: style, ...toneSpeechOpts(style) });
+  void toneSampleVoice.speak(`This is the ${toneLabel(style)} tone for your rep's built-in voice.`, { tone: style, ...toneSpeechOpts(style) });
 }
 
-/** Thumbnail that SHOWS the agent's first frame once the card scrolls into view, and PLAYS the
- *  clip WITH SOUND on hover — so you hear the agent's OWN replica voice (the same voice across
- *  that person's background variants, e.g. Office vs Home). The <video> is mounted lazily via
- *  IntersectionObserver so a 90-cell gallery doesn't open 90 connections at once. Memoized so
- *  filtering/typing doesn't re-reconcile every cell. */
-const AgentThumb = memo(function AgentThumb({ agent }: { agent: AgentInfo }) {
+// The 10 OpenAI TTS voices the /api/voice/speak route accepts. A gallery agent is pinned to ONE
+// of them by name hash, so the SAME agent always previews in the SAME voice (Office vs Home
+// "Charlie" sound identical), and its cached clip replays instantly after the first hover.
+const PREVIEW_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"];
+function voiceForName(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return PREVIEW_VOICES[h % PREVIEW_VOICES.length]!;
+}
+/** Clean gallery name for the spoken intro: just the person, no setting/version/"deprecated". */
+function spokenName(name: string): string {
+  return name.replace(/\(.*?\)/g, "").split(/\s[-–—]\s/)[0]!.replace(/deprecated/gi, "").trim() || name;
+}
+// One reused preview voice for the whole gallery — hovering a new card cancels the previous intro.
+let galleryPreviewVoice: OpenAiVoiceProvider | null = null;
+function previewAgentIntro(name: string, tone?: string): void {
+  if (!galleryPreviewVoice) { galleryPreviewVoice = new OpenAiVoiceProvider(); void galleryPreviewVoice.warmup(); }
+  galleryPreviewVoice.cancel();
+  const who = spokenName(name);
+  // Two lines, no internal jargon (never "replica"/"API"): a plain self-intro that invites picking.
+  const script = `Hi, I'm ${who}. This is my ${toneLabel(tone)} voice — if you like it, select this and move to the next step.`;
+  void galleryPreviewVoice.speak(script, { tone, voice: voiceForName(name), ...toneSpeechOpts(tone) });
+}
+function stopAgentIntro(): void {
+  galleryPreviewVoice?.cancel();
+}
+
+/** Thumbnail that SHOWS the agent's first frame once the card scrolls into view, and on hover
+ *  PLAYS the clip (face in motion, kept MUTED) while a clean generated voice speaks a two-line
+ *  self-intro ("Hi, I'm {name}. This is my {tone} voice — …"). The stock clip's own audio is
+ *  never played, so no vendor jargon is ever heard; the voice is pinned per agent name so the
+ *  same person always sounds the same, and the clip caches after the first hover. The <video> is
+ *  mounted lazily via IntersectionObserver so a 90-cell gallery doesn't open 90 connections at
+ *  once. Memoized so filtering/typing doesn't re-reconcile every cell. */
+const AgentThumb = memo(function AgentThumb({ agent, tone }: { agent: AgentInfo; tone?: string }) {
   const [inView, setInView] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -73,15 +103,16 @@ const AgentThumb = memo(function AgentThumb({ agent }: { agent: AgentInfo }) {
   }, [agent.thumbnailUrl]);
 
   const onEnter = () => {
-    // Unmute + play so you hear the agent's real (replica) voice — the clip is a static, browser-
-    // cached asset, so this costs no Tavus credits. Unmuted autoplay needs a prior page gesture
-    // (the user has clicked into this tab), and any block is swallowed.
+    // Play the clip for the moving face, but keep it MUTED — the stock footage's own audio is
+    // where vendor jargon lives. The agent's spoken intro is our own two-line script instead.
     const v = videoRef.current;
-    if (v) { v.muted = false; v.currentTime = 0; void v.play().catch(() => {}); }
+    if (v) { v.muted = true; v.currentTime = 0; void v.play().catch(() => {}); }
+    previewAgentIntro(agent.name, tone);
   };
   const onLeave = () => {
     const v = videoRef.current;
     if (v) { v.pause(); v.muted = true; v.currentTime = 0; }
+    stopAgentIntro();
   };
 
   return (
@@ -194,7 +225,7 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
           const isActive = a.id === activeId;
           return (
             <div key={a.id} data-testid="agent-card" style={{ border: isActive ? "2px solid var(--dn-brand-base)" : "1px solid var(--dn-border)", borderRadius: 11, padding: 7, background: "#fff", display: "flex", flexDirection: "column", gap: 7 }}>
-              <AgentThumb agent={a} />
+              <AgentThumb agent={a} tone={voiceStyle} />
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, minWidth: 0 }}>
                 <span title={a.name} style={{ font: "600 11px/1.25 var(--dn-font-sans)", color: "var(--dn-fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
                 {a.status !== "ready" && (

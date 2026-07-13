@@ -8,11 +8,13 @@ import { env } from "@lib/env";
 import type { HCPFeatures } from "../index";
 import type { AudienceProvider, AudienceQuery } from "./types";
 import { ModeledAudienceProvider, MILVEXIAN_COHORT } from "./modeled";
-import { DocNexusAudienceProvider } from "./docnexus";
+import { DocNexusAudienceProvider, type DocNexusConfig } from "./docnexus";
+import { resolveDiagnosisCodes } from "./resolver";
 
 export * from "./types";
 export { ModeledAudienceProvider, MILVEXIAN_COHORT } from "./modeled";
-export { DocNexusAudienceProvider, type DocNexusConfig } from "./docnexus";
+export { DocNexusAudienceProvider, docnexusAuthHeaders, type DocNexusConfig } from "./docnexus";
+export { resolveDiagnosisCodes } from "./resolver";
 
 /**
  * The Milvexian targeting query: cardiology-family specialties treating the
@@ -26,36 +28,61 @@ export const MILVEXIAN_AUDIENCE_QUERY: AudienceQuery = {
   limit: 50,
 };
 
+// The live claims backend is slow and its cost scales with the specialty × code cross-product
+// (a 4-specialty cardiology query already takes ~21s). Cap both so an AI-derived query with many
+// broad specialties/codes (e.g. Internal Medicine + 10 ICD codes) stays queryable instead of
+// timing out. Order is preserved, so the Setup-AI's highest-priority specialties/codes win.
+const MAX_QUERY_SPECIALTIES = 4;
+const MAX_QUERY_DIAGNOSIS_CODES = 6;
+
 /** Build the targeting query from the brand's clinical context. The Milvexian query is
  *  the fallback ONLY for profiles that don't declare their own targeting — a brand with
  *  specialties/diagnosisCodes set never inherits another brand's audience. */
 export function audienceQueryFor(clinical?: { specialties?: string[]; diagnosisCodes?: string[] }): AudienceQuery {
   if (clinical?.specialties?.length || clinical?.diagnosisCodes?.length) {
-    return { specialties: clinical.specialties ?? [], diagnosisCodes: clinical.diagnosisCodes ?? [], limit: 50 };
+    return {
+      specialties: (clinical.specialties ?? []).slice(0, MAX_QUERY_SPECIALTIES),
+      diagnosisCodes: (clinical.diagnosisCodes ?? []).slice(0, MAX_QUERY_DIAGNOSIS_CODES),
+      limit: 50,
+    };
   }
   return MILVEXIAN_AUDIENCE_QUERY;
 }
 
+/** The live DocNexus config, assembled from env once — shared by the cohort provider and the
+ *  code resolver so both authenticate identically (Cognito refresh / API key / token file). */
+export function docnexusConfigFromEnv(): DocNexusConfig {
+  return {
+    baseUrl: env.docnexusBaseUrl,
+    apiKey: env.docnexusApiKey || undefined,
+    idToken: env.docnexusIdToken || undefined,
+    idTokenFile: env.docnexusIdTokenFile || undefined,
+    autoRefreshToken: env.docnexusAutoRefreshToken,
+    tokenRefreshScript: env.docnexusTokenRefreshScript,
+    tokenRefreshTimeoutMs: env.docnexusTokenRefreshTimeoutMs,
+    bearer: env.docnexusBearer || undefined,
+    refreshToken: env.docnexusRefreshToken || undefined,
+    cognitoClientId: env.docnexusCognitoClientId || undefined,
+    cognitoRegion: env.docnexusCognitoRegion || undefined,
+    // Real claims aggregates over multiple specialties + indications take several
+    // seconds; give generous headroom so we don't abort into the modeled fallback.
+    timeoutMs: env.docnexusTimeoutMs,
+  };
+}
+
 export function getAudienceProvider(): AudienceProvider {
-  if (env.audienceProvider === "docnexus") {
-    return new DocNexusAudienceProvider({
-      baseUrl: env.docnexusBaseUrl,
-      apiKey: env.docnexusApiKey || undefined,
-      idToken: env.docnexusIdToken || undefined,
-      idTokenFile: env.docnexusIdTokenFile || undefined,
-      autoRefreshToken: env.docnexusAutoRefreshToken,
-      tokenRefreshScript: env.docnexusTokenRefreshScript,
-      tokenRefreshTimeoutMs: env.docnexusTokenRefreshTimeoutMs,
-      bearer: env.docnexusBearer || undefined,
-      refreshToken: env.docnexusRefreshToken || undefined,
-      cognitoClientId: env.docnexusCognitoClientId || undefined,
-      cognitoRegion: env.docnexusCognitoRegion || undefined,
-      // Real claims aggregates over multiple specialties + indications take several
-      // seconds; give generous headroom so we don't abort into the modeled fallback.
-      timeoutMs: env.docnexusTimeoutMs,
-    });
-  }
+  if (env.audienceProvider === "docnexus") return new DocNexusAudienceProvider(docnexusConfigFromEnv());
   return new ModeledAudienceProvider();
+}
+
+/**
+ * Resolve free-text condition/indication terms (from Setup-AI extraction) to canonical ICD-10
+ * codes via the live DocNexus resolver. Only attempts when the docnexus provider is configured;
+ * returns [] otherwise (offline/modeled deployments keep whatever codes setup already holds).
+ */
+export async function resolveTargetingCodes(terms: string[]): Promise<string[]> {
+  if (env.audienceProvider !== "docnexus" || !terms.length) return [];
+  return resolveDiagnosisCodes(terms, docnexusConfigFromEnv());
 }
 
 export interface LoadedCohort {

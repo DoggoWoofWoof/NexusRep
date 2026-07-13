@@ -72,7 +72,11 @@ export interface InferredSetup {
   skipped: string[];
 }
 
-const INFERABLE_KEYS = ["brand", "indication", "therapeutic_area", "sponsor", "tagline", "talking_points", "hotwords", "try_questions"] as const;
+// `target_conditions` is a TRANSIENT extraction (plain-language indications, e.g. "atrial
+// fibrillation") — the ingest route resolves it to real ICD-10 codes via the DocNexus resolver
+// and stores those as `diagnosis_codes`. `target_specialties` is a real setup key that drives the
+// audience query directly. Neither audience field is ever an AI-guessed code.
+const INFERABLE_KEYS = ["brand", "indication", "therapeutic_area", "sponsor", "tagline", "talking_points", "hotwords", "try_questions", "target_specialties", "target_conditions"] as const;
 
 /**
  * Infer setup answers from an uploaded document (deck/PI/FAQ text) so the brand user
@@ -94,7 +98,7 @@ export async function inferSetupAnswersFromDocument(
 
   if (llm) {
     const system = `You extract pharma-brand setup fields from an approved document. Reply with STRICT JSON only (no prose, no markdown fences) with these keys — use "" when the document doesn't say:
-{"brand": "product name", "indication": "primary indication", "therapeutic_area": "e.g. cardiology", "sponsor": "company name(s)", "tagline": "one neutral line describing the product (non-promotional)", "talking_points": "3-5 comma-separated topic labels covered by the document", "hotwords": "comma-separated product/program/competitor proper nouns", "try_questions": "2-4 semicolon-separated questions a doctor might ask that this document answers"}`;
+{"brand": "product name", "indication": "primary indication", "therapeutic_area": "e.g. cardiology", "sponsor": "company name(s)", "tagline": "one neutral line describing the product (non-promotional)", "talking_points": "3-5 comma-separated topic labels covered by the document", "hotwords": "comma-separated product/program/competitor proper nouns", "try_questions": "2-4 semicolon-separated questions a doctor might ask that this document answers", "target_specialties": "comma-separated medical specialties whose physicians would prescribe/manage this product (e.g. Cardiology, Interventional Cardiology, Cardiac Electrophysiology) — infer from the indication even if not stated verbatim", "target_conditions": "comma-separated patient conditions/indications the product treats, in plain clinical language for ICD lookup (e.g. atrial fibrillation, acute coronary syndrome, ischemic stroke) — NOT ICD codes"}`;
     const raw = await llm(system, `Document:\n"""${doc}"""`).catch(() => null);
     if (raw) {
       try {
