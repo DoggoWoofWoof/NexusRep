@@ -261,13 +261,37 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   }
 
   useEffect(() => {
-    const w = window as unknown as { __nexusrepVideoAgent?: unknown };
+    const w = window as unknown as { __nexusrepVideoAgent?: unknown; __nexusrepLatency?: unknown };
     w.__nexusrepVideoAgent = { speak: speakAgent, getStage: () => stage, getNote: () => note };
+    // One-call full-pipeline latency probe. Run window.__nexusrepLatency() in the console during a
+    // live video call: for each doctor turn it breaks the round-trip into the three stages the user
+    // feels — ASR/turn-detection (doctor stops → transcript), think (transcript → replica starts
+    // speaking = our endpoint compose/gate + Tavus TTS render), and the caption offset. Pair with
+    // the server's [tavus-llm-latency] log to split "think" into our-endpoint vs Tavus-TTS.
+    w.__nexusrepLatency = () => {
+      const t = (((window as unknown as { __nexusrepTiming?: TimingEvent[] }).__nexusrepTiming) ?? []).slice().sort((a, b) => a.at - b.at);
+      const nextAfter = (i: number, type: string) => t.find((e, j) => j > i && e.type === type);
+      const prevBefore = (i: number, type: string) => [...t].slice(0, i).reverse().find((e) => e.type === type);
+      const turns = t
+        .map((e, i) => ({ e, i }))
+        .filter(({ e }) => e.type === "hcp_final_utterance")
+        .map(({ e, i }) => {
+          const stopped = prevBefore(i, "hcp_stopped_speaking");
+          const repSpoke = nextAfter(i, "vendor_started_speaking");
+          const repText = nextAfter(i, "rep_final_utterance");
+          return {
+            question: (e.text ?? "").slice(0, 48),
+            asrMs: stopped ? e.at - stopped.at : null, // speech end → finalized transcript
+            thinkToVoiceMs: repSpoke ? repSpoke.at - e.at : null, // transcript → replica audio (endpoint + TTS)
+            transcriptToVoiceMs: repText && repSpoke ? repSpoke.at - repText.at : null, // rep text ready → rep audio (~TTS render)
+          };
+        });
+      console.table(turns);
+      return turns;
+    };
     return () => {
-      const current = (window as unknown as { __nexusrepVideoAgent?: unknown }).__nexusrepVideoAgent;
-      if (current && (current as { speak?: unknown }).speak === speakAgent) {
-        delete (window as unknown as { __nexusrepVideoAgent?: unknown }).__nexusrepVideoAgent;
-      }
+      const cur = window as unknown as { __nexusrepVideoAgent?: { speak?: unknown }; __nexusrepLatency?: unknown };
+      if (cur.__nexusrepVideoAgent?.speak === speakAgent) { delete cur.__nexusrepVideoAgent; delete cur.__nexusrepLatency; }
     };
   }, [note, stage]);
 
@@ -416,6 +440,14 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             ) {
               repSpeakingRef.current = false;
             }
+            // Doctor (HCP) speech-detection markers — the start of the pipeline. The gap from
+            // hcp_stopped_speaking → the doctor's finalized transcript is the ASR/turn-detection
+            // latency; from there → vendor_started_speaking is our endpoint + Tavus TTS. See
+            // window.__nexusrepLatency() for the per-turn breakdown.
+            if (/hcp|user|human|participant|remote/i.test(e.role)) {
+              if (/start(?:ed)?[_\s.-]*speak/i.test(e.type)) recordTiming({ type: "hcp_started_speaking", reason: e.type });
+              else if (/stop(?:ped)?[_\s.-]*speak|done[_\s.-]*speak/i.test(e.type)) recordTiming({ type: "hcp_stopped_speaking", reason: e.type });
+            }
             // The vendor ended the call (credits exhausted, duration cap, account limit).
             // Without this the pane just froze to black with no explanation.
             if (/shutdown|call_ended|conversation.ended/i.test(e.type)) {
@@ -438,6 +470,8 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             const key = `${speaker}:${text}`;
             if (key === lastUtterRef.current) return; // client-side dedup of re-emits
             lastUtterRef.current = key;
+            // Finalized-transcript marker (one per unique utterance) — the ASR output timestamp.
+            recordTiming({ type: speaker === "hcp" ? "hcp_final_utterance" : "rep_final_utterance", text });
             // Only log from the client when the server can't (unreachable compliance endpoint).
             // When reachable, the server already logged this turn with its slideId.
             if (serverLogsRef.current) {
