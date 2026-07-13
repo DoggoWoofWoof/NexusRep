@@ -48,3 +48,6 @@ yarn-debug.log*
 yarn-error.log*
 .idea/
 .vscode/
+
+# Local sample files for manually testing the content-ingest flow (not part of the app)
+sample-uploads/
