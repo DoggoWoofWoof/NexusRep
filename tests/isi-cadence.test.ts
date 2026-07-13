@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { createContainer } from "@lib/container";
 import { stripEmbeddedIsi } from "@modules/compliance";
+import type { GroundedComposer } from "@modules/content";
 
 describe("ISI cadence in a doctor chat", () => {
   it("the exact transcript: safety Q delivers ISI verbatim once; later answers stay clean", async () => {
@@ -48,6 +49,68 @@ describe("ISI cadence in a doctor chat", () => {
       await ask("What is the clinical program studying?"),
     ];
     expect(answers.filter((t) => t.includes("Important Safety Information")).length).toBe(1);
+  });
+
+  it("does not repeat standalone not-approved wording in the answer body when ISI is appended", async () => {
+    const c = await createContainer();
+    const s = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
+    const out = (await c.conversation.turn({
+      sessionId: s.id, hcpId: c.demo.hcpId, audience: c.demo.audience,
+      indication: c.demo.indication, market: c.demo.market,
+      investigational: c.demo.investigational, text: "How does Milvexian work?",
+    })).output.responseText;
+    const body = out.split("\n\nImportant Safety Information:")[0] ?? out;
+    expect(out).toContain("Important Safety Information:");
+    expect(body).not.toMatch(/\b(?:not\s+(?:yet\s+)?approved|not\s+(?:yet\s+)?FDA[-\s]?approved)\b.*\b(?:FDA|regulatory authorit)/i);
+    expect(out).not.toMatch(/\*\*|__/);
+  });
+
+  it("does not re-introduce itself after a greeting/disclosure has already been logged", async () => {
+    const c = await createContainer();
+    const s = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
+    await c.audit.record(s.id, "response_output", {
+      route: "greeting",
+      text: "Hello, doctor. I'm an AI representative for Milvexian, an investigational compound from J&J.",
+      sourceIds: [],
+      greeting: true,
+    });
+    const out = (await c.conversation.turn({
+      sessionId: s.id, hcpId: c.demo.hcpId, audience: c.demo.audience,
+      indication: c.demo.indication, market: c.demo.market,
+      investigational: c.demo.investigational, text: "What is LIBREXIA?",
+    })).output.responseText;
+    expect(out).not.toMatch(/\bAI representative\b/i);
+  });
+
+  it("strips a bad composer lead-in that tries to re-introduce the AI rep", async () => {
+    const c = await createContainer();
+    const s = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
+    await c.audit.record(s.id, "response_output", {
+      route: "greeting",
+      text: "Hello, doctor. I'm an AI representative for Milvexian, an investigational compound from J&J.",
+      sourceIds: [],
+      greeting: true,
+    });
+    const badComposer: GroundedComposer = {
+      name: "bad-test-composer",
+      available: () => true,
+      compose: async ({ blocks }) => ({
+        text: `I'm an AI representative, and I want to note that ${blocks[0]!.text}`,
+        latencyMs: 1,
+      }),
+    };
+    const out = await c.orchestrator.handleTurn({
+      sessionId: s.id,
+      hcpId: c.demo.hcpId,
+      audience: c.demo.audience,
+      indication: c.demo.indication,
+      market: c.demo.market,
+      investigational: c.demo.investigational,
+      text: "What is LIBREXIA?",
+    }, { composer: badComposer });
+    expect(out.responseText).not.toMatch(/\bAI representative\b/i);
+    expect(out.responseText.toLowerCase()).toContain("librexia");
+    expect(out.detailAidSlideId).toBe("slide_program");
   });
 });
 

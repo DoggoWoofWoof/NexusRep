@@ -198,6 +198,24 @@ describe("build → converse → review → coach (end to end)", () => {
     expect(output.sourceIds[0]).toBe("ans_moa");
   });
 
+  it("routes named LIBREXIA wording to the program slide, not mechanism", async () => {
+    const c = await createContainer();
+    const questions = [
+      "How does LIBREXIA work?",
+      "What is LIBREXIA?",
+      "How does the LIBREXIA program work?",
+      "Tell me about the LIBREXIA studies.",
+    ];
+    for (const question of questions) {
+      const sid = await startSession(c);
+      const { output } = await c.conversation.turn(turnCtx(c, question, sid));
+      expect(output.route, question).toBe("approved_answer");
+      expect(output.detailAidSlideId, question).toBe("slide_program");
+      expect(output.sourceIds[0], question).toBe("ans_program");
+      expect(output.responseText.toLowerCase(), question).toContain("phase 3");
+    }
+  });
+
   it("escalates an off-label turn: refusal + MSL follow-up + CRM outbox event", async () => {
     const c = await createContainer();
     const sid = await startSession(c);

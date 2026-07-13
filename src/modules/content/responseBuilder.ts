@@ -98,13 +98,14 @@ export function slideReference(opts: { seed: string; slideTitle?: string; relate
 
 export function buildApprovedResponse(
   answers: ApprovedAnswer[],
-  opts: { isi?: SafetyStatement; includeIsi: boolean; slideTitle?: string; relatedTitle?: string },
+  opts: { isi?: SafetyStatement; includeIsi: boolean; slideTitle?: string; relatedTitle?: string; seed?: string },
 ): BuiltResponse | null {
   const top = answers[0];
   if (!top) return null; // caller fails safe to a fallback
 
-  const ref = slideReference({ seed: top.id, slideTitle: opts.slideTitle, relatedTitle: opts.relatedTitle });
-  let text = `${openerFor(top.id)} ${top.text}${ref}`;
+  const seed = opts.seed ?? String(top.id);
+  const ref = slideReference({ seed, slideTitle: opts.slideTitle, relatedTitle: opts.relatedTitle });
+  let text = `${openerFor(seed)} ${top.text}${ref}`;
   let isiAppended = false;
   if (opts.includeIsi && opts.isi) {
     text = `${text}\n\nImportant Safety Information: ${opts.isi.text}`;

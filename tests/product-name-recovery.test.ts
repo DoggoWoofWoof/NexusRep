@@ -16,6 +16,8 @@ describe("canonicalizeProductNames", () => {
     expect(canonicalizeProductNames("Tell me about no vexian")).toBe("Tell me about Milvexian");
     expect(canonicalizeProductNames("what is novexian")).toBe("what is Milvexian");
     expect(canonicalizeProductNames("how does milvexin work")).toBe("how does Milvexian work");
+    expect(canonicalizeProductNames("tell me about milbaxian")).toBe("tell me about Milvexian");
+    expect(canonicalizeProductNames("how does malvaxian work")).toBe("how does Milvexian work");
   });
 
   it("leaves an exact name and ordinary words untouched (no false positives)", () => {
@@ -34,18 +36,20 @@ describe("canonicalizeProductNames", () => {
 });
 
 describe("garbled product name is answered end-to-end", () => {
-  it("the rep answers 'tell me about no vexian' instead of bouncing to a human", async () => {
+  it("the rep answers near-miss product names instead of bouncing to a human", async () => {
     const c = await createContainer();
-    const s = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
-    const { output, session } = await c.conversation.turn({
-      sessionId: s.id, hcpId: c.demo.hcpId, audience: c.demo.audience,
-      indication: c.demo.indication, market: c.demo.market,
-      investigational: c.demo.investigational, text: "Tell me about no vexian",
-    });
-    expect(output.route).toBe("approved_answer");
-    expect(output.responseText).not.toContain("connect you with someone");
-    // The logged HCP turn shows the corrected name, so the transcript is clean.
-    const hcpTurn = session!.turns.find((t) => t.speaker === "hcp");
-    expect(hcpTurn?.text).toContain("Milvexian");
+    for (const text of ["Tell me about no vexian", "Yeah, can you tell me about Milbaxian?", "How does Malvaxian work?"]) {
+      const s = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
+      const { output, session } = await c.conversation.turn({
+        sessionId: s.id, hcpId: c.demo.hcpId, audience: c.demo.audience,
+        indication: c.demo.indication, market: c.demo.market,
+        investigational: c.demo.investigational, text,
+      });
+      expect(output.route, text).toBe("approved_answer");
+      expect(output.responseText, text).not.toContain("connect you with someone");
+      // The logged HCP turn shows the corrected name, so the transcript is clean.
+      const hcpTurn = session!.turns.find((t) => t.speaker === "hcp");
+      expect(hcpTurn?.text, text).toContain("Milvexian");
+    }
   });
 });

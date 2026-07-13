@@ -9,10 +9,9 @@ import { SlideView } from "../_components/SlideView";
 import { useBrand } from "../_components/useBrand";
 import { isOverviewPrompt } from "./overviewPrompt";
 
-// Switch the on-screen slide a beat AFTER the answer starts — as the rep gets to "…you can
-// see this on the X slide", not on the first word. Reads like a person pulling up the detail
-// aid while talking, instead of the deck jump-cutting the instant a reply lands.
-const SLIDE_CUE_DELAY_MS = 1100;
+// The server's approved-content pipeline chooses the slide. The transcript text only nudges
+// timing a little so the deck moves like a presenter, not as a brittle keyword trigger.
+const SLIDE_CUE_DELAY_MS = 850;
 
 type HcpScreen = "invite" | "convo" | "complete";
 interface Msg { role: "hcp" | "rep"; text: string }
@@ -20,7 +19,6 @@ interface OverviewSegment { response: string; detailAidSlideId?: string | null; 
 
 export function HcpExperience({ app }: { app?: AppState }) {
   const brand = useBrand();
-  const greeting = brand?.greeting ?? "";
   const tryQuestions = brand?.tryQuestions ?? [];
   const displayName = brand?.displayName ?? "this therapy";
   const tagline = brand?.tagline ?? "";
@@ -36,7 +34,9 @@ export function HcpExperience({ app }: { app?: AppState }) {
   // Video-call audio state mirrored from the stage (the header button proxies to it —
   // controls must not disappear when the mode changes).
   const [videoMuted, setVideoMuted] = useState(false);
-  const [callMicOn, setCallMicOn] = useState(true);
+  // The doctor's mic starts OFF in every mode (red = off). Click the mic to talk. Same rule for
+  // the live video call and the voice-off chat, so the control never means opposite things.
+  const [callMicOn, setCallMicOn] = useState(false);
   const [videoOn, setVideoOn] = useState(false);
   const [deckFocus, setDeckFocus] = useState<string>(""); // "" → SlideView shows the first slide (title)
   const [fs, setFs] = useState(false);
@@ -72,18 +72,60 @@ export function HcpExperience({ app }: { app?: AppState }) {
     return () => { voiceRef.current?.cancel(); document.removeEventListener("fullscreenchange", onFs); if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current); };
   }, []);
 
-  async function speak(text: string) {
+  async function speak(text: string, onStart?: () => void) {
     if (!voiceOn) return;
     setSpeaking(true);
     try {
       // "Whole conversation" scope: the chosen video-off voice is the rep's voice throughout, so we
       // speak via our TTS even when video is on (the face still shows; live Tavus CVI is the one
       // exception it can't override). Otherwise: the video avatar's own voice when video is on, and
-      // the chosen video-off voice (or app default) when video is off.
-      if (brand?.voiceWholeConvo && brand?.voiceId) await voiceRef.current?.speak(text, { voice: brand.voiceId, voiceHint: speechVoiceHint(), ...toneSpeechOpts(brand?.voiceStyle) });
-      else if (threeD && liveRef.current?.isReady()) await liveRef.current.speak(text);
-      else await voiceRef.current?.speak(text, { tone: brand?.voiceStyle, voice: brand?.voiceId || undefined, voiceHint: speechVoiceHint(), ...toneSpeechOpts(brand?.voiceStyle) });
+      // the chosen video-off voice (or app default) when video is off. onStart fires when audio begins.
+      if (brand?.voiceWholeConvo && brand?.voiceId) await voiceRef.current?.speak(text, { voice: brand.voiceId, voiceHint: speechVoiceHint(), onStart, ...toneSpeechOpts(brand?.voiceStyle) });
+      else if (threeD && liveRef.current?.isReady()) { onStart?.(); await liveRef.current.speak(text); }
+      else await voiceRef.current?.speak(text, { tone: brand?.voiceStyle, voice: brand?.voiceId || undefined, voiceHint: speechVoiceHint(), onStart, ...toneSpeechOpts(brand?.voiceStyle) });
     } finally { setSpeaking(false); }
+  }
+
+  // The captions panel IS the transcript — one source of truth, no separate system. A rep turn is
+  // shown EXACTLY when the rep speaks it and idempotently: called on the voice's onStart (so the
+  // caption lands in sync with the audio, never before it) AND once more after speak() resolves as
+  // a safety net (so a TTS hiccup can never drop the line). Consecutive-duplicate guarded, so the
+  // two calls collapse to one bubble.
+  function showRep(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    setMsgs((m) => {
+      const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+      const last = m[m.length - 1];
+      if (last && last.role === "rep" && norm(last.text) === norm(t)) return m;
+      return [...m, { role: "rep", text: t }];
+    });
+  }
+
+  // One place that delivers a rep turn to the doctor, so every caller (ask / deckStep / overview)
+  // behaves identically. Video: the live replica speaks and its utterance drives the caption
+  // (syncVideoRepTurn) — synced by construction. Off-video: the caption + slide appear the moment
+  // the voice starts (onStart); with the rep voice off, they appear immediately.
+  async function deliverRep(text: string, slideId: string | null | undefined, gen: number) {
+    if (playGenRef.current !== gen) return; // superseded by a newer turn (barge-in)
+    if (videoOn) {
+      const queued = videoAgentRef.current?.speak(text, slideId ?? null) ?? false;
+      if (!queued && playGenRef.current === gen) {
+        // Provider not connected yet: keep the transcript truthful by showing the gated text only
+        // when there is no video voice path to carry it.
+        showRep(text);
+        cueSlide(slideId, text);
+      }
+      await wait(estimateSpeechMs(text));
+      return;
+    }
+    const reveal = () => {
+      if (playGenRef.current !== gen) return;
+      showRep(text);
+      cueSlide(slideId, text);
+    };
+    if (voiceOn) { await speak(text, reveal); reveal(); }
+    else reveal();
   }
 
   function slideCueDelay(text?: string): number {
@@ -97,19 +139,23 @@ export function HcpExperience({ app }: { app?: AppState }) {
       "i have pulled up",
       "take a look",
       "on your screen",
+      "on screen",
+      "shown on",
+      "available on screen",
       "let's move to",
       "we'll start with",
       "i'll use",
       "i’d show",
       "i'd show",
+      "i'm showing",
     ];
     const idx = markers
       .map((m) => lower.indexOf(m))
       .filter((i) => i >= 0)
       .sort((a, b) => a - b)[0];
-    if (idx == null) return Math.min(4200, Math.max(SLIDE_CUE_DELAY_MS, body.split(/\s+/).filter(Boolean).length * 120));
+    if (idx == null) return SLIDE_CUE_DELAY_MS;
     const wordsBefore = body.slice(0, idx).split(/\s+/).filter(Boolean).length;
-    return Math.min(9000, Math.max(450, wordsBefore * 360 - 250));
+    return Math.min(1800, Math.max(550, wordsBefore * 125));
   }
 
   function cueSlide(id?: string | null, spokenText?: string) {
@@ -118,21 +164,15 @@ export function HcpExperience({ app }: { app?: AppState }) {
     slideTimerRef.current = window.setTimeout(() => setDeckFocus(id), slideCueDelay(spokenText));
   }
 
-  // The preloaded greeting is swapped for the agent's actual spoken greeting EXACTLY once.
-  // The old heuristic ("no HCP messages yet -> replace everything") wiped the captions on
-  // every reply in a voice-only conversation, where spoken turns weren't in `msgs`.
-  const greetingSwappedRef = useRef(false);
-
+  // The live video rep speaks its own turns (greeting + answers); each spoken utterance the
+  // transport reports becomes a caption here, in sync with the voice. Deduped so a re-emitted
+  // utterance never doubles a bubble. This is the ONLY writer of rep captions while on video.
   function syncVideoRepTurn(turn: { text: string; detailAidSlideId?: string | null }) {
     const text = turn.text.trim();
     if (!text) return;
     setMsgs((current) => {
       const norm = (s: string) => s.replace(/\s+/g, " ").trim();
       if (current.some((m) => m.role === "rep" && norm(m.text) === norm(text))) return current;
-      if (!greetingSwappedRef.current && current.length === 1 && current[0]!.role === "rep") {
-        greetingSwappedRef.current = true;
-        return [{ role: "rep", text }];
-      }
       return [...current, { role: "rep", text }];
     });
     cueSlide(turn.detailAidSlideId, text);
@@ -153,69 +193,65 @@ export function HcpExperience({ app }: { app?: AppState }) {
   // playback (or a long spoken answer) stops deferring to a stale turn. This is what lets
   // the doctor type MID-ANSWER — the send button no longer waits out the speech.
   const playGenRef = useRef(0);
-
-  async function playRepSegment(text: string) {
-    if (videoOn) {
-      videoAgentRef.current?.speak(text);
-      await wait(estimateSpeechMs(text));
-    } else {
-      await speak(text);
-    }
+  const finishPending = (gen: number) => {
+    if (playGenRef.current === gen) setPending(false);
+  };
+  function interruptPlayback() {
+    playGenRef.current += 1;
+    voiceRef.current?.cancel();
+    setSpeaking(false);
   }
 
   async function ask(q: string) {
     const text = q.trim();
-    if (!text || pending) return;
+    if (!text) return;
     // Barge-in: a new question interrupts whatever the rep is still saying.
     const gen = ++playGenRef.current;
     voiceRef.current?.cancel();
     setSpeaking(false);
     setInput("");
+    const videoSession = videoOn ? (window as unknown as { __nexusrep?: { sessionId?: string } }).__nexusrep?.sessionId : undefined;
+    if (videoOn && !videoSession) {
+      setNotice("The video rep is still connecting. Give it a moment, then ask again.");
+      return;
+    }
+    const openNew = !videoOn && !chatSessionRef.current;
+    const sessionId = videoSession ?? chatSessionRef.current ?? undefined;
     setPending(true);
     setMsgs((m) => [...m, { role: "hcp", text }]);
     try {
-      // Session routing: video → the live Tavus session (greeting comes via the replica
-      // utterance). Text/voice → this chat's own session, created on the first message
-      // with the greeting logged as turn 0 so it's in the transcript, not just the caption.
-      const videoSession = videoOn ? (window as unknown as { __nexusrep?: { sessionId?: string } }).__nexusrep?.sessionId : undefined;
-      const openNew = !videoOn && !chatSessionRef.current;
-      const sessionId = videoSession ?? chatSessionRef.current ?? undefined;
+      // Session routing: video → the live Tavus session (its own greeting + turns come via the
+      // replica's utterances). Text/voice → this chat's own session, created on the first message.
+      // No greeting is sent off-video: the doctor never heard one, so the transcript starts with
+      // this question (the greeting is a video-only, Tavus-spoken thing).
       if (isOverviewPrompt(text, { productTerms: brand?.productTerms ?? [] })) {
         const res = await fetch("/api/presentation/overview", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined, hcpId: inviteHcpId || undefined }),
+          body: JSON.stringify({ text, sessionId, newSession: openNew, hcpId: inviteHcpId || undefined }),
         });
         const data = (await res.json()) as { sessionId?: string; segments?: OverviewSegment[] };
+        if (playGenRef.current !== gen) return;
         if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
-        setPending(false); // input is live again — playback below is interruptible
+        finishPending(gen); // input is live again — playback below is interruptible
         for (const segment of data.segments ?? []) {
           if (playGenRef.current !== gen) return; // superseded by a newer question
-          setMsgs((m) => [...m, { role: "rep", text: segment.response }]);
-          cueSlide(segment.detailAidSlideId, segment.response);
-          await playRepSegment(segment.response);
+          await deliverRep(segment.response, segment.detailAidSlideId, gen);
         }
         return;
       }
       const res = await fetch("/api/conversation/turn", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined, hcpId: inviteHcpId || undefined }),
+        body: JSON.stringify({ text, sessionId, newSession: openNew, hcpId: inviteHcpId || undefined }),
       });
       const data = (await res.json()) as { response: string; isiDelivered: boolean; followUp: string | null; detailAid: { title: string; label: string } | null; detailAidSlideId?: string | null; provider: string; latencyMs: number; sessionId?: string };
+      if (playGenRef.current !== gen) return;
       if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
-      setMsgs((m) => [...m, { role: "rep", text: data.response }]);
-      // The rep "shows" the detail-aid slide the answer surfaced (source-driven, not guessed),
-      // but a beat LATER — as it says "…you can see this on the X slide" — so the deck follows
-      // the rep mid-answer instead of jump-cutting on word one. Routed answers (no slide) keep
-      // the current slide up, like a person.
-      cueSlide(data.detailAidSlideId, data.response);
       if (data.followUp) setNotice(followUpNotice(data.followUp));
-      setPending(false); // the answer is on screen — speech should never block the input
-      // Voice: the live agent speaks it (echo) when on video; otherwise browser/3D TTS.
-      if (playGenRef.current === gen) {
-        if (videoOn) void playRepSegment(data.response);
-        else void speak(data.response);
-      }
-    } finally { setPending(false); }
+      finishPending(gen); // request is done — the caption appears in sync with the voice below
+      // The caption + detail-aid slide land the moment the rep starts speaking (deliverRep), so
+      // the transcript never runs ahead of the voice. Superseded turns (barge-in) are dropped.
+      void deliverRep(data.response, data.detailAidSlideId, gen);
+    } finally { finishPending(gen); }
   }
 
   async function deckStep(action: "start" | "next" | "previous" | "jump", query?: string, displayText?: string) {
@@ -225,28 +261,28 @@ export function HcpExperience({ app }: { app?: AppState }) {
     voiceRef.current?.cancel();
     setSpeaking(false);
     const label = displayText?.trim() || (action === "next" ? "Please keep going." : action === "previous" ? "Can you go back to the prior point?" : action === "jump" && query ? `Can you talk about ${query}?` : "Can you walk me through the approved information?");
+    const videoSession = videoOn ? (window as unknown as { __nexusrep?: { sessionId?: string } }).__nexusrep?.sessionId : undefined;
+    if (videoOn && !videoSession) {
+      setNotice("The video rep is still connecting. Give it a moment, then continue.");
+      return;
+    }
+    const openNew = !videoOn && !chatSessionRef.current;
+    const sessionId = videoSession ?? chatSessionRef.current ?? undefined;
     setPending(true);
     setMsgs((m) => [...m, { role: "hcp", text: label }]);
     try {
-      const videoSession = videoOn ? (window as unknown as { __nexusrep?: { sessionId?: string } }).__nexusrep?.sessionId : undefined;
-      const openNew = !videoOn && !chatSessionRef.current;
-      const sessionId = videoSession ?? chatSessionRef.current ?? undefined;
       const res = await fetch("/api/presentation/step", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, query, displayText: label, currentSlideId: deckFocus || undefined, sessionId, newSession: openNew, greeting: openNew && greeting ? greeting : undefined, hcpId: inviteHcpId || undefined }),
+        body: JSON.stringify({ action, query, displayText: label, currentSlideId: deckFocus || undefined, sessionId, newSession: openNew, hcpId: inviteHcpId || undefined }),
       });
       const data = (await res.json()) as { response: string; detailAidSlideId?: string | null; sessionId?: string; step?: { index: number; total: number } | null };
+      if (playGenRef.current !== gen) return;
       if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
-      setMsgs((m) => [...m, { role: "rep", text: data.response }]);
-      cueSlide(data.detailAidSlideId, data.response);
-      setPending(false);
-      if (playGenRef.current === gen) {
-        if (videoOn) void playRepSegment(data.response);
-        else void speak(data.response);
-      }
+      finishPending(gen);
+      void deliverRep(data.response, data.detailAidSlideId, gen);
     } finally {
-      setPending(false);
+      finishPending(gen);
     }
   }
 
@@ -270,7 +306,15 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setListening(true);
     rec.start((text) => { setListening(false); setInput(""); void ask(text); }, () => setListening(false));
   }
+  function toggleVideoMode() {
+    interruptPlayback();
+    setVideoOn((v) => !v);
+    setVideoMuted(false);
+    setCallMicOn(false);
+  }
 
+  const doctorMicOn = videoOn ? callMicOn : listening;
+  const doctorMicOff = !doctorMicOn;
   const askBar = (label: string) => (
     <div style={{ display: "flex", gap: 8, marginBottom: 11 }}>
       <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void ask(input); }} placeholder={listening ? "Listening…" : videoOn ? "Type, or talk to the rep…" : "Type or tap the mic to talk…"} style={{ flex: 1, padding: "11px 13px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 13px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
@@ -281,9 +325,9 @@ export function HcpExperience({ app }: { app?: AppState }) {
             if (videoOn) { const next = !callMicOn; setCallMicOn(next); videoAgentRef.current?.setMicEnabled(next); }
             else toggleMic();
           }}
-          aria-label={videoOn ? (callMicOn ? "Mute my microphone" : "Unmute my microphone") : "Talk"}
-          title={videoOn ? (callMicOn ? "The call is listening — click to mute your microphone" : "Your microphone is muted — click to unmute") : "Ask by voice"}
-          style={{ padding: "11px 13px", background: listening || (videoOn && !callMicOn) ? "var(--dn-danger)" : "#fff", color: listening || (videoOn && !callMicOn) ? "#fff" : "var(--dn-fg)", border: "1px solid var(--dn-border)", borderRadius: 9, fontSize: 15, cursor: "pointer" }}
+          aria-label={doctorMicOn ? "Turn microphone off" : "Turn microphone on"}
+          title={doctorMicOn ? "Your microphone is on — click to stop" : "Your microphone is off — click to talk"}
+          style={{ padding: "11px 13px", background: doctorMicOff ? "var(--dn-danger)" : "var(--dn-brand-base)", color: "#fff", border: "1px solid var(--dn-border)", borderRadius: 9, fontSize: 15, cursor: "pointer" }}
         >🎤</button>
       )}
       <button onClick={() => void ask(input)} disabled={pending} style={{ padding: "11px 18px", background: "var(--dn-brand-base)", color: "#fff", border: "none", borderRadius: 9, font: "600 13px/1 var(--dn-font-sans)", cursor: "pointer" }}>{pending ? "…" : label}</button>
@@ -344,7 +388,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
                 <div style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-fg)", marginBottom: 8 }}>What to expect</div>
                 <div style={{ font: "400 12px/1.6 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>You&apos;ll talk with an AI representative that shares only publicly-disclosed information about {displayName}.{brand?.investigational ? ` ${displayName} is investigational and not FDA approved —` : ""} the rep routes clinical questions like dosing, efficacy, or safety to Medical Information, and you can ask for a human rep or MSL anytime.</div>
               </div>
-              <button onClick={() => { setMsgs(greeting ? [{ role: "rep", text: greeting }] : []); setScr("convo"); }} style={{ width: "100%", padding: 14, background: "var(--dn-brand-base)", color: "#fff", border: "none", borderRadius: 10, font: "600 14px/1 var(--dn-font-sans)", cursor: "pointer" }}>Start session</button>
+              <button onClick={() => { setMsgs([]); setScr("convo"); }} style={{ width: "100%", padding: 14, background: "var(--dn-brand-base)", color: "#fff", border: "none", borderRadius: 10, font: "600 14px/1 var(--dn-font-sans)", cursor: "pointer" }}>Start session</button>
             </div>
           </div>
         </div>
@@ -371,7 +415,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
                   <button onClick={() => request("human")} style={ghostMd}>Request human rep</button>
                   <button onClick={() => request("msl")} style={ghostMd}>Request MSL</button>
                   <button onClick={() => request("ae")} style={{ ...ghostMd, color: "var(--dn-accent-orange)" }}>Report side effect</button>
-                  <button onClick={() => { playGenRef.current++; voiceRef.current?.cancel(); setSpeaking(false); setVideoOn((v) => !v); setVideoMuted(false); setCallMicOn(true); greetingSwappedRef.current = false; }} title="Live video representative (DocNexus Agent)" style={{ ...ghostMd, color: videoOn ? "#fff" : "var(--dn-fg)", background: videoOn ? "var(--dn-brand-base)" : "#fff" }}>{videoOn ? "🎥 Video on" : "🎥 Video rep"}</button>
+                  <button onClick={toggleVideoMode} title="Live video representative (DocNexus Agent)" style={{ ...ghostMd, color: videoOn ? "#fff" : "var(--dn-fg)", background: videoOn ? "var(--dn-brand-base)" : "#fff" }}>{videoOn ? "🎥 Video on" : "🎥 Video rep"}</button>
                   {!videoOn && <button onClick={() => setThreeD((v) => !v)} style={{ ...ghostMd, color: threeD ? "#fff" : "var(--dn-fg)", background: threeD ? "var(--dn-brand-base)" : "#fff" }}>{threeD ? "🧑 3D: on" : "🧑 3D avatar"}</button>}
                   <button
                     onClick={() => {

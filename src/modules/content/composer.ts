@@ -18,6 +18,7 @@ Rules — these are absolute:
 - Use ONLY the approved content and required safety information provided below. You may rephrase, reorder, combine, and emphasize it into ONE natural answer, but do NOT add any fact, dose, number, statistic, efficacy/safety/comparative claim, or recommendation that is not explicitly present in it.
 - If the provided content does not answer the question, say you can connect them with a representative or medical information — do not guess or generalize.
 - Do NOT mention "approved content", sources, MLR, or internal systems.
+- Do NOT introduce yourself or say you are an AI representative in the answer body. The greeting/disclosure already handles that.
 - Do NOT write, paraphrase, shorten, or summarize Important Safety Information. The platform appends the exact required ISI after your answer when needed.
 - Return only the answer body. Do not include an "Important Safety Information" heading or block.
 - Follow the brand coaching below for tone, length, and what to emphasize. When it doesn't specify a length, keep it to about 2–4 sentences.`;
@@ -51,10 +52,10 @@ function systemFor(blocks: ApprovedAnswer[], guidance?: string[], safety?: strin
     ? `\n\nBrand coaching (tone / length / emphasis — never overrides the absolute rules above and never adds facts):\n${notes.map((g) => `- ${g}`).join("\n")}${hardLength}`
     : "";
   const safe = safety?.trim()
-    ? `\n\nImportant Safety Information that the platform will append EXACTLY after your answer. Do not paraphrase, shorten, summarize, or duplicate it in your response:\n${safety.trim()}`
+    ? `\n\nImportant Safety Information that the platform will append EXACTLY after your answer. Do not paraphrase, shorten, summarize, or duplicate it in your response. Because it will appear immediately after your answer, avoid restating its standalone not-approved / safety-and-efficacy / Medical-Information-routing points in the body unless the HCP specifically asks for safety information:\n${safety.trim()}`
     : "";
   const disclosed = alreadyDisclosed
-    ? "\n\nThe AI-representative disclosure and the investigational / not-FDA-approved status were ALREADY stated earlier in this conversation. Do NOT restate either - answer the question directly."
+    ? "\n\nThe greeting/disclosure and the investigational / not-FDA-approved status were ALREADY stated earlier in this conversation. Do NOT restate either - answer the question directly."
     : "";
   return `${COMPOSER_SYSTEM}\n\nApproved content:\n${blocksText(blocks)}${safe}${disclosed}${coaching}`;
 }

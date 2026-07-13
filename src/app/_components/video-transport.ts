@@ -62,7 +62,10 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
       if (existing) {
         try { await existing.destroy(); } catch { /* already gone */ }
       }
-      call = Daily.createCallObject({ audioSource: true, videoSource: false }) as unknown as CallObj;
+      // Doctor mic starts OFF. The HCP view's red mic button is the single source of intent:
+      // click to unmute/talk, click again to mute. Without this, Tavus joined with the mic live
+      // even though the UI said it was muted.
+      call = Daily.createCallObject({ audioSource: false, videoSource: false }) as unknown as CallObj;
       call.on("track-started", (raw) => {
         const ev = raw as { participant?: { local?: boolean }; track?: MediaStreamTrack };
         if (ev?.participant?.local || !ev?.track) return;
@@ -86,6 +89,7 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
         if (speaker) events.onUtterance({ speaker, text });
       });
       await call.join({ url: opts.conversationUrl, ...(opts.token ? { token: opts.token } : {}) });
+      try { call.setLocalAudio(false); } catch { /* keep default mic-off best-effort */ }
     },
 
     speak(text: string): boolean {

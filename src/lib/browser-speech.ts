@@ -19,6 +19,9 @@ export interface SpeakOptions {
   tone?: string;
   /** OpenAI TTS voice id override (else the server default / OPENAI_TTS_VOICE). */
   voice?: string;
+  /** Fires the moment audio actually starts playing — lets a caption appear IN SYNC with the
+   *  voice (not before it). Called once per speak; skipped if the speak is superseded/aborted. */
+  onStart?: () => void;
 }
 
 /** Map a persona voice tone to TTS delivery params, so picking a tone audibly changes how the
@@ -140,6 +143,7 @@ export class BrowserVoiceProvider implements ClientVoiceProvider {
   speak(text: string, opts?: SpeakOptions): Promise<void> {
     // No real audio available → pace in real time so the UI still flows (CI/headless).
     if (!this.audioAvailable()) {
+      try { opts?.onStart?.(); } catch { /* noop */ }
       return new Promise((r) => setTimeout(r, Math.min(estimateSpeechMs(text), 1200)));
     }
     const session = ++this.speakSession;
@@ -149,6 +153,7 @@ export class BrowserVoiceProvider implements ClientVoiceProvider {
       const v = pickVoice(this.voices, opts?.voiceHint);
       let idx = 0;
       let settled = false;
+      let started = false;
       // Second Chrome workaround: a periodic pause/resume nudge keeps the engine from
       // stalling between chunks on some platforms (notably Windows).
       const keepalive = window.setInterval(() => {
@@ -167,6 +172,7 @@ export class BrowserVoiceProvider implements ClientVoiceProvider {
         u.rate = opts?.rate ?? 1;
         u.pitch = opts?.pitch ?? 1;
         if (v) u.voice = v;
+        u.onstart = () => { if (!started) { started = true; try { opts?.onStart?.(); } catch { /* noop */ } } };
         u.onend = speakNext;
         u.onerror = speakNext; // a broken chunk must not silence the rest
         synth.speak(u);
@@ -222,6 +228,11 @@ export class OpenAiVoiceProvider implements ClientVoiceProvider {
     const gen = ++this.gen;
     const ctrl = new AbortController();
     this.ctrl = ctrl;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      try { ctrl.abort(); } catch { /* noop */ }
+    }, 1200);
     try {
       const res = await fetch("/api/voice/speak", {
         method: "POST",
@@ -230,8 +241,12 @@ export class OpenAiVoiceProvider implements ClientVoiceProvider {
         signal: ctrl.signal,
       });
       if (this.gen !== gen) return; // superseded by a newer speak/cancel (barge-in)
-      if (!res.ok || res.status === 204) return void (await this.fallback.speak(body, opts));
+      if (!res.ok || res.status === 204) {
+        window.clearTimeout(timeout);
+        return void (await this.fallback.speak(body, opts));
+      }
       const blob = await res.blob();
+      window.clearTimeout(timeout);
       if (this.gen !== gen) return;
       if (!blob.size) return void (await this.fallback.speak(body, opts));
       const url = URL.createObjectURL(blob);
@@ -239,13 +254,22 @@ export class OpenAiVoiceProvider implements ClientVoiceProvider {
       this.current = a;
       await new Promise<void>((resolve) => {
         const done = () => { try { URL.revokeObjectURL(url); } catch { /* noop */ } resolve(); };
+        let started = false;
+        const start = () => {
+          if (started) return;
+          started = true;
+          try { opts?.onStart?.(); } catch { /* noop */ }
+        };
         a.onended = done;
         a.onerror = done;
+        // Caption in sync with the voice: fire onStart when audio actually begins.
+        a.onplaying = start;
         a.play().catch(done);
       });
     } catch (e) {
-      // AbortError = intentional barge-in; anything else → browser fallback (unless superseded).
-      if (this.gen === gen && (e as { name?: string })?.name !== "AbortError") {
+      window.clearTimeout(timeout);
+      // Timeout AbortError = cold TTS start → browser fallback; user barge-in AbortError is dropped.
+      if (this.gen === gen && (timedOut || (e as { name?: string })?.name !== "AbortError")) {
         await this.fallback.speak(body, opts);
       }
     }

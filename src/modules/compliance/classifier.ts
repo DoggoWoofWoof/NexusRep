@@ -81,6 +81,24 @@ function longestCommonSubstr(a: string, b: string): number {
   return best;
 }
 
+function editDistanceWithin(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = new Array<number>(b.length + 1).fill(0).map((_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = new Array<number>(b.length + 1).fill(0);
+    cur[0] = i;
+    let rowBest = cur[0]!;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + cost);
+      rowBest = Math.min(rowBest, cur[j]!);
+    }
+    if (rowBest > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length]!;
+}
+
 /**
  * Recover an ASR/typo near-miss of a product name ("no vexian", "novexian", "milvexin" →
  * "Milvexian") so a garbled name still classifies as a product question AND retrieves the
@@ -106,7 +124,12 @@ export function canonicalizeProductNames(input: string): string {
       for (const term of PRODUCT_CANON) {
         if (term.despaced.length < 6 || cand === term.despaced) continue; // tiny terms + exact hits: leave alone
         const lcs = longestCommonSubstr(cand, term.despaced);
-        if (lcs >= 6 && lcs >= Math.ceil(term.despaced.length * 0.6) && Math.abs(cand.length - term.despaced.length) <= 2) {
+        const nearEdit =
+          term.despaced.length >= 7 &&
+          cand[0] === term.despaced[0] &&
+          cand.length >= term.despaced.length - 2 &&
+          editDistanceWithin(cand, term.despaced, 3) <= 3;
+        if ((lcs >= 6 && lcs >= Math.ceil(term.despaced.length * 0.6) && Math.abs(cand.length - term.despaced.length) <= 2) || nearEdit) {
           repls.push({ start: tokens[i]!.start, end: tokens[i + win - 1]!.end, display: term.display });
           for (let k = i; k < i + win; k++) used[k] = true;
           break;

@@ -63,7 +63,10 @@ async function startConversation(req: Request): Promise<NextResponse> {
   // slideIds), and log the opening greeting once server-side (Tavus speaks it directly, not via
   // the LLM endpoint, so the endpoint never sees it).
   setActiveCallSession(hist.id);
-  if (persona.customGreeting) await c.sessions.appendTurn(hist.id, { speaker: "rep", text: persona.customGreeting });
+  if (persona.customGreeting) {
+    await c.sessions.appendTurn(hist.id, { speaker: "rep", text: persona.customGreeting });
+    await c.audit.record(hist.id, "response_output", { route: "greeting", text: persona.customGreeting, sourceIds: [], greeting: true });
+  }
 
   const startArgs = {
       record: true,

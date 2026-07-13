@@ -48,6 +48,68 @@ export interface TurnOutput {
 
 const SAFE_FALLBACK =
   "I want to make sure I only share approved information. Let me connect you with someone who can help.";
+const COMPOSER_TIMEOUT_MS = 2500;
+
+/**
+ * When the exact ISI block is appended, do not also repeat standalone safety/disclosure
+ * sentences in the conversational body. The body still stays grounded in approved content; this
+ * only removes duplicates already covered verbatim by the approved ISI.
+ */
+function stripDisclosureLead(sentence: string): string {
+  return sentence
+    .replace(/^\s*(?:just to note,?\s*)?(?:as\s+)?i(?:'m| am)\s+an?\s+ai(?:\s+pharmaceutical)?\s+representative(?:\s+for\s+[^,.]+)?[,.]?\s*(?:and\s+)?/i, "")
+    .replace(/^\s*as\s+an?\s+ai(?:\s+pharmaceutical)?\s+representative[,.]?\s*/i, "")
+    .replace(/^\s*i\s+(?:want to|should)\s+(?:note|mention)(?:\s+upfront)?\s+that\s+/i, "")
+    .replace(/^\s*to\s+note\s+upfront\s+that\s+/i, "");
+}
+
+function isStatusQuestion(question: string): boolean {
+  return /\b(fda|approved|approval|regulatory|status|investigational|development|fast\s+track)\b/i.test(question);
+}
+
+function sanitizeApprovedBody(body: string, opts: { isiText?: string; disclosureGiven: boolean; question: string }): string {
+  const isi = (opts.isiText ?? "").toLowerCase();
+  if (!body.trim()) return body;
+  const sentences = body.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) ?? [body];
+  const kept: string[] = [];
+  for (const sentence of sentences) {
+    const cleaned = stripDisclosureLead(stripSpeechMarkdown(sentence));
+    const s = cleaned.toLowerCase();
+    if (!cleaned.trim()) continue;
+    const repeatsNotApproved =
+      /\b(?:not\s+(?:yet\s+)?approved|not\s+(?:yet\s+)?fda[-\s]?approved)\b/.test(s) &&
+      /\b(?:fda|regulatory authorit)/.test(s) &&
+      (/\bnot approved\b/.test(isi) || (opts.disclosureGiven && !isStatusQuestion(opts.question)));
+    if (repeatsNotApproved) continue;
+    if (isi && /\bsafety and efficacy\b/.test(s) && /\bsafety and efficacy\b/.test(isi)) continue;
+    if (isi && /\bclinical questions?\b/.test(s) && /\bmedical information\b/.test(s) && /\bmedical information\b/.test(isi)) continue;
+    kept.push(cleaned);
+  }
+  const trimmed = kept.join("").replace(/\s+/g, " ").trim();
+  return trimmed || stripSpeechMarkdown(body);
+}
+
+function stripSpeechMarkdown(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_\n]+)_/g, "$1");
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("composer_timeout")), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /**
  * Does the HCP's text touch a coaching-rule topic? Matches on any significant word of the
@@ -98,6 +160,12 @@ export class TurnOrchestrator {
       preview?: boolean;
     },
   ): Promise<TurnOutput> {
+    const retrievalPromise = this.retrieval
+      .retrieveApproved({
+        text: ctx.text,
+        context: { audience: ctx.audience, indication: ctx.indication, market: ctx.market },
+      })
+      .then((result) => ({ result }), (error: unknown) => ({ error }));
     const classification = await (opts?.classify ?? this.classifier)(ctx.text);
     await this.audit.record(ctx.sessionId, "classification", { ...classification });
 
@@ -130,10 +198,11 @@ export class TurnOrchestrator {
     let gateClassification = classification;
 
     if (r === "approved_answer") {
-      const result = await this.retrieval.retrieveApproved({
-        text: ctx.text,
-        context: { audience: ctx.audience, indication: ctx.indication, market: ctx.market },
-      });
+      const retrievalSettled = await retrievalPromise;
+      if ("error" in retrievalSettled) {
+        return this.finalize(ctx, "fallback", classification, SAFE_FALLBACK, [], false, undefined, undefined, undefined, opts?.preview ?? false);
+      }
+      const result = retrievalSettled.result;
       await this.audit.record(ctx.sessionId, "retrieval", {
         accepted: result.answers.map((a) => a.id),
         rejected: result.rejected,
@@ -194,13 +263,14 @@ export class TurnOrchestrator {
         : undefined;
       // Deterministic fallback (no LLM) speaks approved text + one brief slide cue; it cannot weave,
       // so the ISI is appended verbatim below.
-      const deterministic = () => buildApprovedResponse(result.answers, { includeIsi: false, slideTitle })?.text ?? top.text;
+      const responseSeed = `${ctx.sessionId}:${ctx.text}:${priorEvents.length}:${top.id}`;
+      const deterministic = () => buildApprovedResponse(result.answers, { includeIsi: false, slideTitle, seed: responseSeed })?.text ?? top.text;
       let body: string;
       if (composeFn) {
         try {
           // Deterministic backstop: whatever the model wove in, an embedded ISI copy is
           // removed — the platform alone decides when the exact ISI is appended.
-          const composed = stripEmbeddedIsi((await composeFn(ctx.text, result.answers)).trim(), isiStatement?.text ?? "");
+          const composed = stripSpeechMarkdown(stripEmbeddedIsi((await withTimeout(composeFn(ctx.text, result.answers), COMPOSER_TIMEOUT_MS)).trim(), isiStatement?.text ?? ""));
           if (!composed) {
             body = deterministic();
           } else {
@@ -223,11 +293,13 @@ export class TurnOrchestrator {
             }
           }
         } catch {
+          await this.audit.record(ctx.sessionId, "response_validation", { action: "composer_fallback", reason: "error_or_timeout" });
           body = deterministic();
         }
       } else {
         body = deterministic();
       }
+      body = sanitizeApprovedBody(body, { isiText: isi?.text, disclosureGiven, question: ctx.text });
       if (isi) {
         requiredSafetyText = isi.text;
         body = `${body}\n\nImportant Safety Information: ${isi.text}`;

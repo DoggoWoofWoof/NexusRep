@@ -10,7 +10,40 @@
 
 ## 1. Current build status
 
-### Latest: Human presentation flow + Tavus key check (2026-07-11)
+### Latest: HCP runtime sync, latency, and repetition fixes (2026-07-13)
+
+- **Fixed repeated disclosure loops:** video greetings are now recorded as audit
+  `response_output` events, so the composer knows the AI/investigational disclosure
+  already happened. Runtime sanitization also strips any model-generated
+  "I'm an AI representative..." lead-in from approved answers.
+- **Reduced repeated safety/status wording:** when the exact ISI is appended, duplicate
+  standalone "not FDA approved", "safety and efficacy", and Medical Information routing
+  sentences are removed from the answer body. The exact ISI still appears verbatim when due.
+- **Fixed LIBREXIA routing:** named program terms now outrank generic "how does it work"
+  mechanism cues, so "How does LIBREXIA work?" retrieves the LIBREXIA program block/slide,
+  not the mechanism slide.
+- **Improved ASR typo recovery:** common voice variants like "Milbaxian" and "Malvaxian"
+  canonicalize to Milvexian before classification/retrieval.
+- **Reduced perceived latency:** retrieval now starts in parallel with classification, and
+  slow LLM composition falls back after 2.5s to the approved deterministic builder instead
+  of keeping Tavus silent. Browser TTS also falls back quickly when OpenAI TTS cold-starts.
+- **Fixed transcript/slide sync edges:** typed video echo turns keep the exact gated text +
+  slide id until the remote Tavus audio stream shows actual speech energy, so captions and
+  slides no longer run ahead of the avatar voice. `window.__nexusrepTiming` records
+  `echo_queued`, `vendor_started_speaking`, and `caption_release` timestamps for Render/Tavus
+  latency stress checks.
+- **Made slide motion source-driven:** the orchestrator's `detailAidSlideId` is the authority.
+  Spoken-text phrase matching only nudges timing; it no longer decides whether a slide should
+  change. This prevents "I'll bring up the slide" answers from staying on the wrong slide.
+- **Mic behavior:** Tavus/Daily joins with the doctor's mic off; the HCP mic button is red/off
+  by default in both video and non-video modes.
+- **Verified:** `npm run typecheck`; full `npm test` passed (282 passing, 1 skipped live
+  DocNexus test); `npm run build` passed; Playwright E2E passed (27 passing, 2 skipped).
+  New regressions cover no AI re-introduction after greeting, a deliberately bad composer
+  trying to re-introduce itself, ISI cadence, LIBREXIA program routing, and
+  Milbaxian/Malvaxian recovery.
+
+### Human presentation flow + Tavus key check (2026-07-11)
 
 - **HCP "Start overview" now launches the multi-slide presentation overview** from a natural
   doctor prompt ("quick overview") instead of a one-slide deck command. The rep delivers the

@@ -90,9 +90,16 @@ export function configureRetrievalLexicon(topicSynonyms: Record<string, string[]
 function topicBonus(queryWords: Set<string>, answer: ApprovedAnswer): number {
   const topic = answer.topic.toLowerCase();
   let bonus = 0;
+  const synonymHits = new Set(
+    Object.entries(TOPIC_SYNONYMS)
+      .filter(([, words]) => hasAny(queryWords, words))
+      .map(([topicKey]) => topicKey),
+  );
+  const namedProgramHit = [...synonymHits].some((topicKey) => /program|trial|study/.test(topicKey));
+  const namedMechanismHit = [...synonymHits].some((topicKey) => /mechanism|moa|action/.test(topicKey));
 
   // GENERIC clinical groupings only — brand vocabulary comes from TOPIC_SYNONYMS below.
-  if (hasAny(queryWords, ["mechanism", "work", "works", "working", "pathway", "fit"])) {
+  if (hasAny(queryWords, ["mechanism", "moa", "pathway", "fit"]) || (hasAny(queryWords, ["work", "works", "working"]) && !namedProgramHit)) {
     if (/mechanism|action/i.test(topic)) bonus += 10;
   }
   if (hasAny(queryWords, ["program", "trial", "trials", "study", "studying", "phase"])) {
@@ -103,8 +110,9 @@ function topicBonus(queryWords: Set<string>, answer: ApprovedAnswer): number {
   }
   // Brand lexicon synonyms: query words specific to this brand's world pull their topic forward.
   for (const [topicKey, words] of Object.entries(TOPIC_SYNONYMS)) {
-    if (hasAny(queryWords, words) && topic.includes(topicKey)) bonus += 10;
+    if (hasAny(queryWords, words) && topic.includes(topicKey)) bonus += /program|trial|study/.test(topicKey) ? 16 : 12;
   }
+  if (namedProgramHit && /mechanism|action/i.test(topic) && !namedMechanismHit) bonus -= 8;
   if (hasAny(queryWords, ["isi", "safety", "disclosure", "warning", "warnings"])) {
     if (/safety|isi|important safety/i.test(topic)) bonus += 10;
   }

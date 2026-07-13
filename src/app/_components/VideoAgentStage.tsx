@@ -13,11 +13,21 @@ import { createVideoTransport, type VideoCallTransport } from "./video-transport
 
 type ConvResp = { provider: string; configured: boolean; conversationUrl: string | null; token: string | null; note: string; reachableLlm?: boolean; sessionId?: string };
 type Stage = "loading" | "unconfigured" | "joining" | "live" | "ended" | "error";
+type TimingEvent = {
+  type: string;
+  at: number;
+  reason?: string;
+  delayMs?: number;
+  text?: string;
+  detailAidSlideId?: string | null;
+  audioStarted?: boolean;
+  level?: number;
+};
 
 /** Imperative handle so the HCP view can make the agent SPEAK a gated answer
  *  (verbatim, via the transport's echo) — used for typed turns while on video. */
 export interface VideoAgentStageHandle {
-  speak: (text: string) => void;
+  speak: (text: string, detailAidSlideId?: string | null) => boolean;
   /** Mute/unmute the AGENT's audio (what the doctor hears). */
   setMuted: (muted: boolean) => void;
   /** Enable/disable the doctor's own microphone on the call. */
@@ -25,6 +35,7 @@ export interface VideoAgentStageHandle {
 }
 
 type RepTurnNotice = { text: string; detailAidSlideId?: string | null; sourceIds?: string[] };
+type PendingRepEcho = { seq: number; text: string; detailAidSlideId?: string | null; timer?: number; notified: boolean; queuedAt: number };
 
 export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; onHcpUtterance?: (text: string) => void; hcpId?: string; onMutedChange?: (muted: boolean) => void }>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, hcpId, onMutedChange }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -40,12 +51,40 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   // Only when it can't (localhost / no public URL) does the client log the spoken
   // utterances as a text-only fallback so the transcript isn't empty.
   const serverLogsRef = useRef(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioAnalyserRef = useRef<AnalyserNode | null>(null);
+  const audioMeterDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const audioMeterStreamRef = useRef<MediaStream | null>(null);
+  // Client-side echo turns (typed asks while video is on) may not always be echoed back as a
+  // Tavus finalized utterance. Keep the pending gated text here so the transcript can still be
+  // written when the replica starts speaking, with the slide id already known.
+  const pendingRepEchoRef = useRef<PendingRepEcho | null>(null);
+  const pendingRepEchoSeqRef = useRef(0);
 
   // Make the agent speak our (already gated) text verbatim, via the transport.
-  const speakAgent = (text: string): boolean => transportRef.current?.speak(text) ?? false;
+  const speakAgent = (text: string, detailAidSlideId?: string | null): boolean => {
+    const t = text.trim();
+    if (!t) return false;
+    const ok = transportRef.current?.speak(t) ?? false;
+    if (!ok) return false;
+    clearPendingRepEcho();
+    const pending: PendingRepEcho = {
+      seq: ++pendingRepEchoSeqRef.current,
+      text: t,
+      detailAidSlideId: detailAidSlideId ?? null,
+      notified: false,
+      queuedAt: Date.now(),
+    };
+    recordTiming({ type: "echo_queued", text: t, detailAidSlideId: detailAidSlideId ?? null });
+    // Prefer vendor "started speaking" events below, but do not trust them as audible speech.
+    // This watchdog starts waiting for remote audio energy so captions/slides do not run ahead.
+    pending.timer = window.setTimeout(() => { void notifyPendingRepEcho("audio_watchdog"); }, 900);
+    pendingRepEchoRef.current = pending;
+    return true;
+  };
   const applyMuted = (m: boolean) => { setMuted(m); onMutedChange?.(m); };
   useImperativeHandle(ref, () => ({
-    speak: (text: string) => { speakAgent(text); },
+    speak: (text: string, detailAidSlideId?: string | null) => speakAgent(text, detailAidSlideId),
     setMuted: (m: boolean) => { applyMuted(m); },
     setMicEnabled: (on: boolean) => { transportRef.current?.setMicEnabled(on); },
   }));
@@ -63,16 +102,85 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     onRepTurnRef.current = onRepTurn;
   }, [onRepTurn]);
 
-  async function notifyAuthoritativeRepTurn(sessionId: string, utterance: string) {
-    const notify = onRepTurnRef.current;
-    if (!notify) return;
+  function clearPendingRepEcho() {
+    const pending = pendingRepEchoRef.current;
+    if (pending?.timer) window.clearTimeout(pending.timer);
+    pendingRepEchoRef.current = null;
+  }
+
+  function recordTiming(event: Omit<TimingEvent, "at">) {
+    const w = window as unknown as { __nexusrepTiming?: TimingEvent[] };
+    w.__nexusrepTiming = [...(w.__nexusrepTiming ?? []).slice(-120), { at: Date.now(), ...event }];
+  }
+
+  function setupAudioMeter(stream: MediaStream) {
+    if (audioMeterStreamRef.current === stream && audioAnalyserRef.current) return;
+    try {
+      void audioCtxRef.current?.close().catch(() => undefined);
+      const AudioContextCtor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextCtor) return;
+      const ctx = new AudioContextCtor();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      audioCtxRef.current = ctx;
+      audioAnalyserRef.current = analyser;
+      audioMeterDataRef.current = new Uint8Array(new ArrayBuffer(analyser.fftSize));
+      audioMeterStreamRef.current = stream;
+      recordTiming({ type: "remote_audio_meter_ready" });
+    } catch {
+      audioCtxRef.current = null;
+      audioAnalyserRef.current = null;
+      audioMeterDataRef.current = null;
+      audioMeterStreamRef.current = null;
+      recordTiming({ type: "remote_audio_meter_unavailable" });
+    }
+  }
+
+  function remoteAudioLevel(): number {
+    const analyser = audioAnalyserRef.current;
+    const data = audioMeterDataRef.current;
+    if (!analyser || !data) return 0;
+    analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (const sample of data) {
+      const centered = (sample - 128) / 128;
+      sum += centered * centered;
+    }
+    return Math.sqrt(sum / data.length);
+  }
+
+  async function waitForAgentAudioActivity(timeoutMs: number): Promise<{ started: boolean; peak: number }> {
+    const start = Date.now();
+    let consecutive = 0;
+    let peak = 0;
+    const threshold = 0.018;
+    if (!audioAnalyserRef.current) return { started: false, peak };
+    while (Date.now() - start < timeoutMs) {
+      try {
+        if (audioCtxRef.current?.state === "suspended") await audioCtxRef.current.resume();
+      } catch {
+        // If the browser refuses the audio context, we fall back to the timeout path below.
+      }
+      const level = remoteAudioLevel();
+      peak = Math.max(peak, level);
+      if (level >= threshold) {
+        consecutive += 1;
+        if (consecutive >= 2) return { started: true, peak };
+      } else {
+        consecutive = 0;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 60));
+    }
+    return { started: false, peak };
+  }
+
+  async function hydratedRepTurn(sessionId: string, utterance: string): Promise<RepTurnNotice> {
     let notice: RepTurnNotice = { text: utterance };
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
-      if (!res.ok) {
-        notify(notice);
-        return;
-      }
+      if (!res.ok) return notice;
       const data = (await res.json()) as { turns?: RepTurnNotice[] };
       const reps = (data.turns ?? []).filter((t) => t && "text" in t);
       const normalized = utterance.replace(/\s+/g, " ").trim();
@@ -83,6 +191,41 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     } catch {
       // Slide hydration is best-effort; the spoken caption is still useful to the UI.
     }
+    return notice;
+  }
+
+  async function notifyAuthoritativeRepTurn(sessionId: string, utterance: string) {
+    const notify = onRepTurnRef.current;
+    if (!notify) return;
+    notify(await hydratedRepTurn(sessionId, utterance));
+  }
+
+  async function notifyPendingRepEcho(reason = "vendor_started") {
+    const pending = pendingRepEchoRef.current;
+    const notify = onRepTurnRef.current;
+    if (!pending || pending.notified || !notify) return;
+    pending.notified = true;
+    if (pending.timer) window.clearTimeout(pending.timer);
+    const seq = pending.seq;
+    const audio = await waitForAgentAudioActivity(reason === "audio_watchdog" ? 3600 : 3000);
+    recordTiming({
+      type: "caption_release",
+      reason,
+      delayMs: Date.now() - pending.queuedAt,
+      text: pending.text,
+      detailAidSlideId: pending.detailAidSlideId ?? null,
+      audioStarted: audio.started,
+      level: audio.peak,
+    });
+    // If a newer echo replaced this one while we were waiting for audible speech, drop it.
+    if (pendingRepEchoRef.current?.seq !== seq) return;
+    const sid = sessionIdRef.current;
+    const notice = serverLogsRef.current && sid
+      ? await hydratedRepTurn(sid, pending.text)
+      : { text: pending.text, detailAidSlideId: pending.detailAidSlideId };
+    // If a newer echo replaced this one while the best-effort hydration was in flight, drop it.
+    if (pendingRepEchoRef.current?.seq !== seq) return;
+    pendingRepEchoRef.current = null;
     notify(notice);
   }
 
@@ -203,7 +346,11 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
               const track = stream.getVideoTracks()[0];
               if (track) track.onended = () => setHasVideo(false);
             }
-            if (kind === "audio" && audioRef.current) { audioRef.current.srcObject = stream; void audioRef.current.play?.(); }
+            if (kind === "audio" && audioRef.current) {
+              audioRef.current.srcObject = stream;
+              setupAudioMeter(stream);
+              void audioRef.current.play?.();
+            }
             // Fallback: if the agent never emits an utterance event, still start recording a few
             // seconds after the video track arrives so we never miss a clip. The PRIMARY start is
             // on the agent's first spoken words (see onUtterance) — that trims the connect boot.
@@ -214,6 +361,17 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // does after an echo (started/stopped speaking, utterances). Harmless.
             const w = window as unknown as { __nexusrepEvents?: { type: string; role: string; text: string }[] };
             w.__nexusrepEvents = [...(w.__nexusrepEvents ?? []).slice(-40), e];
+            // For typed turns while video is on, we already know the exact gated text we sent to
+            // Tavus via conversation.echo. Caption it when the replica starts speaking. This keeps
+            // transcript, slide cue, and audible output aligned even when Tavus does not later emit
+            // a clean conversation.utterance for the echo.
+            if (
+              /start(?:ed)?[_\s.-]*speak|speech[_\s.-]*start|speaking[_\s.-]*start/i.test(e.type) &&
+              (!e.role || /replica|assistant|agent|ai/i.test(e.role))
+            ) {
+              recordTiming({ type: "vendor_started_speaking", reason: e.type });
+              void notifyPendingRepEcho("vendor_started");
+            }
             // The vendor ended the call (credits exhausted, duration cap, account limit).
             // Without this the pane just froze to black with no explanation.
             if (/shutdown|call_ended|conversation.ended/i.test(e.type)) {
@@ -228,6 +386,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // Begin the recording at the agent's FIRST words (the greeting) so the clip trims
             // the connect boot + any idle before the rep speaks. No-op once already recording.
             if (speaker === "rep") maybeStartRec();
+            if (speaker === "rep") clearPendingRepEcho();
             // The doctor's SPOKEN words must appear in the captions like typed ones do —
             // without this, a voice-only conversation has no "You" lines at all.
             if (speaker === "hcp") onHcpUtterance?.(text);
@@ -247,6 +406,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ sessionId: sid, speaker, text }),
             });
+            if (speaker === "rep") onRepTurnRef.current?.({ text });
           },
         });
         setStage("live");
@@ -258,8 +418,14 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
       })();
     }
     return () => {
+      clearPendingRepEcho();
       transportRef.current?.leave();
       transportRef.current = null;
+      void audioCtxRef.current?.close().catch(() => undefined);
+      audioCtxRef.current = null;
+      audioAnalyserRef.current = null;
+      audioMeterDataRef.current = null;
+      audioMeterStreamRef.current = null;
       // Leaving the room does NOT end the vendor conversation — it lingers and holds a
       // concurrent-session slot until the vendor times it out. End it explicitly so repeated
       // previews don't pile up to the account cap. keepalive: survives the unmount/navigation.
