@@ -42,11 +42,15 @@ ephemeral/serverless filesystem** — use in-memory for a demo, or point at a ma
    never commit them.** Required/likely:
    - `NEXUSREP_PUBLIC_URL` = your Vercel URL (e.g. `https://nexusrep.vercel.app`)
    - `ANTHROPIC_API_KEY` (for LLM compose/coaching) and/or `OPENAI_API_KEY`
+   - `ANTHROPIC_MODEL=claude-haiku-4-5` for realtime video latency unless you explicitly
+     want a slower/larger model.
    - `NEXUSREP_COMPOSE=llm` if you want the live rep to use the LLM composer
    - Leave `NEXUSREP_TAVUS_COMPOSE` unset so Tavus video uses the same grounded composer as
      the live rep; set it to `deterministic` only as an explicit emergency/cost/latency fallback.
    - `TAVUS_API_KEY`, `TAVUS_REPLICA_ID` (+ `TAVUS_PERSONA_ID` optional) — the Tavus realtime provider auto-selects when the key is present (`NEXUSREP_REALTIME_PROVIDER=tavus` to force)
    - `TAVUS_LLM_KEY` (shared secret Tavus uses to call our `/api/tavus/llm`)
+   - Optional Tavus speech tuning: `NEXUSREP_TAVUS_TTS_ENGINE=cartesia`,
+     `NEXUSREP_TAVUS_TTS_MODEL=sonic-3`, `NEXUSREP_TAVUS_TTS_SPEED=1.08`.
    - `NEXUSREP_DATA_DRIVER=memory` (serverless) — data resets on redeploy; fine for a demo.
    - `NEXUSREP_AUDIENCE=modeled` unless you wire the DocNexus cohort backend.
 3. `vercel --prod`. Open `/hcp`.
@@ -62,8 +66,12 @@ filesystem between requests), so the durable store runs as-is. The repo ships a 
    values are never committed): `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY`, `TAVUS_API_KEY` +
    `TAVUS_LLM_KEY` (a shared secret YOU invent — Tavus sends it back as the Bearer when calling
    our compliance endpoint; set `NEXUSREP_REALTIME_PROVIDER=tavus` for the video rep).
+   Use `ANTHROPIC_MODEL=claude-haiku-4-5` for the realtime demo path unless you intentionally
+   choose a slower model.
    Leave `NEXUSREP_TAVUS_COMPOSE` unset for normal demos so Tavus inherits `NEXUSREP_COMPOSE`
    and uses grounded LLM composition when your model key is present.
+   The default Tavus PAL TTS layer is Cartesia `sonic-3` at speed `1.08`; override the
+   `NEXUSREP_TAVUS_TTS_*` envs only if the actual rendered voice feels too fast/slow.
    **Live DocNexus cohort on a server (no static API key exists — auth is account-based):** run
    `node scripts/docnexus-platform-token.mjs` locally once; it captures a ~30-day Cognito
    REFRESH token into `.docnexus-id-token.json`. Copy `refreshToken` / `clientId` / `region`

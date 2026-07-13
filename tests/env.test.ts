@@ -40,3 +40,22 @@ describe("environment composition modes", () => {
     expect(env.tavusComposeMode).toBe("deterministic");
   });
 });
+
+describe("Tavus latency tuning env", () => {
+  it("pins the default Tavus TTS stack for low-latency speech", async () => {
+    const { env } = await loadEnv({
+      NEXUSREP_TAVUS_TTS_ENGINE: undefined,
+      NEXUSREP_TAVUS_TTS_MODEL: undefined,
+      NEXUSREP_TAVUS_TTS_SPEED: undefined,
+    });
+
+    expect(env.tavusTtsEngine).toBe("cartesia");
+    expect(env.tavusTtsModel).toBe("sonic-3");
+    expect(env.tavusTtsSpeed).toBe(1.08);
+  });
+
+  it("clamps Tavus TTS speed to the supported range", async () => {
+    const { env } = await loadEnv({ NEXUSREP_TAVUS_TTS_SPEED: "2" });
+    expect(env.tavusTtsSpeed).toBe(1.2);
+  });
+});

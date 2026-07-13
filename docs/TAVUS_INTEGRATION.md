@@ -43,7 +43,7 @@ HCP speaks OR typed text is sent with conversation.respond
 | **Echo / interrupt** (verbatim speech) | `conversation.echo` remains for platform-controlled scripted segments, e.g. guided overview; `conversation.interrupt` supports barge-in | ✅ wired client-side |
 | **Tool / function calling** | `config.tools[{name,description,parameters}]` → legacy inline `layers.llm.tools`; routing also handled inside our LLM endpoint. For new external tools, prefer Tavus tool registry. | 🟡 legacy-compatible; registry not needed yet |
 | **STT hotwords** (drug names) | `config.hotwords` → `layers.stt.hotwords` (Milvexian, LIBREXIA, Factor XIa) | ✅ wired |
-| **TTS voice** | `config.voice.voiceId` → `layers.tts.external_voice_id` | ✅ wired |
+| **TTS voice / speech latency** | `layers.tts` is pinned to Cartesia `sonic-3` with global speed from `NEXUSREP_TAVUS_TTS_SPEED`; `config.voice.voiceId` still maps to `external_voice_id` when present | ✅ wired |
 | **Language / multilingual** | `config.language` → conversation `properties.language` | ✅ wired |
 | **Audio-only mode** | `config.audioOnly` → `audio_only` | ✅ wired |
 | **End conversation** | `endSession()` → `POST /conversations/{id}/end` | ✅ wired |
@@ -61,6 +61,9 @@ TAVUS_API_KEY=<key>
 TAVUS_REPLICA_ID=<stock or custom replica id>
 NEXUSREP_PUBLIC_URL=https://<publicly-reachable-app-url>   # so Tavus can call our LLM endpoint
 TAVUS_LLM_KEY=<any shared secret>                          # optional, authenticates Tavus→us
+NEXUSREP_TAVUS_TTS_ENGINE=cartesia                         # default
+NEXUSREP_TAVUS_TTS_MODEL=sonic-3                           # default
+NEXUSREP_TAVUS_TTS_SPEED=1.08                              # clamped 0.8-1.2
 ```
 With no key, `getRealtimeProvider()` returns the mock and the HCP view uses the built-in
 free 3D avatar — the app never breaks.
@@ -95,11 +98,20 @@ Tavus latency has three separate parts:
 2. **Turn detection**: `layers.conversational_flow` uses `sparrow-1` with
    `turn_taking_patience: "low"` and `voice_isolation: "near"` so the PAL responds quickly
    after the HCP stops speaking while still filtering background noise.
-3. **Answer generation**: Tavus calls our custom LLM endpoint. The endpoint runs the same
+3. **Speech synthesis/rendering**: `layers.tts` is explicitly pinned to Cartesia `sonic-3`
+   with `NEXUSREP_TAVUS_TTS_SPEED` defaulting to `1.08`, so existing cached PALs do not
+   keep an older or unknown Tavus auto TTS choice. If the voice feels rushed, lower the env;
+   if it still lags, raise it up to the documented `1.2` ceiling.
+4. **Answer generation**: Tavus calls our custom LLM endpoint. The endpoint runs the same
    NexusRep composer policy as the rest of the live rep: grounded LLM rephrase when keyed,
    deterministic approved text only when no composer is available or when explicitly forced.
    If the composer errors or exceeds the hot-path timeout, the orchestrator falls back to
    approved deterministic text rather than keeping Tavus silent.
+
+The custom-LLM endpoint does not hide latency by delaying transcript text. It emits
+`Server-Timing` and `X-NexusRep-Timing` headers plus a `[tavus-llm-latency]` server log for
+each call. The turn audit also records classification, retrieval, and composer latencies so
+the Render/Tavus gap can be split into "NexusRep before text" versus "Tavus after text".
 
 Typed video input uses Tavus `conversation.respond`, not the slower
 browser-fetch-then-`conversation.echo` path. `conversation.echo` is reserved for exact
@@ -107,8 +119,9 @@ platform-controlled speech such as guided overview segments where NexusRep is de
 driving slide-by-slide narration.
 
 `window.__nexusrepTiming` records client-side timing markers (`typed_respond_sent`,
-`echo_queued`, `vendor_started_speaking`, `caption_release`) for live Render/Tavus latency
-debugging.
+`echo_queued`, `vendor_streaming_utterance`, `vendor_final_utterance`,
+`vendor_started_speaking`, `vendor_audio_activity`, `caption_release`) for live Render/Tavus
+latency debugging.
 
 ## Client join — built
 

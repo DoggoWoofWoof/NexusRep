@@ -18,6 +18,7 @@ import { getActiveCallSession } from "@lib/active-call";
 export const dynamic = "force-dynamic";
 
 interface ChatMessage { role: string; content: unknown }
+interface TimingStep { name: string; dur: number; at: number }
 
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
@@ -25,7 +26,29 @@ function textOf(content: unknown): string {
   return "";
 }
 
+function timingHeaders(timings: TimingStep[], extra?: Record<string, string>): HeadersInit {
+  const safe = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const total = timings.length ? timings[timings.length - 1]!.at : 0;
+  const compact = [...timings, { name: "total", dur: total, at: total }]
+    .map((t) => `${safe(t.name)}=${Math.round(t.dur)}ms@${Math.round(t.at)}ms`)
+    .join("; ");
+  return {
+    ...(extra ?? {}),
+    "Server-Timing": timings.map((t) => `${safe(t.name)};dur=${Math.max(0, Math.round(t.dur))}`).join(", "),
+    "X-NexusRep-Timing": compact,
+    "X-NexusRep-Tavus-Compose": env.tavusComposeMode,
+  };
+}
+
 export async function POST(req: Request): Promise<Response> {
+  const started = Date.now();
+  let lastMark = started;
+  const timings: TimingStep[] = [];
+  const mark = (name: string) => {
+    const now = Date.now();
+    timings.push({ name, dur: now - lastMark, at: now - started });
+    lastMark = now;
+  };
   // Authenticate Tavus against the shared key we set in the persona's llm layer.
   // The bearer is MANDATORY: without it this endpoint would hand out gated content and
   // log fake turns to anyone who finds the URL. No key configured -> refuse (fail safe),
@@ -37,11 +60,13 @@ export async function POST(req: Request): Promise<Response> {
   if (auth !== `Bearer ${env.tavusLlmKey}`) {
       return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
     }
+  mark("auth");
 
   const body = (await req.json().catch(() => ({}))) as { messages?: ChatMessage[]; stream?: boolean };
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
   const text = textOf(lastUser?.content).trim();
+  mark("parse");
 
   // Run the HCP turn through our compliance-gated orchestrator.
   let reply = "I can only share approved information. Let me connect you with someone who can help.";
@@ -58,6 +83,7 @@ export async function POST(req: Request): Promise<Response> {
     reply = "Connection confirmed.";
   } else {
     const c = await getContainer();
+    mark("container");
     // Tavus supplies ASR + avatar transport only. The actual turn goes through the same
     // ConversationService used by typed chat, so mic and chat share one NexusRep path:
     // log HCP turn -> orchestrate -> gate -> log rep turn/source/slide -> CRM/follow-up.
@@ -68,6 +94,7 @@ export async function POST(req: Request): Promise<Response> {
     }
     // The call's session carries the invited doctor's identity (set at conversation create).
     const hcpId = (await c.sessions.get(sessionId))?.hcpId ?? c.demo.hcpId;
+    mark("session");
     const { output } = await c.conversation.turn({
       sessionId,
       hcpId,
@@ -78,10 +105,20 @@ export async function POST(req: Request): Promise<Response> {
       text,
     }, env.tavusComposeMode === "llm" ? undefined : { composer: null });
     reply = output.responseText;
+    mark(`turn_${output.route}`);
   }
 
   const created = Math.floor(Date.now() / 1000);
   const model = "nexusrep-compliance";
+  if (isAsrArtifact || isProbe) mark(isAsrArtifact ? "ignored_asr_artifact" : "connectivity_probe");
+  console.info("[tavus-llm-latency]", JSON.stringify({
+    mode: env.tavusComposeMode,
+    stream: body.stream !== false,
+    inputChars: text.length,
+    outputChars: reply.length,
+    totalMs: Date.now() - started,
+    timings,
+  }));
 
   if (body.stream === false) {
     return Response.json({
@@ -90,7 +127,7 @@ export async function POST(req: Request): Promise<Response> {
       created,
       model,
       choices: [{ index: 0, message: { role: "assistant", content: reply }, finish_reason: "stop" }],
-    });
+    }, { headers: timingHeaders(timings) });
   }
 
   // Stream the approved text as OpenAI SSE chunks (word-grouped so TTS can start early).
@@ -102,8 +139,11 @@ export async function POST(req: Request): Promise<Response> {
     start(controller) {
       controller.enqueue(encoder.encode(frame({ role: "assistant" })));
       const words = reply.split(" ");
-      for (let i = 0; i < words.length; i += 6) {
-        const piece = words.slice(i, i + 6).join(" ") + (i + 6 < words.length ? " " : "");
+      // Small chunks let Tavus begin downstream TTS as soon as the approved, gated text is
+      // ready. We still do not stream before the final compliance gate; this only reduces
+      // buffering after the gate has passed.
+      for (let i = 0; i < words.length; i += 3) {
+        const piece = words.slice(i, i + 3).join(" ") + (i + 3 < words.length ? " " : "");
         controller.enqueue(encoder.encode(frame({ content: piece })));
       }
       controller.enqueue(encoder.encode(frame({}, "stop")));
@@ -113,6 +153,6 @@ export async function POST(req: Request): Promise<Response> {
   });
 
   return new Response(stream, {
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" },
+    headers: timingHeaders(timings, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" }),
   });
 }

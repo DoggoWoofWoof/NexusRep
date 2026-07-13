@@ -72,7 +72,7 @@ The single most important design invariant. There are exactly two AI personas.
 | Language | **TypeScript 5.7**, strict | Node ≥ 20 |
 | Canonical data | **PGlite** (in-process WASM Postgres) · in-memory driver (default) | pgvector-ready; one env flag switches |
 | Retrieval | In-memory vector index · **Transformers.js** (`Xenova/all-MiniLM-L6-v2`) or deterministic lexical embeddings | index returns candidate IDs only |
-| LLMs | **Anthropic SDK** (`claude-opus-4-8`) · OpenAI-compatible · Thinking-Machines · deterministic keyword baseline | classifier + optional grounded composer |
+| LLMs | **Anthropic SDK** (`claude-haiku-4-5` realtime default; overrideable) · OpenAI-compatible · Thinking-Machines · deterministic keyword baseline | classifier + optional grounded composer |
 | Realtime / avatar | **Tavus CVI** (custom-LLM) · **Daily** WebRTC (quarantined) · Web Speech API · optional TalkingHead + HeadTTS 3D | swappable behind adapters |
 | Content ingest | `pdf-parse` · `jszip` · `pptxgenjs` | PPT/PDF → MLR review → retrieval |
 | Quality | **Vitest** (unit + integration) · **Playwright** (E2E + visual regression) · ESLint 9 | |

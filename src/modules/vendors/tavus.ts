@@ -33,6 +33,12 @@ export interface TavusConfig {
   baseUrl: string;
   replicaId: string;
   personaId?: string;
+  tts?: {
+    engine?: string;
+    model?: string;
+    speed?: number;
+    emotionControl?: boolean;
+  };
   timeoutMs?: number;
 }
 
@@ -175,7 +181,16 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
     const layers: Record<string, unknown> = {};
     if (Object.keys(llm).length) layers.llm = llm;
     if (config.hotwords?.length) layers.stt = { hotwords: config.hotwords.join(", ") };
-    if (config.voice?.voiceId) layers.tts = { external_voice_id: config.voice.voiceId };
+    layers.tts = {
+      // Be explicit instead of relying on the PAL's creation-era defaults. Existing cached
+      // personas are patched when this signature changes, which is exactly what we want for
+      // latency tuning on Render without manually recreating every Tavus persona.
+      tts_engine: this.cfg.tts?.engine ?? "cartesia",
+      tts_model_name: this.cfg.tts?.model ?? "sonic-3",
+      tts_emotion_control: this.cfg.tts?.emotionControl ?? true,
+      voice_settings: { speed: this.cfg.tts?.speed ?? 1.08 },
+      ...(config.voice?.voiceId ? { external_voice_id: config.voice.voiceId } : {}),
+    };
     layers.conversational_flow = {
       turn_detection_model: "sparrow-1",
       turn_taking_patience: "low",

@@ -33,15 +33,22 @@
   browser round-trip and lets Tavus start its own response pipeline sooner.
 - **Tuned Tavus response timing:** PAL personas are created/patched with
   `conversational_flow.turn_taking_patience = low` and `sparrow-1`, while keeping
-  `speculative_inference = true`. Tavus still always calls our custom-LLM endpoint, and
+  `speculative_inference = true`, plus an explicit Cartesia/Sonic-3 TTS layer and
+  `NEXUSREP_TAVUS_TTS_SPEED` (default `1.08`) so cached PALs do not sit on unknown
+  Tavus auto speech defaults. Tavus still always calls our custom-LLM endpoint, and
   that endpoint now inherits the normal live composer policy: grounded LLM rephrasing when
   model keys are present; deterministic approved text only when no composer exists, the
   composer times out/errors, or `NEXUSREP_TAVUS_COMPOSE=deterministic` is explicitly forced.
-- **Fixed transcript/slide sync edges:** typed video echo turns keep the exact gated text +
-  slide id until the remote Tavus audio stream shows actual speech energy, so captions and
-  slides no longer run ahead of the avatar voice. `window.__nexusrepTiming` records
-  `echo_queued`, `vendor_started_speaking`, and `caption_release` timestamps for Render/Tavus
-  latency stress checks.
+- **Kept transcript fast while measuring actual Tavus audio lag:** the UI no longer tries to
+  "fix" latency by holding back the transcript. Instead, `/api/tavus/llm/chat/completions`
+  emits `Server-Timing` / `X-NexusRep-Timing` and `[tavus-llm-latency]` server logs, while
+  the turn audit records classification/retrieval/composer timings. `window.__nexusrepTiming`
+  also records Tavus streaming/final utterance, started-speaking, and remote-audio-activity
+  markers, so a Render run can show whether the delay is NexusRep, Tavus custom-LLM fetch,
+  Tavus TTS, or face rendering.
+- **Changed the real-time LLM default:** unset `ANTHROPIC_MODEL` now falls back to
+  `claude-haiku-4-5` for classifier/composer calls instead of Opus. Larger models remain an
+  explicit env override, but the default video path should not choose the slowest turn-taking.
 - **Made slide motion source-driven:** the orchestrator's `detailAidSlideId` is the authority.
   Spoken-text phrase matching only nudges timing; it no longer decides whether a slide should
   change. This prevents "I'll bring up the slide" answers from staying on the wrong slide.
@@ -1775,7 +1782,7 @@ Large push turning the lifecycle real end-to-end and re-theming to the J&J
 ### 2026-06-21 — Pluggable LLM classifier + provider comparison
 - **Added:** `src/modules/compliance/classifiers/*` — swappable `LlmClassifier`
   providers: `keyword` (deterministic, $0, default), `claude` (Anthropic SDK,
-  dynamic-imported, default `claude-opus-4-8`), `openai` + `thinking-machines`
+  dynamic-imported; current realtime default `claude-haiku-4-5`), `openai` + `thinking-machines`
   (OpenAI-compatible via fetch + configurable base URL), a registry
   (`getClassifier`/`compareClassifiers`/`resolveClassifier`), and a defensive
   JSON normalizer. `/api/compare/classify` + `/compare` UI run one HCP message

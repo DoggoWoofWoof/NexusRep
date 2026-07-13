@@ -85,7 +85,7 @@ function blocksText(blocks: ApprovedAnswer[]): string {
 }
 
 function anthropicModel(): string {
-  return process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
+  return process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";
 }
 
 const claudeComposer: GroundedComposer = {

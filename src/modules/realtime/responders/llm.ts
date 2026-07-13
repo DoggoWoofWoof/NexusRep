@@ -9,7 +9,7 @@ import { env } from "@lib/env";
 import { RESPONDER_SYSTEM, type Responder } from "./types";
 
 function anthropicModel(): string {
-  return process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
+  return process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";
 }
 
 export const claudeResponder: Responder = {

@@ -62,11 +62,21 @@ describe("Tavus realtime adapter", () => {
     expect(session.transportUrl).toBe("https://tavus.daily.co/c1");
 
     const persona = calls.find((c) => c.url.endsWith("/personas"))!;
-    const layers = persona.body?.layers as { llm?: { base_url?: string; tools?: unknown[]; speculative_inference?: boolean }; conversational_flow?: { turn_taking_patience?: string; turn_detection_model?: string } } | undefined;
+    const layers = persona.body?.layers as {
+      llm?: { base_url?: string; tools?: unknown[]; speculative_inference?: boolean };
+      conversational_flow?: { turn_taking_patience?: string; turn_detection_model?: string };
+      tts?: { tts_engine?: string; tts_model_name?: string; tts_emotion_control?: boolean; voice_settings?: { speed?: number } };
+    } | undefined;
     const llmLayer = layers?.llm;
     expect(llmLayer?.base_url).toBe("https://app.example/api/tavus/llm"); // our compliance endpoint drives replies
     expect(llmLayer?.tools?.length).toBe(1);
     expect(llmLayer?.speculative_inference).toBe(true);
+    expect(layers?.tts).toMatchObject({
+      tts_engine: "cartesia",
+      tts_model_name: "sonic-3",
+      tts_emotion_control: true,
+      voice_settings: { speed: 1.08 },
+    });
     expect(layers?.conversational_flow).toMatchObject({ turn_detection_model: "sparrow-1", turn_taking_patience: "low" });
 
     const convo = calls.find((c) => c.url.endsWith("/conversations"))!;

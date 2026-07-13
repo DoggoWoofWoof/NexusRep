@@ -24,8 +24,9 @@ type TimingEvent = {
   level?: number;
 };
 
-/** Imperative handle so the HCP view can make the agent SPEAK a gated answer
- *  (verbatim, via the transport's echo) — used for typed turns while on video. */
+/** Imperative handle so platform-controlled scripted segments can make the agent
+ *  speak gated text verbatim via transport echo. Normal HCP typed turns use
+ *  `respond()` so Tavus runs the same custom-LLM path as microphone input. */
 export interface VideoAgentStageHandle {
   speak: (text: string, detailAidSlideId?: string | null) => boolean;
   respond: (text: string) => boolean;
@@ -77,10 +78,8 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
       queuedAt: Date.now(),
     };
     recordTiming({ type: "echo_queued", text: t, detailAidSlideId: detailAidSlideId ?? null });
-    // Prefer vendor "started speaking" events below, but do not trust them as audible speech.
-    // This watchdog starts waiting for remote audio energy so captions/slides do not run ahead.
-    pending.timer = window.setTimeout(() => { void notifyPendingRepEcho("audio_watchdog"); }, 900);
     pendingRepEchoRef.current = pending;
+    void notifyPendingRepEcho("echo_queued");
     return true;
   };
   const applyMuted = (m: boolean) => { setMuted(m); onMutedChange?.(m); };
@@ -182,6 +181,18 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     return { started: false, peak };
   }
 
+  async function recordAgentAudioActivity(reason: string) {
+    const startedAt = Date.now();
+    const audio = await waitForAgentAudioActivity(3000);
+    recordTiming({
+      type: "vendor_audio_activity",
+      reason,
+      delayMs: Date.now() - startedAt,
+      audioStarted: audio.started,
+      level: audio.peak,
+    });
+  }
+
   async function hydratedRepTurn(sessionId: string, utterance: string): Promise<RepTurnNotice> {
     let notice: RepTurnNotice = { text: utterance };
     try {
@@ -213,22 +224,25 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     pending.notified = true;
     if (pending.timer) window.clearTimeout(pending.timer);
     const seq = pending.seq;
-    const audio = await waitForAgentAudioActivity(reason === "audio_watchdog" ? 3600 : 3000);
     recordTiming({
       type: "caption_release",
       reason,
       delayMs: Date.now() - pending.queuedAt,
       text: pending.text,
       detailAidSlideId: pending.detailAidSlideId ?? null,
-      audioStarted: audio.started,
-      level: audio.peak,
     });
-    // If a newer echo replaced this one while we were waiting for audible speech, drop it.
     if (pendingRepEchoRef.current?.seq !== seq) return;
     const sid = sessionIdRef.current;
-    const notice = serverLogsRef.current && sid
-      ? await hydratedRepTurn(sid, pending.text)
-      : { text: pending.text, detailAidSlideId: pending.detailAidSlideId };
+    let notice: RepTurnNotice = { text: pending.text, detailAidSlideId: pending.detailAidSlideId };
+    if (serverLogsRef.current && sid) {
+      const hydrated = await hydratedRepTurn(sid, pending.text);
+      notice = {
+        ...hydrated,
+        text: pending.text,
+        detailAidSlideId: hydrated.detailAidSlideId ?? pending.detailAidSlideId,
+        sourceIds: hydrated.sourceIds,
+      };
+    }
     // If a newer echo replaced this one while the best-effort hydration was in flight, drop it.
     if (pendingRepEchoRef.current?.seq !== seq) return;
     pendingRepEchoRef.current = null;
@@ -367,16 +381,21 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // does after an echo (started/stopped speaking, utterances). Harmless.
             const w = window as unknown as { __nexusrepEvents?: { type: string; role: string; text: string }[] };
             w.__nexusrepEvents = [...(w.__nexusrepEvents ?? []).slice(-40), e];
-            // For typed turns while video is on, we already know the exact gated text we sent to
-            // Tavus via conversation.echo. Caption it when the replica starts speaking. This keeps
-            // transcript, slide cue, and audible output aligned even when Tavus does not later emit
-            // a clean conversation.utterance for the echo.
+            if (/replica|assistant|agent|ai|pal|face/i.test(e.role)) {
+              if (/conversation\.utterance\.streaming/i.test(e.type)) {
+                recordTiming({ type: "vendor_streaming_utterance", reason: e.type, text: e.text });
+              } else if (/conversation\.utterance$/i.test(e.type)) {
+                recordTiming({ type: "vendor_final_utterance", reason: e.type, text: e.text });
+              }
+            }
+            // Started-speaking is a timing marker only. Echo captions are released immediately
+            // when queued; we do not hide a fast transcript to mask slower vendor audio.
             if (
               /start(?:ed)?[_\s.-]*speak|speech[_\s.-]*start|speaking[_\s.-]*start/i.test(e.type) &&
               (!e.role || /replica|assistant|agent|ai/i.test(e.role))
             ) {
               recordTiming({ type: "vendor_started_speaking", reason: e.type });
-              void notifyPendingRepEcho("vendor_started");
+              void recordAgentAudioActivity(e.type);
             }
             // The vendor ended the call (credits exhausted, duration cap, account limit).
             // Without this the pane just froze to black with no explanation.

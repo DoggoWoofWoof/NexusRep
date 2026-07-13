@@ -1,15 +1,15 @@
 /**
  * Claude classifier (Anthropic SDK). Dynamically imported so the SDK never
  * enters a client bundle and only loads server-side when a key is configured.
- * Defaults to claude-opus-4-8; set ANTHROPIC_MODEL=claude-haiku-4-5 for a
- * cheaper/faster classifier.
+ * Defaults to claude-haiku-4-5 for realtime latency; set ANTHROPIC_MODEL to a
+ * larger model only when you intentionally accept slower turn-taking.
  */
 
 import { CLASSIFIER_SYSTEM, parseClassification } from "./shared";
 import type { LlmClassifier } from "./types";
 
 function model(): string {
-  return process.env.ANTHROPIC_MODEL || "claude-opus-4-8";
+  return process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";
 }
 
 export const claudeClassifier: LlmClassifier = {

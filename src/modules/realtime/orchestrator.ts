@@ -160,14 +160,24 @@ export class TurnOrchestrator {
       preview?: boolean;
     },
   ): Promise<TurnOutput> {
+    const turnStarted = Date.now();
+    const retrievalStarted = Date.now();
     const retrievalPromise = this.retrieval
       .retrieveApproved({
         text: ctx.text,
         context: { audience: ctx.audience, indication: ctx.indication, market: ctx.market },
       })
-      .then((result) => ({ result }), (error: unknown) => ({ error }));
+      .then(
+        (result) => ({ result, latencyMs: Date.now() - retrievalStarted }),
+        (error: unknown) => ({ error, latencyMs: Date.now() - retrievalStarted }),
+      );
+    const classificationStarted = Date.now();
     const classification = await (opts?.classify ?? this.classifier)(ctx.text);
-    await this.audit.record(ctx.sessionId, "classification", { ...classification });
+    await this.audit.record(ctx.sessionId, "classification", {
+      ...classification,
+      latencyMs: Date.now() - classificationStarted,
+      turnElapsedMs: Date.now() - turnStarted,
+    });
 
     let r = route(classification);
     // Investigational guardrail: never answer clinical specifics directly for an
@@ -200,12 +210,18 @@ export class TurnOrchestrator {
     if (r === "approved_answer") {
       const retrievalSettled = await retrievalPromise;
       if ("error" in retrievalSettled) {
+        await this.audit.record(ctx.sessionId, "retrieval", {
+          action: "retrieval_error",
+          latencyMs: retrievalSettled.latencyMs,
+        });
         return this.finalize(ctx, "fallback", classification, SAFE_FALLBACK, [], false, undefined, undefined, undefined, opts?.preview ?? false);
       }
       const result = retrievalSettled.result;
       await this.audit.record(ctx.sessionId, "retrieval", {
         accepted: result.answers.map((a) => a.id),
         rejected: result.rejected,
+        latencyMs: retrievalSettled.latencyMs,
+        turnElapsedMs: Date.now() - turnStarted,
       });
       // Coaching steering (active ordering / hcp_pointer rules): if the rep was trained
       // to lead with a topic, and an approved answer for it is among the candidates, move
@@ -259,7 +275,7 @@ export class TurnOrchestrator {
       const overrideComposer = opts?.composer;
       const activeComposer = overrideComposer !== undefined ? overrideComposer : this.composer;
       const composeFn = activeComposer?.available()
-        ? (q: string, b: ApprovedAnswer[]) => activeComposer.compose({ question: q, blocks: b, guidance, safety: isi?.text, alreadyDisclosed: disclosureGiven }).then((r) => r.text)
+        ? (q: string, b: ApprovedAnswer[]) => activeComposer.compose({ question: q, blocks: b, guidance, safety: isi?.text, alreadyDisclosed: disclosureGiven })
         : undefined;
       // Deterministic fallback (no LLM) speaks approved text + one brief slide cue; it cannot weave,
       // so the ISI is appended verbatim below.
@@ -270,7 +286,18 @@ export class TurnOrchestrator {
         try {
           // Deterministic backstop: whatever the model wove in, an embedded ISI copy is
           // removed — the platform alone decides when the exact ISI is appended.
-          const composed = stripSpeechMarkdown(stripEmbeddedIsi((await withTimeout(composeFn(ctx.text, result.answers), COMPOSER_TIMEOUT_MS)).trim(), isiStatement?.text ?? ""));
+          const composerStarted = Date.now();
+          const composeResult = await withTimeout(composeFn(ctx.text, result.answers), COMPOSER_TIMEOUT_MS);
+          const composerWallMs = Date.now() - composerStarted;
+          await this.audit.record(ctx.sessionId, "response_validation", {
+            action: "composer_success",
+            composer: activeComposer?.name,
+            latencyMs: composeResult.latencyMs,
+            wallMs: composerWallMs,
+            timeoutMs: COMPOSER_TIMEOUT_MS,
+            turnElapsedMs: Date.now() - turnStarted,
+          });
+          const composed = stripSpeechMarkdown(stripEmbeddedIsi(composeResult.text.trim(), isiStatement?.text ?? ""));
           if (!composed) {
             body = deterministic();
           } else {
@@ -292,11 +319,20 @@ export class TurnOrchestrator {
               body = deterministic();
             }
           }
-        } catch {
-          await this.audit.record(ctx.sessionId, "response_validation", { action: "composer_fallback", reason: "error_or_timeout" });
+        } catch (error) {
+          await this.audit.record(ctx.sessionId, "response_validation", {
+            action: "composer_fallback",
+            reason: error instanceof Error ? error.message : "error_or_timeout",
+            timeoutMs: COMPOSER_TIMEOUT_MS,
+            turnElapsedMs: Date.now() - turnStarted,
+          });
           body = deterministic();
         }
       } else {
+        await this.audit.record(ctx.sessionId, "response_validation", {
+          action: "deterministic_composer",
+          turnElapsedMs: Date.now() - turnStarted,
+        });
         body = deterministic();
       }
       body = sanitizeApprovedBody(body, { isiText: isi?.text, disclosureGiven, question: ctx.text });

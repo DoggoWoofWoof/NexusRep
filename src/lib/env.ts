@@ -126,6 +126,11 @@ export const env = {
   tavusApiKey,
   tavusBaseUrl: process.env.TAVUS_BASE_URL ?? "https://tavusapi.com/v2",
   tavusReplicaId: process.env.TAVUS_REPLICA_ID ?? "",
+  /** Tavus TTS layer. Explicitly set so old cached PALs are patched onto the same low-latency
+   *  speech stack Tavus now recommends for new PALs instead of inheriting stale defaults. */
+  tavusTtsEngine: process.env.NEXUSREP_TAVUS_TTS_ENGINE ?? "cartesia",
+  tavusTtsModel: process.env.NEXUSREP_TAVUS_TTS_MODEL ?? "sonic-3",
+  tavusTtsSpeed: clampNum(process.env.NEXUSREP_TAVUS_TTS_SPEED, 1.08, 0.8, 1.2),
   /** OFF by default: gallery hover plays the agent's STOCK Tavus clip only (real voice, no cost).
    *  Set NEXUSREP_AGENT_PREVIEW_RENDER=1 to also render + cache a clip of the agent speaking our
    *  script (spends Tavus credits, once per agent — cached globally). */

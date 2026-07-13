@@ -37,6 +37,11 @@ export function getRealtimeProvider(): RealtimeProvider {
       baseUrl: env.tavusBaseUrl,
       replicaId: env.tavusReplicaId,
       personaId: env.tavusPersonaId || undefined,
+      tts: {
+        engine: env.tavusTtsEngine,
+        model: env.tavusTtsModel,
+        speed: env.tavusTtsSpeed,
+      },
     });
   }
   return new MockRealtimeProvider();
