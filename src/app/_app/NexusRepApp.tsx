@@ -81,7 +81,7 @@ export interface AppState {
   userName: string | null;
 }
 
-/** Shared-password gate for the brand console — a dark, standalone sign-in in the DocNexus
+/** Shared-password gate for the brand console — a light, standalone sign-in in the DocNexus
  *  house style. Doctors never see this; they open the rep from their invite link. The password
  *  is entered by the user; on success the server sets an httpOnly session cookie and we reveal
  *  the console. */
@@ -106,23 +106,25 @@ function LoginScreen({ onSuccess }: { onSuccess: (name: string | null) => void }
     }
   };
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", fontFamily: "var(--dn-font-sans)", padding: 20, position: "relative", overflow: "hidden" }}>
-      {/* ambient blue glow */}
-      <div style={{ position: "absolute", top: "-22%", left: "50%", transform: "translateX(-50%)", width: 640, height: 640, background: "radial-gradient(circle, rgba(37,99,235,.18), transparent 62%)", pointerEvents: "none" }} />
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #f7f9fe 0%, #eef3fb 100%)", fontFamily: "var(--dn-font-sans)", padding: 20, position: "relative", overflow: "hidden" }}>
+      {/* faint blue glow */}
+      <div style={{ position: "absolute", top: "-22%", left: "50%", transform: "translateX(-50%)", width: 640, height: 640, background: "radial-gradient(circle, rgba(37,99,235,.10), transparent 62%)", pointerEvents: "none" }} />
       <div style={{ position: "relative", width: 388, maxWidth: "100%" }}>
-        <div style={{ position: "relative", overflow: "hidden", borderRadius: 18, border: "1px solid rgba(255,255,255,.10)", background: "rgba(255,255,255,.028)", boxShadow: "0 30px 80px -20px rgba(0,0,0,.85)", padding: "34px 32px", backdropFilter: "blur(18px)" }}>
+        <div style={{ position: "relative", overflow: "hidden", borderRadius: 18, border: "1px solid var(--dn-border)", background: "#fff", boxShadow: "0 26px 64px -20px rgba(6,73,172,.24)", padding: "34px 32px" }}>
           {/* top accent line */}
-          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 1.5, background: "linear-gradient(90deg, transparent, rgba(96,165,250,.85), transparent)" }} />
-          {/* logo lockup */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, marginBottom: 22 }}>
-            <img src="/assets/docnexus-logo.png" alt="DocNexus" style={{ height: 22, filter: "brightness(0) invert(1)" }} />
-            <span style={{ font: "700 12px/1 var(--dn-font-sans)", padding: "5px 8px", background: "rgba(96,165,250,.20)", color: "#dbeafe", borderRadius: 7, border: "1px solid rgba(96,165,250,.35)" }}>NexusRep</span>
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 1.5, background: "linear-gradient(90deg, transparent, rgba(37,99,235,.75), transparent)" }} />
+          {/* logo lockup — the white docnexus wordmark sits on a small navy brand chip so it reads on white (its real colors, not inverted) */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 22 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 9, background: "var(--dn-brand-dark)", borderRadius: 11, padding: "8px 12px" }}>
+              <img src="/assets/docnexus-logo.png" alt="DocNexus" style={{ height: 19 }} />
+              <span style={{ font: "700 11.5px/1 var(--dn-font-sans)", padding: "4px 7px", background: "rgba(96,165,250,.22)", color: "#dbeafe", borderRadius: 6, border: "1px solid rgba(96,165,250,.35)" }}>NexusRep</span>
+            </span>
           </div>
           {/* tagline */}
           <div style={{ textAlign: "center", marginBottom: 26 }}>
-            <h1 style={{ font: "600 19px/1.25 var(--dn-font-sans)", letterSpacing: "-0.015em", color: "#fff", margin: 0 }}>Train and launch a compliant AI rep.</h1>
-            <p style={{ font: "400 13.5px/1.5 var(--dn-font-sans)", color: "rgba(255,255,255,.65)", margin: "7px 0 0" }}>The AI Rep Studio for Life Sciences.</p>
-            <p style={{ font: "600 11px/1 var(--dn-font-sans)", letterSpacing: ".14em", textTransform: "uppercase", color: "rgba(255,255,255,.36)", margin: "16px 0 0" }}>Sign in to continue</p>
+            <h1 style={{ font: "600 19px/1.25 var(--dn-font-sans)", letterSpacing: "-0.015em", color: "var(--dn-fg)", margin: 0 }}>Train and launch a compliant AI rep.</h1>
+            <p style={{ font: "400 13.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "7px 0 0" }}>The AI Rep Studio for Life Sciences.</p>
+            <p style={{ font: "600 11px/1 var(--dn-font-sans)", letterSpacing: ".14em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", margin: "16px 0 0" }}>Sign in to continue</p>
           </div>
           {/* fields */}
           {(["user", "pw"] as const).map((f) => {
@@ -130,7 +132,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (name: string | null) => void }
             const active = focus === f;
             return (
               <div key={f} style={{ marginBottom: isPw ? 0 : 14 }}>
-                <label htmlFor={`nx-${f}`} style={{ display: "block", font: "600 10.5px/1 var(--dn-font-sans)", letterSpacing: ".12em", textTransform: "uppercase", color: "rgba(255,255,255,.55)", marginBottom: 8 }}>{isPw ? "Password" : "Username"}</label>
+                <label htmlFor={`nx-${f}`} style={{ display: "block", font: "600 10.5px/1 var(--dn-font-sans)", letterSpacing: ".12em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginBottom: 8 }}>{isPw ? "Password" : "Username"}</label>
                 <input
                   id={`nx-${f}`}
                   type={isPw ? "password" : "text"}
@@ -144,30 +146,30 @@ function LoginScreen({ onSuccess }: { onSuccess: (name: string | null) => void }
                   placeholder={isPw ? "Enter password" : "Enter username"}
                   style={{
                     width: "100%", boxSizing: "border-box", padding: "11px 14px", borderRadius: 10,
-                    border: `1px solid ${err ? "rgba(248,113,113,.7)" : active ? "rgba(96,165,250,.6)" : "rgba(255,255,255,.15)"}`,
-                    background: active ? "rgba(255,255,255,.06)" : "rgba(255,255,255,.04)",
-                    color: "#fff", font: "400 14px/1 var(--dn-font-sans)", outline: "none",
-                    boxShadow: active ? "0 0 0 3px rgba(59,130,246,.22)" : "none", transition: "border-color .15s ease, box-shadow .15s ease, background .15s ease",
+                    border: `1px solid ${err ? "var(--dn-danger)" : active ? "var(--dn-brand-light)" : "var(--dn-border-strong)"}`,
+                    background: active ? "#fff" : "var(--dn-surface-2)",
+                    color: "var(--dn-fg)", font: "400 14px/1 var(--dn-font-sans)", outline: "none",
+                    boxShadow: active ? "0 0 0 3px rgba(37,99,235,.16)" : "none", transition: "border-color .15s ease, box-shadow .15s ease, background .15s ease",
                   }}
                 />
               </div>
             );
           })}
-          {err && <p role="alert" style={{ font: "500 12.5px/1.4 var(--dn-font-sans)", color: "#f87171", textAlign: "center", margin: "12px 0 0" }}>{err}</p>}
+          {err && <p role="alert" style={{ font: "500 12.5px/1.4 var(--dn-font-sans)", color: "var(--dn-danger)", textAlign: "center", margin: "12px 0 0" }}>{err}</p>}
           <button
             onClick={() => void submit()}
             disabled={busy || !user || !pw}
             style={{
               width: "100%", marginTop: 18, padding: "11px 0", borderRadius: 10, border: "none",
-              background: "linear-gradient(90deg, #3b82f6, #4f46e5)", color: "#fff",
+              background: "linear-gradient(90deg, #2563eb, #4f46e5)", color: "#fff",
               font: "600 14px/1 var(--dn-font-sans)", letterSpacing: ".01em",
-              cursor: busy || !user || !pw ? "default" : "pointer", opacity: busy || !user || !pw ? 0.45 : 1,
-              boxShadow: "0 10px 26px -8px rgba(59,130,246,.5)", transition: "opacity .15s ease",
+              cursor: busy || !user || !pw ? "default" : "pointer", opacity: busy || !user || !pw ? 0.5 : 1,
+              boxShadow: "0 10px 26px -10px rgba(37,99,235,.5)", transition: "opacity .15s ease",
             }}
           >
             {busy ? "Signing in…" : "Sign In"}
           </button>
-          <p style={{ font: "400 12px/1.5 var(--dn-font-sans)", color: "rgba(255,255,255,.42)", textAlign: "center", margin: "18px 0 0" }}>
+          <p style={{ font: "400 12px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", textAlign: "center", margin: "18px 0 0" }}>
             Doctors don&apos;t sign in — they open the rep from their invite link.
           </p>
         </div>
