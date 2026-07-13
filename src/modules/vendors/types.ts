@@ -86,6 +86,27 @@ export function hasAgentCatalog(p: unknown): p is AgentCatalog {
   return typeof c?.listAgents === "function" && typeof c?.createAgent === "function";
 }
 
+/** A rendered voice-preview clip of an agent speaking a script in its OWN voice. `status`
+ *  "generating" → the render is in flight (caller shows the stock-clip fallback meanwhile);
+ *  "ready" → `url` plays the real-voice intro; "unavailable" → provider can't render. */
+export interface AgentPreviewClip {
+  status: "ready" | "generating" | "unavailable";
+  url?: string;
+}
+
+/** Optional capability: providers that can RENDER a short clip of an agent speaking arbitrary
+ *  text in the agent's own voice/face (e.g. Tavus video generation). Feature-detected via
+ *  hasAgentPreview(). `ensurePreviewClip` is idempotent + cache-friendly: it reuses an existing
+ *  render for (videoName) and only starts a new one when none exists, so credits are spent at
+ *  most once per (agent, script). */
+export interface AgentPreviewStudio {
+  ensurePreviewClip(input: { agentId: string; script: string; videoName: string }): Promise<AgentPreviewClip>;
+}
+
+export function hasAgentPreview(p: unknown): p is AgentPreviewStudio {
+  return typeof (p as Partial<AgentPreviewStudio> | null)?.ensurePreviewClip === "function";
+}
+
 export interface RealtimeProvider {
   readonly name: string;
   startSession(config: RealtimeSessionConfig): Promise<RealtimeSession>;

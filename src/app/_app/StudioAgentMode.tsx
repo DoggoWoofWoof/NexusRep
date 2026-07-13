@@ -14,6 +14,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useAgents, setAgentsCache, type AgentInfo, type AgentsPayload } from "../_components/useAgents";
 import { OpenAiVoiceProvider, toneSpeechOpts } from "@lib/browser-speech";
+import { toneLabel, previewScript, voiceForName, PREVIEW_VOICES } from "@lib/agent-preview";
 
 const card: React.CSSProperties = { background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)" };
 const cardHead: React.CSSProperties = { padding: "12px 14px 10px", borderBottom: "1px solid var(--dn-border)", font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" };
@@ -39,8 +40,6 @@ function settingOf(a: AgentInfo): string | null {
 const isDeprecated = (a: AgentInfo): boolean => /deprecated/i.test(a.name);
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-const toneLabel = (style?: string): string => (style === "warm" ? "warm" : style === "clinical" ? "clinical" : "professional");
-
 // A short browser-voice sample of the built-in rep TONE (professional / warm / clinical), so
 // tapping a tone lets you hear how the rep's OWN voice is styled. (Gallery agents speak their own
 // intro on hover — see AgentThumb — which is unrelated to this tone control.)
@@ -51,44 +50,48 @@ function sampleTone(style?: string): void {
   void toneSampleVoice.speak(`This is the ${toneLabel(style)} tone for your rep's built-in voice.`, { tone: style, ...toneSpeechOpts(style) });
 }
 
-// The 10 OpenAI TTS voices the /api/voice/speak route accepts. A gallery agent is pinned to ONE
-// of them by name hash, so the SAME agent always previews in the SAME voice (Office vs Home
-// "Charlie" sound identical), and its cached clip replays instantly after the first hover.
-const PREVIEW_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"];
-function voiceForName(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return PREVIEW_VOICES[h % PREVIEW_VOICES.length]!;
-}
-/** Clean gallery name for the spoken intro: just the person, no setting/version/"deprecated". */
-function spokenName(name: string): string {
-  return name.replace(/\(.*?\)/g, "").split(/\s[-–—]\s/)[0]!.replace(/deprecated/gi, "").trim() || name;
-}
-// One reused preview voice for the whole gallery — hovering a new card cancels the previous intro.
+// One reused synthetic voice for the whole gallery (the opt-in OpenAI fallback) — hovering a new
+// card cancels the previous intro.
 let galleryPreviewVoice: OpenAiVoiceProvider | null = null;
-function previewAgentIntro(name: string, tone?: string): void {
+function speakSyntheticIntro(name: string, tone?: string, voice?: string): void {
   if (!galleryPreviewVoice) { galleryPreviewVoice = new OpenAiVoiceProvider(); void galleryPreviewVoice.warmup(); }
   galleryPreviewVoice.cancel();
-  const who = spokenName(name);
-  // Two lines, no internal jargon (never "replica"/"API"): a plain self-intro that invites picking.
-  const script = `Hi, I'm ${who}. This is my ${toneLabel(tone)} voice — if you like it, select this and move to the next step.`;
-  void galleryPreviewVoice.speak(script, { tone, voice: voiceForName(name), ...toneSpeechOpts(tone) });
+  void galleryPreviewVoice.speak(previewScript(name, tone), { tone, voice: voice || voiceForName(name), ...toneSpeechOpts(tone) });
 }
-function stopAgentIntro(): void {
+function stopSyntheticIntro(): void {
   galleryPreviewVoice?.cancel();
 }
 
-/** Thumbnail that SHOWS the agent's first frame once the card scrolls into view, and on hover
- *  PLAYS the clip (face in motion, kept MUTED) while a clean generated voice speaks a two-line
- *  self-intro ("Hi, I'm {name}. This is my {tone} voice — …"). The stock clip's own audio is
- *  never played, so no vendor jargon is ever heard; the voice is pinned per agent name so the
- *  same person always sounds the same, and the clip caches after the first hover. The <video> is
- *  mounted lazily via IntersectionObserver so a 90-cell gallery doesn't open 90 connections at
- *  once. Memoized so filtering/typing doesn't re-reconcile every cell. */
-const AgentThumb = memo(function AgentThumb({ agent, tone }: { agent: AgentInfo; tone?: string }) {
+// Client cache of RESOLVED Tavus preview clip URLs, keyed by agentId + tone, so a ready clip
+// plays instantly on the next hover with zero extra requests. Rendering (minutes) happens once.
+const previewClipCache = new Map<string, string>();
+const previewKey = (agentId: string, tone?: string) => `${agentId}:${toneLabel(tone)}`;
+async function fetchPreviewClip(agentId: string, name: string, tone?: string): Promise<string | null> {
+  const key = previewKey(agentId, tone);
+  const cached = previewClipCache.get(key);
+  if (cached) return cached;
+  try {
+    const res = await fetch("/api/realtime/agents/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId, name, tone }) });
+    const d = (await res.json()) as { status?: string; url?: string };
+    if (d.status === "ready" && d.url) { previewClipCache.set(key, d.url); return d.url; }
+  } catch { /* fall back to the stock clip / synthetic voice */ }
+  return null;
+}
+
+/** Thumbnail that SHOWS the agent's first frame once the card scrolls into view. On hover it plays
+ *  the agent speaking a short self-intro:
+ *   • default — the agent's OWN voice: a Tavus-rendered clip of it speaking our script (primary,
+ *     rendered once + cached); until that render is ready it plays the agent's stock clip audio
+ *     (still the real voice, just the vendor's line) — never a synthetic voice.
+ *   • synthetic mode (opt-in) — the clip plays MUTED for the moving face while an OpenAI voice
+ *     speaks our script in the chosen voice + tone.
+ *  The <video> is mounted lazily via IntersectionObserver so a 90-cell gallery doesn't open 90
+ *  connections at once. Memoized so filtering/typing doesn't re-reconcile every cell. */
+const AgentThumb = memo(function AgentThumb({ agent, tone, synthetic, openaiVoice }: { agent: AgentInfo; tone?: string; synthetic?: boolean; openaiVoice?: string }) {
   const [inView, setInView] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const hoveringRef = useRef(false);
   const initials = agent.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
   useEffect(() => {
@@ -102,17 +105,36 @@ const AgentThumb = memo(function AgentThumb({ agent, tone }: { agent: AgentInfo;
     return () => io.disconnect();
   }, [agent.thumbnailUrl]);
 
-  const onEnter = () => {
-    // Play the clip for the moving face, but keep it MUTED — the stock footage's own audio is
-    // where vendor jargon lives. The agent's spoken intro is our own two-line script instead.
+  const playClip = (src: string, muted: boolean) => {
     const v = videoRef.current;
-    if (v) { v.muted = true; v.currentTime = 0; void v.play().catch(() => {}); }
-    previewAgentIntro(agent.name, tone);
+    if (!v) return;
+    if (v.getAttribute("src") !== src) { v.setAttribute("src", src); v.load(); }
+    v.muted = muted; v.currentTime = 0; void v.play().catch(() => {});
+  };
+
+  const onEnter = () => {
+    hoveringRef.current = true;
+    const stock = agent.thumbnailUrl;
+    if (synthetic) {
+      // Video only (muted) + a synthetic voice speaking our script.
+      if (stock) playClip(stock, true);
+      speakSyntheticIntro(agent.name, tone, openaiVoice);
+      return;
+    }
+    // Real-voice mode: a ready Tavus clip (agent speaking our script) plays immediately; otherwise
+    // the stock clip's real audio carries the hover until the render finishes and gets cached.
+    const ready = previewClipCache.get(previewKey(agent.id, tone));
+    if (ready) { playClip(ready, false); return; }
+    if (stock) playClip(stock, false);
+    void fetchPreviewClip(agent.id, agent.name, tone).then((url) => {
+      if (url && hoveringRef.current) playClip(url, false); // swap in the real-voice clip once rendered
+    });
   };
   const onLeave = () => {
+    hoveringRef.current = false;
     const v = videoRef.current;
-    if (v) { v.pause(); v.muted = true; v.currentTime = 0; }
-    stopAgentIntro();
+    if (v) { v.pause(); v.muted = true; v.currentTime = 0; if (agent.thumbnailUrl && v.getAttribute("src") !== agent.thumbnailUrl) { v.setAttribute("src", agent.thumbnailUrl); v.load(); } }
+    stopSyntheticIntro();
   };
 
   return (
@@ -155,6 +177,12 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
   const [kindFilter, setKindFilter] = useState<"all" | "personal" | "stock">("all");
   const [setting, setSetting] = useState<string | null>(null);
   const [showDeprecated, setShowDeprecated] = useState(false);
+  // Preview-voice options (collapsible). Default OFF: hover previews use the agent's OWN voice
+  // (Tavus-rendered clip, stock audio while it renders). Toggle ON to preview with a synthetic
+  // OpenAI voice instead — same face, chosen voice. "" = auto (a stable voice per agent name).
+  const [voiceOptionsOpen, setVoiceOptionsOpen] = useState(false);
+  const [syntheticVoice, setSyntheticVoice] = useState(false);
+  const [openaiVoice, setOpenaiVoice] = useState("");
 
   // A configured-deployment load problem (e.g. the vendor list timed out) shows above the grid;
   // action feedback (msg, set by post) takes precedence. Unconfigured notes render in the empty state.
@@ -225,7 +253,7 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
           const isActive = a.id === activeId;
           return (
             <div key={a.id} data-testid="agent-card" style={{ border: isActive ? "2px solid var(--dn-brand-base)" : "1px solid var(--dn-border)", borderRadius: 11, padding: 7, background: "#fff", display: "flex", flexDirection: "column", gap: 7 }}>
-              <AgentThumb agent={a} tone={voiceStyle} />
+              <AgentThumb agent={a} tone={voiceStyle} synthetic={syntheticVoice} openaiVoice={openaiVoice} />
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, minWidth: 0 }}>
                 <span title={a.name} style={{ font: "600 11px/1.25 var(--dn-font-sans)", color: "var(--dn-fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
                 {a.status !== "ready" && (
@@ -259,7 +287,7 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
           <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 9 }}>
             {data?.configured ? (
               <>
-                {active ? <AgentThumb agent={active} /> : null}
+                {active ? <AgentThumb agent={active} tone={voiceStyle} synthetic={syntheticVoice} openaiVoice={openaiVoice} /> : null}
                 <div style={{ font: "600 12.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>
                   {active?.name ?? data.selectedName ?? (activeId ? activeId : "Default agent")}
                   <span style={{ font: "500 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginLeft: 7 }}>{data.selected ? "your pick" : "deployment default"}</span>
@@ -290,6 +318,34 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
             </div>
             <div style={hint}>Sets how the rep <strong>speaks and writes</strong> — it restyles composed chat/pitch wording and changes the built-in voice&apos;s delivery (<strong>tap a tone to hear it</strong>). This is separate from a video agent&apos;s own voice, which you hear by <strong>hovering the agent</strong> in the gallery.</div>
           </div>
+        </div>
+
+        <div style={card}>
+          <div
+            onClick={() => setVoiceOptionsOpen((v) => !v)}
+            style={{ ...cardHead, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", borderBottom: voiceOptionsOpen ? "1px solid var(--dn-border)" : "none" }}
+          >
+            <span>Preview voice {syntheticVoice && <span style={{ font: "600 9px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)", background: "rgba(6,73,172,.08)", padding: "3px 6px", borderRadius: 5, marginLeft: 4 }}>synthetic</span>}</span>
+            <span style={{ color: "var(--dn-fg-subtle)", fontSize: 13 }}>{voiceOptionsOpen ? "▾" : "▸"}</span>
+          </div>
+          {voiceOptionsOpen && (
+            <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 9 }}>
+              <div style={hint}>On hover an agent introduces itself in <strong>its own voice</strong> (rendered once from the agent, then cached). Prefer a synthetic voice for the preview instead — same face, a chosen voice?</div>
+              <label style={{ display: "flex", gap: 7, alignItems: "center", cursor: "pointer", font: "500 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>
+                <input type="checkbox" checked={syntheticVoice} onChange={(e) => setSyntheticVoice(e.target.checked)} />
+                Use a synthetic voice for previews
+              </label>
+              {syntheticVoice && (
+                <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-fg-muted)" }}>Voice</span>
+                  <select value={openaiVoice} onChange={(e) => setOpenaiVoice(e.target.value)} style={{ ...input, cursor: "pointer" }}>
+                    <option value="">Auto (per agent)</option>
+                    {PREVIEW_VOICES.map((v) => <option key={v} value={v}>{cap(v)}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
         </div>
 
         <div style={card}>

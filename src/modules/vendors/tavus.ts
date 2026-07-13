@@ -22,6 +22,8 @@ import type {
   RealtimeSessionConfig,
   RealtimeSystemEvent,
   AgentCatalog,
+  AgentPreviewStudio,
+  AgentPreviewClip,
   AgentSummary,
   ToolResult,
 } from "./types";
@@ -35,6 +37,14 @@ export interface TavusConfig {
 }
 
 interface CreatePersonaResponse { persona_id?: string }
+interface TavusVideo {
+  video_id?: string;
+  video_name?: string;
+  status?: string;
+  download_url?: string;
+  stream_url?: string;
+  hosted_url?: string;
+}
 interface CreateConversationResponse {
   conversation_id?: string;
   conversation_url?: string;
@@ -52,7 +62,7 @@ const personaPrompts = new Map<string, string>();
  *  persona POST instead of each creating (and leaking) their own. */
 const personaCreations = new Map<string, Promise<string>>();
 
-export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog {
+export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, AgentPreviewStudio {
   readonly name = "tavus";
   private conversationId: string | null = null;
   /** Recorded app→CVI intents; the browser replays these over the Daily channel. */
@@ -271,6 +281,42 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog {
     });
     if (!r.replica_id) throw new Error("tavus: no replica_id returned");
     return { id: r.replica_id, name: input.name, kind: "personal", status: "training" };
+  }
+
+  /**
+   * Render (or reuse) a short clip of an agent speaking `script` in ITS OWN voice/face via Tavus
+   * video generation (POST /v2/videos). Idempotent by `videoName`: an existing render is reused
+   * (ready → its URL; still rendering → "generating"), so we spend credits at most once per
+   * (agent, script). A render takes minutes — the caller shows the stock clip until it's ready.
+   */
+  async ensurePreviewClip(input: { agentId: string; script: string; videoName: string }): Promise<AgentPreviewClip> {
+    try {
+      const existing = await this.findVideoByName(input.videoName);
+      if (existing) return TavusRealtimeProvider.previewFromVideo(existing);
+      const created = await this.api<TavusVideo>("/videos", {
+        method: "POST",
+        body: JSON.stringify({ replica_id: input.agentId, script: input.script, video_name: input.videoName }),
+      });
+      return TavusRealtimeProvider.previewFromVideo(created);
+    } catch (e) {
+      console.error("[tavus] preview clip render failed:", e instanceof Error ? e.message : e);
+      return { status: "unavailable" };
+    }
+  }
+
+  private async findVideoByName(name: string): Promise<TavusVideo | undefined> {
+    const res = await this.api<{ data?: TavusVideo[] }>("/videos?limit=100", { method: "GET" });
+    return (res.data ?? []).find((v) => v.video_name === name);
+  }
+
+  private static previewFromVideo(v: TavusVideo): AgentPreviewClip {
+    const status = String(v.status ?? "").toLowerCase();
+    // Only a DIRECT media URL is playable in a <video> tag. hosted_url is a tavus.video webpage
+    // (present even while queued), so it must never be treated as a ready clip.
+    const url = v.download_url || v.stream_url || undefined;
+    if ((status === "ready" || status === "completed") && url) return { status: "ready", url };
+    if (status === "error" || status === "deleted") return { status: "unavailable" };
+    return { status: "generating" };
   }
 
   /** List active conversations and end them all — frees concurrent-conversation slots after
