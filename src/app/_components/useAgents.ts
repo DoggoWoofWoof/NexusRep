@@ -25,8 +25,10 @@ export interface AgentsPayload {
   configured: boolean;
   selected: string | null;
   selectedName: string | null;
-  /** Persisted synthetic-voice override (OpenAI voice id) — the agent's permanent voice, or null. */
+  /** Persisted video-off voice (OpenAI voice id) — the rep's voice when video is off, or null = default. */
   voiceId?: string | null;
+  /** When true, that voice is used for the whole conversation (video on too), not just video-off. */
+  voiceWholeConvo?: boolean;
   defaultReplicaId: string | null;
   agents: AgentInfo[];
   note?: string;

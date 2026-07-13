@@ -27,7 +27,7 @@ export interface StudioState extends Entity {
   activation?: { hcpIds: string[]; launchedAt: string | null };
   /** Video-agent choice from the Studio's Agent gallery. agentId null/"" = use the
    *  deployment default. Voice is bundled with the agent, so this IS the voice choice too. */
-  appearance?: { agentId: string | null; agentName?: string | null; voiceId?: string | null };
+  appearance?: { agentId: string | null; agentName?: string | null; voiceId?: string | null; voiceWholeConvo?: boolean };
   /** Trainable guided-overview script: section order + approved slide references. */
   guidedOverview: PresentationPlan;
 }
@@ -143,7 +143,7 @@ export class StudioService {
    *  override. A field left undefined is preserved; agentId null clears back to default; voiceId
    *  null clears the override (back to the agent's own/replica voice). So a voice-only update
    *  keeps the selected face, and an agent-only update keeps the chosen voice. */
-  async setAppearance(aiRepId: AiRepId, appearance: { agentId?: string | null; agentName?: string | null; voiceId?: string | null }): Promise<StudioSnapshot | null> {
+  async setAppearance(aiRepId: AiRepId, appearance: { agentId?: string | null; agentName?: string | null; voiceId?: string | null; voiceWholeConvo?: boolean }): Promise<StudioSnapshot | null> {
     return this.serialize(aiRepId, async () => {
     const s = await this.states.get(aiRepId);
     if (!s) return null;
@@ -153,6 +153,7 @@ export class StudioService {
         agentId: appearance.agentId !== undefined ? appearance.agentId : prev.agentId ?? null,
         agentName: appearance.agentName !== undefined ? appearance.agentName : prev.agentName ?? null,
         voiceId: appearance.voiceId !== undefined ? appearance.voiceId : prev.voiceId ?? null,
+        voiceWholeConvo: appearance.voiceWholeConvo !== undefined ? appearance.voiceWholeConvo : prev.voiceWholeConvo ?? false,
       },
     });
     return updated ? snapshot(updated) : null;

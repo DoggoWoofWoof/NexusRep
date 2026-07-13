@@ -225,7 +225,7 @@ export function StudioScreen({ app }: { app: AppState }) {
       </div>
 
       {mode === "setup" && <BuildMode repName={repName} snap={snap} post={post} app={app} refresh={refresh} />}
-      {mode === "agent" && <StudioAgentMode voiceStyle={snap?.rep.voiceStyle} onVoiceStyle={(v) => post({ action: "answer", questionKey: "voice_style", value: v })} />}
+      {mode === "agent" && <StudioAgentMode />}
       {mode === "pitch" && <PitchMode voiceStyle={snap?.rep.voiceStyle} />}
       {mode === "train" && <TrainMode rules={rules} post={post} repName={repName} app={app} voiceStyle={snap?.rep.voiceStyle} />}
       {mode === "rules" && <RulesMode rules={rules} post={post} />}

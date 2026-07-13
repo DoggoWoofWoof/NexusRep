@@ -24,6 +24,9 @@ interface Payload {
   /** Persisted synthetic-voice override (an OpenAI voice id) — the agent's PERMANENT voice when
    *  set; null = use the agent's own/replica voice. */
   voiceId: string | null;
+  /** When true, the synthetic voice is used for the WHOLE conversation (video on too), not just
+   *  the video-off audio. */
+  voiceWholeConvo: boolean;
   defaultReplicaId: string | null;
   agents: AgentSummary[];
   note?: string;
@@ -38,6 +41,7 @@ async function buildPayload(): Promise<Payload> {
   const selected = snap?.appearance?.agentId || null;
   const selectedName = snap?.appearance?.agentName ?? null;
   const voiceId = snap?.appearance?.voiceId ?? null;
+  const voiceWholeConvo = snap?.appearance?.voiceWholeConvo ?? false;
   let agents: AgentSummary[] = [];
   let note: string | undefined;
   if (hasAgentCatalog(provider)) {
@@ -49,7 +53,7 @@ async function buildPayload(): Promise<Payload> {
   } else {
     note = "Live video agents aren't connected on this deployment — the built-in 3D avatar represents the rep meanwhile.";
   }
-  return { configured, selected, selectedName, voiceId, defaultReplicaId: env.tavusReplicaId || null, agents, note };
+  return { configured, selected, selectedName, voiceId, voiceWholeConvo, defaultReplicaId: env.tavusReplicaId || null, agents, note };
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -66,7 +70,7 @@ export async function GET(): Promise<NextResponse> {
 export async function POST(req: Request): Promise<NextResponse> {
   try {
     const body = (await req.json().catch(() => ({}))) as {
-      action?: unknown; agentId?: unknown; name?: unknown; trainVideoUrl?: unknown; voiceId?: unknown;
+      action?: unknown; agentId?: unknown; name?: unknown; trainVideoUrl?: unknown; voiceId?: unknown; voiceWholeConvo?: unknown;
     };
     const c = await getContainer();
     const provider = getRealtimeProvider();
@@ -101,10 +105,14 @@ export async function POST(req: Request): Promise<NextResponse> {
     }
 
     if (body.action === "voice") {
-      // Persist (or clear) the synthetic-voice override. When set it becomes the agent's permanent
-      // voice (off-video TTS + previews); null reverts to the agent's own/replica voice.
-      const voiceId = body.voiceId === null ? null : typeof body.voiceId === "string" ? body.voiceId.trim() || null : null;
-      await c.studio.setAppearance(c.demo.aiRepId, { voiceId });
+      // Persist the video-off voice and/or its whole-conversation scope. Each field is optional so
+      // a voice-only or scope-only update preserves the other (setAppearance merges). voiceId set →
+      // the rep's video-off voice; null → the app default. voiceWholeConvo true → use it for the
+      // whole conversation (video on too), not just when video is off.
+      const patch: { voiceId?: string | null; voiceWholeConvo?: boolean } = {};
+      if ("voiceId" in body) patch.voiceId = typeof body.voiceId === "string" && body.voiceId.trim() ? body.voiceId.trim() : null;
+      if (typeof body.voiceWholeConvo === "boolean") patch.voiceWholeConvo = body.voiceWholeConvo;
+      await c.studio.setAppearance(c.demo.aiRepId, patch);
       return NextResponse.json(await buildPayload());
     }
 

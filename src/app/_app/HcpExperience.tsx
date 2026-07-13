@@ -76,9 +76,12 @@ export function HcpExperience({ app }: { app?: AppState }) {
     if (!voiceOn) return;
     setSpeaking(true);
     try {
-      if (threeD && liveRef.current?.isReady()) await liveRef.current.speak(text);
-      // A synthetic-voice override (chosen in the Agent gallery) is the rep's permanent off-video
-      // voice; otherwise the provider's default (the agent's own voice).
+      // "Whole conversation" scope: the chosen video-off voice is the rep's voice throughout, so we
+      // speak via our TTS even when video is on (the face still shows; live Tavus CVI is the one
+      // exception it can't override). Otherwise: the video avatar's own voice when video is on, and
+      // the chosen video-off voice (or app default) when video is off.
+      if (brand?.voiceWholeConvo && brand?.voiceId) await voiceRef.current?.speak(text, { voice: brand.voiceId, voiceHint: speechVoiceHint(), ...toneSpeechOpts(brand?.voiceStyle) });
+      else if (threeD && liveRef.current?.isReady()) await liveRef.current.speak(text);
       else await voiceRef.current?.speak(text, { tone: brand?.voiceStyle, voice: brand?.voiceId || undefined, voiceHint: speechVoiceHint(), ...toneSpeechOpts(brand?.voiceStyle) });
     } finally { setSpeaking(false); }
   }

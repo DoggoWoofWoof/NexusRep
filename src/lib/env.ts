@@ -124,6 +124,10 @@ export const env = {
   tavusApiKey,
   tavusBaseUrl: process.env.TAVUS_BASE_URL ?? "https://tavusapi.com/v2",
   tavusReplicaId: process.env.TAVUS_REPLICA_ID ?? "",
+  /** OFF by default: gallery hover plays the agent's STOCK Tavus clip only (real voice, no cost).
+   *  Set NEXUSREP_AGENT_PREVIEW_RENDER=1 to also render + cache a clip of the agent speaking our
+   *  script (spends Tavus credits, once per agent — cached globally). */
+  agentPreviewRender: process.env.NEXUSREP_AGENT_PREVIEW_RENDER === "1",
   tavusPersonaId: process.env.TAVUS_PERSONA_ID ?? "",
   /** Shared secret Tavus presents to our custom-LLM endpoint (Authorization: Bearer). */
   tavusLlmKey: process.env.TAVUS_LLM_KEY ?? "",
