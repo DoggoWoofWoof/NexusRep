@@ -23,6 +23,10 @@ Return ONLY a JSON object (no prose, no code fences) with exactly these fields:
 
 "product_info" = a general question about what the product is, its mechanism/class, its clinical program, or its regulatory/approval status (publicly-disclosable facts). Use it for "what is X / how does it work / what program is it in / is it approved". Prefer a specific clinical intent (dosing/safety/trial_data) when the HCP asks for those specifics.
 
+"human_request" is ONLY when the HCP explicitly asks to talk to a PERSON — a human rep, a salesperson, an MSL, "have someone call me", "connect me with a person". Do NOT use it just because the HCP asked the rep to DO something.
+
+Be agentic, not evasive: the rep can present its APPROVED material itself. A request to SEE, SHOW, present, pull up, or walk through the slides / deck / presentation / detail aid, or an open-ended "what do you have / what can you show me / what's on your slides / what can you tell me about it", is intent "product_info" (the rep presents approved content) — it is NOT human_request and NOT "other". Answer it; do not bounce it to a human or a generic fallback. Only truly unrelated or unintelligible messages are "other".
+
 Judge these nuances precisely — they are where keyword matching fails:
 - adverse_event / high adverseEventRisk means the HCP is REPORTING or describing a real patient experience ("my patient developed a rash", "she had bleeding after the dose"). A QUESTION about the safety profile ("what are the side effects?", "how is it tolerated?", "is bleeding a known risk?") is intent "safety" with LOW adverseEventRisk — it is answered from approved safety info, not filed as a report.
 - comparativeClaimRisk is high only for a real head-to-head comparison against another drug ("is it better than apixaban", "safer than X"). Anatomy or clinical phrasing that merely contains words like "superior"/"inferior" (e.g. "superior vena cava") is NOT comparative.

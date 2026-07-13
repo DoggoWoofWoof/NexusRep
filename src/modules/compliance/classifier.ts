@@ -48,6 +48,9 @@ const INTENT_TERMS: Record<Exclude<Intent, "off_label" | "adverse_event" | "comp
   product_info: [
     "what is", "what's", "tell me about", "tell me more", "explain", "mechanism", "how does", "moa",
     "program", "indication", "investigational", "fast track", "development", "class of drug",
+    // Presentation requests — the rep presents its OWN approved deck (agentic), not a human handoff.
+    "slide", "slides", "deck", "presentation", "detail aid", "show me", "show your", "show your slides",
+    "walk me through", "what do you have", "what can you show", "present",
   ],
 };
 

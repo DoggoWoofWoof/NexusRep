@@ -105,12 +105,6 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     onRepTurnRef.current = onRepTurn;
   }, [onRepTurn]);
 
-  function clearPendingRepEcho() {
-    const pending = pendingRepEchoRef.current;
-    if (pending?.timer) window.clearTimeout(pending.timer);
-    pendingRepEchoRef.current = null;
-  }
-
   // Arm a rep caption and HOLD it until the replica's audio actually starts, so the caption lands
   // with the voice instead of ahead of it (the greeting used to caption before it was spoken).
   // If the replica is already speaking, release now; otherwise a started-speaking event releases it,
@@ -119,7 +113,10 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   function armRepCaption(input: { text: string; detailAidSlideId?: string | null }) {
     const t = input.text.trim();
     if (!t) return;
-    clearPendingRepEcho();
+    // A NEW turn arrived (often a barge-in) before the previous caption was released. FLUSH the
+    // previous one (show it) rather than dropping it — else an answer the rep already started
+    // speaking never lands in the transcript. Idempotent: no-op if it was already released.
+    void notifyPendingRepEcho("superseded", true);
     const pending: PendingRepEcho = {
       seq: ++pendingRepEchoSeqRef.current,
       text: t,
