@@ -21,6 +21,9 @@ interface Payload {
   /** Currently-selected agent id (studio override), or null = deployment default. */
   selected: string | null;
   selectedName: string | null;
+  /** Persisted synthetic-voice override (an OpenAI voice id) — the agent's PERMANENT voice when
+   *  set; null = use the agent's own/replica voice. */
+  voiceId: string | null;
   defaultReplicaId: string | null;
   agents: AgentSummary[];
   note?: string;
@@ -34,6 +37,7 @@ async function buildPayload(): Promise<Payload> {
   const snap = await c.studio.get(c.demo.aiRepId);
   const selected = snap?.appearance?.agentId || null;
   const selectedName = snap?.appearance?.agentName ?? null;
+  const voiceId = snap?.appearance?.voiceId ?? null;
   let agents: AgentSummary[] = [];
   let note: string | undefined;
   if (hasAgentCatalog(provider)) {
@@ -45,7 +49,7 @@ async function buildPayload(): Promise<Payload> {
   } else {
     note = "Live video agents aren't connected on this deployment — the built-in 3D avatar represents the rep meanwhile.";
   }
-  return { configured, selected, selectedName, defaultReplicaId: env.tavusReplicaId || null, agents, note };
+  return { configured, selected, selectedName, voiceId, defaultReplicaId: env.tavusReplicaId || null, agents, note };
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -53,7 +57,7 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json(await buildPayload());
   } catch (error) {
     return NextResponse.json({
-      configured: false, selected: null, selectedName: null, defaultReplicaId: null, agents: [],
+      configured: false, selected: null, selectedName: null, voiceId: null, defaultReplicaId: null, agents: [],
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -62,7 +66,7 @@ export async function GET(): Promise<NextResponse> {
 export async function POST(req: Request): Promise<NextResponse> {
   try {
     const body = (await req.json().catch(() => ({}))) as {
-      action?: unknown; agentId?: unknown; name?: unknown; trainVideoUrl?: unknown;
+      action?: unknown; agentId?: unknown; name?: unknown; trainVideoUrl?: unknown; voiceId?: unknown;
     };
     const c = await getContainer();
     const provider = getRealtimeProvider();
@@ -96,10 +100,18 @@ export async function POST(req: Request): Promise<NextResponse> {
       return NextResponse.json({ ...payload, note: "Training started — this takes a few hours. The agent appears here as “Training” until it's ready." });
     }
 
+    if (body.action === "voice") {
+      // Persist (or clear) the synthetic-voice override. When set it becomes the agent's permanent
+      // voice (off-video TTS + previews); null reverts to the agent's own/replica voice.
+      const voiceId = body.voiceId === null ? null : typeof body.voiceId === "string" ? body.voiceId.trim() || null : null;
+      await c.studio.setAppearance(c.demo.aiRepId, { voiceId });
+      return NextResponse.json(await buildPayload());
+    }
+
     return NextResponse.json({ ...(await buildPayload()), error: "Unknown action." });
   } catch (error) {
     return NextResponse.json({
-      configured: false, selected: null, selectedName: null, defaultReplicaId: null, agents: [],
+      configured: false, selected: null, selectedName: null, voiceId: null, defaultReplicaId: null, agents: [],
       error: error instanceof Error ? error.message : String(error),
     });
   }

@@ -216,6 +216,25 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
   const activeId = data?.selected ?? data?.defaultReplicaId ?? null;
   const active = agents.find((a) => a.id === activeId) ?? null;
 
+  // Reflect the PERSISTED synthetic-voice override (set it as the rep's permanent voice once
+  // chosen). Syncs the collapsible controls to whatever's saved server-side.
+  useEffect(() => {
+    const v = data?.voiceId ?? null;
+    setSyntheticVoice(Boolean(v));
+    if (v) setOpenaiVoice(v);
+  }, [data?.voiceId]);
+  const persistVoice = (voiceId: string | null) =>
+    void post({ action: "voice", voiceId }, "voice", voiceId ? "Synthetic voice set — this is your rep's permanent voice now." : "Reverted to the agent's own voice.");
+  const toggleSynthetic = (checked: boolean) => {
+    if (checked) {
+      const v = openaiVoice || voiceForName(active?.name ?? data?.selectedName ?? "rep");
+      setSyntheticVoice(true); setOpenaiVoice(v); persistVoice(v);
+    } else {
+      setSyntheticVoice(false); persistVoice(null);
+    }
+  };
+  const changeVoice = (v: string) => { setOpenaiVoice(v); persistVoice(v); };
+
   // Setting chips are data-derived (only settings that actually exist), most common first.
   const settingChips = useMemo(() => {
     const counts = new Map<string, number>();
@@ -330,16 +349,15 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
           </div>
           {voiceOptionsOpen && (
             <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 9 }}>
-              <div style={hint}>On hover an agent introduces itself in <strong>its own voice</strong> (rendered once from the agent, then cached). Prefer a synthetic voice for the preview instead — same face, a chosen voice?</div>
+              <div style={hint}>By default the agent speaks in <strong>its own voice</strong> (rendered once, then cached). Turn this on to <strong>override it with a synthetic voice</strong> — same face, the voice you pick. Once set it&apos;s this rep&apos;s <strong>permanent</strong> voice (previews + the off-video rep).</div>
               <label style={{ display: "flex", gap: 7, alignItems: "center", cursor: "pointer", font: "500 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>
-                <input type="checkbox" checked={syntheticVoice} onChange={(e) => setSyntheticVoice(e.target.checked)} />
-                Use a synthetic voice for previews
+                <input type="checkbox" checked={syntheticVoice} onChange={(e) => toggleSynthetic(e.target.checked)} disabled={busy === "voice"} />
+                Override with a synthetic voice
               </label>
               {syntheticVoice && (
                 <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                   <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-fg-muted)" }}>Voice</span>
-                  <select value={openaiVoice} onChange={(e) => setOpenaiVoice(e.target.value)} style={{ ...input, cursor: "pointer" }}>
-                    <option value="">Auto (per agent)</option>
+                  <select value={openaiVoice || PREVIEW_VOICES[0]} onChange={(e) => changeVoice(e.target.value)} disabled={busy === "voice"} style={{ ...input, cursor: "pointer" }}>
                     {PREVIEW_VOICES.map((v) => <option key={v} value={v}>{cap(v)}</option>)}
                   </select>
                 </label>

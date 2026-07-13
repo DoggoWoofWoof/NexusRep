@@ -142,6 +142,9 @@ export interface PublicBrand {
    *  delivery so the tone chosen in the Studio is heard by doctors too. Set by the /api/brand
    *  route from the live persona (not part of the static profile). */
   voiceStyle?: string;
+  /** Synthetic-voice override chosen in the Agent gallery (an OpenAI voice id). When set it is the
+   *  rep's PERMANENT voice for off-video TTS + previews, overriding the agent's own/replica voice. */
+  voiceId?: string | null;
 }
 
 export interface BrandCampaign {

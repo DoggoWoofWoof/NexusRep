@@ -1,0 +1,4 @@
+{
+  "clips": {},
+  "_note": "Global cache of rendered agent voice-preview clips, keyed by <replicaId>:<tone> → a playable media URL. Committed to the repo so a clip generated once (locally or on Render) is cloned from GitHub and never regenerated anywhere. The /api/realtime/agents/preview route reads this first and appends new renders to it."
+}

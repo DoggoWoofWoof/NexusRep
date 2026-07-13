@@ -26,6 +26,9 @@ export async function GET(): Promise<NextResponse> {
   // The persona tone chosen in the Studio also drives the doctor view's TTS delivery, so the
   // rep sounds the same to doctors as it does in preview/training.
   const voiceStyle = snap?.rep.persona.voiceStyle;
+  // Persisted synthetic-voice override (Agent gallery). When set it's the rep's permanent voice —
+  // the doctor view's off-video TTS speaks in it instead of the agent's own/replica voice.
+  const voiceId = snap?.appearance?.voiceId ?? undefined;
 
   // The on-screen deck = the authored profile deck + LIVE approved content (uploads that
   // cleared MLR). This is what lets a brand configured purely by chat + upload render real
@@ -53,5 +56,5 @@ export async function GET(): Promise<NextResponse> {
       ? derived
       : brand.tryQuestions;
 
-  return NextResponse.json({ ...toPublicBrand(brand), voiceStyle, tryQuestions, deck: mergeLiveDeck(brand.deck, live) });
+  return NextResponse.json({ ...toPublicBrand(brand), voiceStyle, voiceId, tryQuestions, deck: mergeLiveDeck(brand.deck, live) });
 }

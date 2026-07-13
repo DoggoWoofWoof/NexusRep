@@ -1,20 +1,21 @@
 /**
- * Agent voice-preview endpoint (Studio · Agent gallery hover). Renders — once — a short clip of
- * the agent speaking the intro script in ITS OWN voice via the realtime provider's preview
- * capability (Tavus video generation), and caches the ready URL per (agent, tone). A render takes
- * minutes, so the client plays the agent's stock-clip audio (or the opt-in synthetic voice) until
- * this returns status "ready". Vendor-neutral: any provider implementing AgentPreviewStudio works.
+ * Agent voice-preview endpoint (Studio · Agent gallery hover). Renders — once, ever — a short clip
+ * of the agent speaking the intro script in ITS OWN voice via the realtime provider's preview
+ * capability (Tavus video generation), and caches the ready URL GLOBALLY in a committed manifest
+ * (public/agent-previews.json) keyed by agent+tone. A rendered clip is cloned from GitHub, so it is
+ * never regenerated in any environment (clean or seeded, local or Render) and no credits are
+ * re-spent. A render takes minutes, so the client plays the agent's stock-clip audio (the proper
+ * fallback) — or the opt-in synthetic voice — until this returns status "ready". Vendor-neutral:
+ * any provider implementing AgentPreviewStudio works.
  */
 
 import { NextResponse } from "next/server";
 import { getRealtimeProvider, hasAgentPreview, type AgentPreviewClip } from "@modules/vendors";
 import { previewScript, previewVideoName, toneLabel } from "@lib/agent-preview";
+import { getCachedPreview, putCachedPreview } from "@lib/agent-preview-cache";
 
 export const dynamic = "force-dynamic";
 
-// Process-wide cache of preview outcomes, keyed by agent+tone. A "ready" URL is served forever;
-// a "generating" entry is re-checked against the provider each request until it flips to ready.
-const previewCache = new Map<string, AgentPreviewClip>();
 const keyOf = (agentId: string, tone: string) => `${agentId}:${toneLabel(tone)}`;
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -26,19 +27,21 @@ export async function POST(req: Request): Promise<NextResponse> {
     if (!agentId) return NextResponse.json({ status: "unavailable", error: "agentId required" });
 
     const key = keyOf(agentId, tone);
-    const cached = previewCache.get(key);
-    if (cached?.status === "ready") return NextResponse.json(cached);
+    // 1. Durable global cache — a clip rendered anywhere (committed to the repo) is reused here.
+    const cachedUrl = await getCachedPreview(key);
+    if (cachedUrl) return NextResponse.json({ status: "ready", url: cachedUrl } satisfies AgentPreviewClip);
 
     const provider = getRealtimeProvider();
     if (!hasAgentPreview(provider)) return NextResponse.json({ status: "unavailable" } satisfies AgentPreviewClip);
 
+    // 2. Render (or reuse an in-flight render, matched by deterministic video name → no dup spend).
     const clip = await provider.ensurePreviewClip({
       agentId,
       script: previewScript(name, tone),
       videoName: previewVideoName(agentId, tone),
     });
-    // Cache ready/unavailable terminally; keep re-checking a still-rendering clip on the next hover.
-    if (clip.status !== "generating") previewCache.set(key, clip);
+    // 3. Persist a ready clip to the committed manifest so it's cloned from GitHub next time.
+    if (clip.status === "ready" && clip.url) await putCachedPreview(key, clip.url);
     return NextResponse.json(clip);
   } catch (error) {
     return NextResponse.json({ status: "unavailable", error: error instanceof Error ? error.message : String(error) });

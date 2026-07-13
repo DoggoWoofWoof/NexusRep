@@ -25,6 +25,8 @@ export interface AgentsPayload {
   configured: boolean;
   selected: string | null;
   selectedName: string | null;
+  /** Persisted synthetic-voice override (OpenAI voice id) — the agent's permanent voice, or null. */
+  voiceId?: string | null;
   defaultReplicaId: string | null;
   agents: AgentInfo[];
   note?: string;

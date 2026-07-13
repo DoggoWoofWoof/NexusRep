@@ -77,7 +77,9 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setSpeaking(true);
     try {
       if (threeD && liveRef.current?.isReady()) await liveRef.current.speak(text);
-      else await voiceRef.current?.speak(text, { tone: brand?.voiceStyle, voiceHint: speechVoiceHint(), ...toneSpeechOpts(brand?.voiceStyle) });
+      // A synthetic-voice override (chosen in the Agent gallery) is the rep's permanent off-video
+      // voice; otherwise the provider's default (the agent's own voice).
+      else await voiceRef.current?.speak(text, { tone: brand?.voiceStyle, voice: brand?.voiceId || undefined, voiceHint: speechVoiceHint(), ...toneSpeechOpts(brand?.voiceStyle) });
     } finally { setSpeaking(false); }
   }
 
