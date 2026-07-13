@@ -72,25 +72,23 @@ export function HcpExperience({ app }: { app?: AppState }) {
     return () => { voiceRef.current?.cancel(); document.removeEventListener("fullscreenchange", onFs); if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current); };
   }, []);
 
-  async function speak(text: string, onStart?: () => void) {
+  async function speak(text: string) {
     if (!voiceOn) return;
     setSpeaking(true);
     try {
       // "Whole conversation" scope: the chosen video-off voice is the rep's voice throughout, so we
       // speak via our TTS even when video is on (the face still shows; live Tavus CVI is the one
       // exception it can't override). Otherwise: the video avatar's own voice when video is on, and
-      // the chosen video-off voice (or app default) when video is off. onStart fires when audio begins.
-      if (brand?.voiceWholeConvo && brand?.voiceId) await voiceRef.current?.speak(text, { voice: brand.voiceId, voiceHint: speechVoiceHint(), onStart, ...toneSpeechOpts(brand?.voiceStyle) });
-      else if (threeD && liveRef.current?.isReady()) { onStart?.(); await liveRef.current.speak(text); }
-      else await voiceRef.current?.speak(text, { tone: brand?.voiceStyle, voice: brand?.voiceId || undefined, voiceHint: speechVoiceHint(), onStart, ...toneSpeechOpts(brand?.voiceStyle) });
+      // the chosen video-off voice (or app default) when video is off.
+      if (brand?.voiceWholeConvo && brand?.voiceId) await voiceRef.current?.speak(text, { voice: brand.voiceId, voiceHint: speechVoiceHint(), ...toneSpeechOpts(brand?.voiceStyle) });
+      else if (threeD && liveRef.current?.isReady()) await liveRef.current.speak(text);
+      else await voiceRef.current?.speak(text, { tone: brand?.voiceStyle, voice: brand?.voiceId || undefined, voiceHint: speechVoiceHint(), ...toneSpeechOpts(brand?.voiceStyle) });
     } finally { setSpeaking(false); }
   }
 
   // The captions panel IS the transcript — one source of truth, no separate system. A rep turn is
-  // shown EXACTLY when the rep speaks it and idempotently: called on the voice's onStart (so the
-  // caption lands in sync with the audio, never before it) AND once more after speak() resolves as
-  // a safety net (so a TTS hiccup can never drop the line). Consecutive-duplicate guarded, so the
-  // two calls collapse to one bubble.
+  // appended as soon as the gated answer arrives (never held back to match the voice). Guarded
+  // against a consecutive duplicate so it can't double a bubble if called more than once.
   function showRep(text: string) {
     const t = text.trim();
     if (!t) return;
