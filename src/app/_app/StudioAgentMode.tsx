@@ -13,18 +13,32 @@
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useAgents, setAgentsCache, type AgentInfo, type AgentsPayload } from "../_components/useAgents";
-import { BrowserVoiceProvider, toneSpeechOpts } from "@lib/browser-speech";
+import { BrowserVoiceProvider, toneSpeechOpts, playTonePreview, stopTonePreview } from "@lib/browser-speech";
 
 const card: React.CSSProperties = { background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)" };
 const cardHead: React.CSSProperties = { padding: "12px 14px 10px", borderBottom: "1px solid var(--dn-border)", font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" };
 const hint: React.CSSProperties = { font: "400 10.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" };
 const input: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "8px 10px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 12px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", background: "#fff" };
 
-const VOICE_STYLES: { value: string; label: string; blurb: string }[] = [
-  { value: "professional", label: "Professional", blurb: "Crisp and to the point" },
-  { value: "warm", label: "Warm", blurb: "Friendly, conversational" },
-  { value: "clinical", label: "Clinical", blurb: "Measured, data-first" },
+// Each tone has a short first-person demo (spoken as a ~15-20s preview via the cached tone voice)
+// so tapping a tone lets you actually hear the difference. The intro ("Hi, I'm <name>, and this
+// is my <tone> voice.") is prepended at play time with the SELECTED agent's clean first name.
+const VOICE_STYLES: { value: string; label: string; blurb: string; demo: string }[] = [
+  { value: "professional", label: "Professional", blurb: "Crisp and to the point", demo: "In this voice I keep things crisp and to the point — I lead with the key approved facts, skip the filler, and respect the doctor's time." },
+  { value: "warm", label: "Warm", blurb: "Friendly, conversational", demo: "In this voice I sound like a friendly colleague — approachable and easy to talk to, so doctors feel comfortable asking questions while I stay on the approved information." },
+  { value: "clinical", label: "Clinical", blurb: "Measured, data-first", demo: "In this voice I'm measured and precise — I present the approved facts calmly and directly, the way a medical specialist would." },
 ];
+
+/** The agent's speakable first name: drop the setting suffix ("- Office"), any parenthetical,
+ *  version tokens ("V2"), and "deprecated" — the preview says the NAME only, never the metadata. */
+function repFirstName(agentName: string): string {
+  const base = agentName.replace(/\(.*?\)/g, " ").split(/\s[-–—]\s/)[0] ?? "";
+  return base
+    .replace(/\bdeprecated\b/gi, " ")
+    .replace(/\bv?\d+\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 /** Gallery names often carry a setting suffix ("Mary - Office", "Steph - Selfie (…)").
  *  Derive it so the gallery can be filtered by setting; version suffixes collapse
@@ -45,17 +59,34 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 // speech. This is the point of the tone control: you hear it right where you pick the agent.
 let galleryVoice: BrowserVoiceProvider | null = null;
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+/** A short spoken preview in the agent's name + the SELECTED tone. It's a cached server-TTS clip
+ *  (generated once per agent+tone, then instant free playback), falling back to the browser voice
+ *  when TTS isn't available. Debounced so sweeping the mouse across the grid never stacks clips. */
+function previewLineFor(agentName: string): string {
+  const name = repFirstName(agentName);
+  return name
+    ? `Hi, I'm ${name}. This is how I'll sound when I speak with your doctors.`
+    : "This is how your rep will sound when it speaks with a doctor.";
+}
+/** Play `text` in the selected tone: cached server clip, else the browser voice. */
+function speakPreview(text: string, style?: string): void {
+  void playTonePreview(style, {
+    text,
+    fallback: () => {
+      if (!galleryVoice) { galleryVoice = new BrowserVoiceProvider(); void galleryVoice.warmup(); }
+      galleryVoice.cancel();
+      void galleryVoice.speak(text, toneSpeechOpts(style));
+    },
+  });
+}
 function galleryHoverSpeak(agentName: string, style?: string): void {
   if (hoverTimer) clearTimeout(hoverTimer);
-  const first = agentName.split(/\s[-–—]\s/)[0]?.trim() || "your rep";
-  hoverTimer = setTimeout(() => {
-    if (!galleryVoice) { galleryVoice = new BrowserVoiceProvider(); void galleryVoice.warmup(); }
-    galleryVoice.cancel();
-    void galleryVoice.speak(`Hi, I'm ${first}. Here's how I sound when I speak with your doctors.`, toneSpeechOpts(style));
-  }, 280);
+  const line = previewLineFor(agentName);
+  hoverTimer = setTimeout(() => speakPreview(line, style), 280);
 }
 function galleryHoverStop(): void {
   if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+  stopTonePreview();
   galleryVoice?.cancel();
 }
 
@@ -262,7 +293,12 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
           <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 9 }}>
             <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
               {VOICE_STYLES.map((v) => (
-                <button key={v.value} onClick={() => void onVoiceStyle(v.value)} title={v.blurb} style={{ padding: "7px 12px", borderRadius: 16, border: voiceStyle === v.value ? "1.5px solid var(--dn-brand-base)" : "1px solid var(--dn-border)", background: voiceStyle === v.value ? "var(--dn-brand-base)" : "#fff", color: voiceStyle === v.value ? "#fff" : "var(--dn-fg-muted)", font: "600 11px/1 var(--dn-font-sans)", cursor: "pointer" }}>{v.label}</button>
+                <button key={v.value} onClick={() => {
+                  void onVoiceStyle(v.value);
+                  const name = repFirstName(active?.name ?? data?.selectedName ?? "");
+                  const intro = name ? `Hi, I'm ${name}, and this is my ${v.label.toLowerCase()} voice.` : `This is my ${v.label.toLowerCase()} voice.`;
+                  speakPreview(`${intro} ${v.demo}`, v.value);
+                }} title={`${v.blurb} — tap to hear it`} style={{ padding: "7px 12px", borderRadius: 16, border: voiceStyle === v.value ? "1.5px solid var(--dn-brand-base)" : "1px solid var(--dn-border)", background: voiceStyle === v.value ? "var(--dn-brand-base)" : "#fff", color: voiceStyle === v.value ? "#fff" : "var(--dn-fg-muted)", font: "600 11px/1 var(--dn-font-sans)", cursor: "pointer" }}>{v.label}</button>
               ))}
             </div>
             <div style={hint}>Sets how the rep <strong>speaks and writes</strong> — it restyles composed chat/pitch wording and changes the built-in voice&apos;s delivery. <strong>Hover any agent</strong> in the gallery to hear this tone. (A live video agent&apos;s own voice is part of the agent you pick.)</div>

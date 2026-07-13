@@ -32,6 +32,37 @@ export function toneSpeechOpts(style?: string): SpeakOptions {
   }
 }
 
+let previewAudio: HTMLAudioElement | null = null;
+
+/** Play a cached, tone-styled preview clip from /api/voice/preview — a ONE-TIME server TTS
+ *  generation, then instant free playback (no live video call). Falls back to the provided
+ *  browser-voice callback when there's no clip (no/invalid TTS key, or any error). Client-only. */
+export async function playTonePreview(tone: string | undefined, opts?: { text?: string; fallback?: () => void }): Promise<void> {
+  stopTonePreview();
+  try {
+    const qs = new URLSearchParams({ tone: tone || "professional" });
+    if (opts?.text) qs.set("text", opts.text);
+    const res = await fetch(`/api/voice/preview?${qs.toString()}`);
+    if (!res.ok || res.status === 204) { opts?.fallback?.(); return; }
+    const blob = await res.blob();
+    if (!blob.size) { opts?.fallback?.(); return; }
+    const url = URL.createObjectURL(blob);
+    const a = new Audio(url);
+    previewAudio = a;
+    a.onended = () => { try { URL.revokeObjectURL(url); } catch { /* noop */ } };
+    await a.play();
+  } catch {
+    opts?.fallback?.();
+  }
+}
+
+export function stopTonePreview(): void {
+  if (previewAudio) {
+    try { previewAudio.pause(); } catch { /* noop */ }
+    previewAudio = null;
+  }
+}
+
 export interface ClientVoiceProvider {
   readonly name: string;
   /** Speak text aloud. Resolves when speech finishes (or the pacing fallback elapses). */
