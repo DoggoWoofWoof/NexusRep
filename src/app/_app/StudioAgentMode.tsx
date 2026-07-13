@@ -13,7 +13,7 @@
 
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useAgents, setAgentsCache, type AgentInfo, type AgentsPayload } from "../_components/useAgents";
-import { BrowserVoiceProvider, toneSpeechOpts } from "@lib/browser-speech";
+import { OpenAiVoiceProvider, toneSpeechOpts } from "@lib/browser-speech";
 
 const card: React.CSSProperties = { background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)" };
 const cardHead: React.CSSProperties = { padding: "12px 14px 10px", borderBottom: "1px solid var(--dn-border)", font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" };
@@ -42,12 +42,12 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 // A short browser-voice sample of the built-in rep TONE (professional / warm / clinical), so
 // tapping a tone lets you hear how the rep's OWN voice is styled. (Gallery agents play their own
 // replica voice on hover — see AgentThumb — which is unrelated to this tone control.)
-let toneSampleVoice: BrowserVoiceProvider | null = null;
+let toneSampleVoice: OpenAiVoiceProvider | null = null;
 function sampleTone(style?: string): void {
-  if (!toneSampleVoice) { toneSampleVoice = new BrowserVoiceProvider(); void toneSampleVoice.warmup(); }
+  if (!toneSampleVoice) { toneSampleVoice = new OpenAiVoiceProvider(); void toneSampleVoice.warmup(); }
   toneSampleVoice.cancel();
   const label = style === "warm" ? "warm" : style === "clinical" ? "clinical" : "professional";
-  void toneSampleVoice.speak(`This is the ${label} tone for your rep's built-in voice.`, toneSpeechOpts(style));
+  void toneSampleVoice.speak(`This is the ${label} tone for your rep's built-in voice.`, { tone: style, ...toneSpeechOpts(style) });
 }
 
 /** Thumbnail that SHOWS the agent's first frame once the card scrolls into view, and PLAYS the

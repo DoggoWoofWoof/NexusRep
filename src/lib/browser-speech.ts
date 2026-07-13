@@ -15,6 +15,10 @@ export interface SpeakOptions {
   pitch?: number;
   /** Substring hint to prefer a particular installed voice (e.g. "en"). */
   voiceHint?: string;
+  /** Rep tone (professional / warm / clinical) — drives OpenAI TTS style instructions. */
+  tone?: string;
+  /** OpenAI TTS voice id override (else the server default / OPENAI_TTS_VOICE). */
+  voice?: string;
 }
 
 /** Map a persona voice tone to TTS delivery params, so picking a tone audibly changes how the
@@ -35,6 +39,8 @@ export function toneSpeechOpts(style?: string): SpeakOptions {
 
 export interface ClientVoiceProvider {
   readonly name: string;
+  /** Warm up any resources (voices/models) so the first speak() isn't cold. */
+  warmup(): Promise<void>;
   /** Speak text aloud. Resolves when speech finishes (or the pacing fallback elapses). */
   speak(text: string, opts?: SpeakOptions): Promise<void>;
   cancel(): void;
@@ -176,6 +182,80 @@ export class BrowserVoiceProvider implements ClientVoiceProvider {
   cancel(): void {
     this.speakSession++;
     if (hasSynthesis()) window.speechSynthesis.cancel();
+  }
+}
+
+/**
+ * Rep voice via OpenAI TTS (a real, natural voice with the selected tone) when the video replica
+ * is OFF. It POSTs the answer text to /api/voice/speak and plays the returned mp3; if there's no
+ * TTS key (204) or any error, it transparently falls back to the browser Web Speech voice. Same
+ * ClientVoiceProvider shape (speak/cancel), so call sites don't change — and cancel() aborts the
+ * in-flight request + stops playback for barge-in.
+ */
+export class OpenAiVoiceProvider implements ClientVoiceProvider {
+  readonly name = "openai-tts";
+  private readonly fallback = new BrowserVoiceProvider();
+  private current: HTMLAudioElement | null = null;
+  private ctrl: AbortController | null = null;
+  private gen = 0;
+  constructor(private readonly voice?: string) {}
+
+  async warmup(): Promise<void> {
+    await this.fallback.warmup();
+  }
+
+  audioAvailable(): boolean {
+    return true; // tries TTS, then falls back to the browser voice
+  }
+
+  private stopAudio(): void {
+    if (this.current) {
+      try { this.current.pause(); } catch { /* noop */ }
+      this.current = null;
+    }
+  }
+
+  async speak(text: string, opts?: SpeakOptions): Promise<void> {
+    const body = (text ?? "").trim();
+    if (!body) return;
+    this.stopAudio();
+    const gen = ++this.gen;
+    const ctrl = new AbortController();
+    this.ctrl = ctrl;
+    try {
+      const res = await fetch("/api/voice/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: body, tone: opts?.tone, voice: opts?.voice ?? this.voice }),
+        signal: ctrl.signal,
+      });
+      if (this.gen !== gen) return; // superseded by a newer speak/cancel (barge-in)
+      if (!res.ok || res.status === 204) return void (await this.fallback.speak(body, opts));
+      const blob = await res.blob();
+      if (this.gen !== gen) return;
+      if (!blob.size) return void (await this.fallback.speak(body, opts));
+      const url = URL.createObjectURL(blob);
+      const a = new Audio(url);
+      this.current = a;
+      await new Promise<void>((resolve) => {
+        const done = () => { try { URL.revokeObjectURL(url); } catch { /* noop */ } resolve(); };
+        a.onended = done;
+        a.onerror = done;
+        a.play().catch(done);
+      });
+    } catch (e) {
+      // AbortError = intentional barge-in; anything else → browser fallback (unless superseded).
+      if (this.gen === gen && (e as { name?: string })?.name !== "AbortError") {
+        await this.fallback.speak(body, opts);
+      }
+    }
+  }
+
+  cancel(): void {
+    this.gen++; // supersede any in-flight speak
+    if (this.ctrl) { try { this.ctrl.abort(); } catch { /* noop */ } this.ctrl = null; }
+    this.stopAudio();
+    this.fallback.cancel();
   }
 }
 

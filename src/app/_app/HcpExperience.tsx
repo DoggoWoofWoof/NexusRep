@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { AppState } from "./NexusRepApp";
-import { createRecognizer, setSpeechLanguage, speechVoiceHint, toneSpeechOpts, BrowserVoiceProvider, type ClientRecognizer } from "@lib/browser-speech";
+import { createRecognizer, setSpeechLanguage, speechVoiceHint, toneSpeechOpts, OpenAiVoiceProvider, type ClientRecognizer, type ClientVoiceProvider } from "@lib/browser-speech";
 import { LiveAvatar, type LiveAvatarHandle } from "../_components/LiveAvatar";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { SlideView } from "../_components/SlideView";
@@ -48,7 +48,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
   const [urlHcpId, setUrlHcpId] = useState("");
   const inviteHcpId = app?.sessionHcpId || urlHcpId;
 
-  const voiceRef = useRef<BrowserVoiceProvider | null>(null);
+  const voiceRef = useRef<ClientVoiceProvider | null>(null);
   const liveRef = useRef<LiveAvatarHandle | null>(null);
   const videoAgentRef = useRef<VideoAgentStageHandle | null>(null);
   const recRef = useRef<ClientRecognizer | null>(null);
@@ -62,7 +62,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
   useEffect(() => { setSpeechLanguage(brand?.language); }, [brand]);
   useEffect(() => {
     try { setUrlHcpId(new URLSearchParams(window.location.search).get("hcp") ?? ""); } catch { /* no window */ }
-    voiceRef.current = new BrowserVoiceProvider();
+    voiceRef.current = new OpenAiVoiceProvider(); // real TTS voice off-video, browser fallback
     void voiceRef.current.warmup();
     const rec = createRecognizer();
     recRef.current = rec;
@@ -77,7 +77,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setSpeaking(true);
     try {
       if (threeD && liveRef.current?.isReady()) await liveRef.current.speak(text);
-      else await voiceRef.current?.speak(text, { voiceHint: speechVoiceHint(), ...toneSpeechOpts(brand?.voiceStyle) });
+      else await voiceRef.current?.speak(text, { tone: brand?.voiceStyle, voiceHint: speechVoiceHint(), ...toneSpeechOpts(brand?.voiceStyle) });
     } finally { setSpeaking(false); }
   }
 

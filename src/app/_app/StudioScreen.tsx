@@ -9,7 +9,7 @@ import { isOverviewPrompt } from "./overviewPrompt";
 import { SlideView } from "../_components/SlideView";
 import { VideoAgentStage } from "../_components/VideoAgentStage";
 import { StudioAgentMode } from "./StudioAgentMode";
-import { BrowserVoiceProvider, createRecognizer, setSpeechLanguage, toneSpeechOpts, type ClientRecognizer } from "@lib/browser-speech";
+import { OpenAiVoiceProvider, createRecognizer, setSpeechLanguage, toneSpeechOpts, type ClientRecognizer } from "@lib/browser-speech";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 
 type StudioMode = "setup" | "agent" | "pitch" | "train" | "rules" | "readiness";
@@ -828,16 +828,16 @@ function loadTrainState(brandName?: string): TrainStore {
 /** Split a rep answer into its coachable body and the active approved ISI block. */
 // The trainer HEARS a recoached line immediately — same browser voice the doctor
 // view uses, so coaching judges cadence and tone, not just the words on screen.
-let trainerVoice: BrowserVoiceProvider | null = null;
+let trainerVoice: OpenAiVoiceProvider | null = null;
 async function speakCoached(text: string, style?: string): Promise<void> {
   const [body] = splitIsi(text);
   if (!body.trim()) return;
   if (!trainerVoice) {
-    trainerVoice = new BrowserVoiceProvider();
+    trainerVoice = new OpenAiVoiceProvider();
     await trainerVoice.warmup();
   }
   trainerVoice.cancel();
-  void trainerVoice.speak(body, toneSpeechOpts(style)); // tone changes the delivery, not just the words
+  void trainerVoice.speak(body, { tone: style, ...toneSpeechOpts(style) }); // real TTS voice + tone (browser fallback)
 }
 
 function splitIsi(text: string): [string, string | null] {
