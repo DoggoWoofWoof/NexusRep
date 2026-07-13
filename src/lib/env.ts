@@ -131,6 +131,14 @@ export const env = {
   tavusPersonaId: process.env.TAVUS_PERSONA_ID ?? "",
   /** Shared secret Tavus presents to our custom-LLM endpoint (Authorization: Bearer). */
   tavusLlmKey: process.env.TAVUS_LLM_KEY ?? "",
+  /** Tavus avatar speed path: default deterministic so the custom-LLM endpoint can gate and
+   *  return approved text quickly. Set NEXUSREP_TAVUS_COMPOSE=llm only when you accept extra
+   *  avatar latency for model-rephrased wording. */
+  tavusComposeMode: pick<"deterministic" | "llm">(
+    process.env.NEXUSREP_TAVUS_COMPOSE,
+    ["deterministic", "llm"],
+    "deterministic",
+  ),
   /** Publicly-reachable base URL of THIS app (for Tavus custom-LLM + callback). */
   publicBaseUrl: process.env.NEXUSREP_PUBLIC_URL ?? "http://localhost:3000",
 

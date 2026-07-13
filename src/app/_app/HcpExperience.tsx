@@ -239,6 +239,12 @@ export function HcpExperience({ app }: { app?: AppState }) {
         }
         return;
       }
+      if (videoOn) {
+        const sent = videoAgentRef.current?.respond(text) ?? false;
+        finishPending(gen);
+        if (!sent) setNotice("The video rep is still connecting. Give it a moment, then ask again.");
+        return;
+      }
       const res = await fetch("/api/conversation/turn", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, sessionId, newSession: openNew, hcpId: inviteHcpId || undefined }),

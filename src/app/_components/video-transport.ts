@@ -22,6 +22,8 @@ export interface VideoCallTransport {
   join(events: VideoTransportEvents): Promise<void>;
   /** Make the agent speak our (already gated) text verbatim. False if not connected. */
   speak(text: string): boolean;
+  /** Send typed doctor text into the PAL as user input, so Tavus runs its fast response path. */
+  respond(text: string): boolean;
   /** Enable/disable the doctor's microphone on the call (push-to-mute). */
   setMicEnabled(on: boolean): void;
   leave(): void;
@@ -104,6 +106,33 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
         c.sendAppMessage({ message_type: "conversation", event_type: "conversation.interrupt", conversation_id: conversationId }, "*");
         setTimeout(echo, 220);
       } catch { echo(); }
+      return true;
+    },
+
+    respond(text: string): boolean {
+      const t = (text || "").trim();
+      if (!call || !t) return false;
+      const c = call;
+      const respond = () => {
+        try {
+          c.sendAppMessage({
+            message_type: "conversation",
+            event_type: "conversation.respond",
+            conversation_id: conversationId,
+            properties: { text: t },
+          }, "*");
+        } catch {
+          /* not connected */
+        }
+      };
+      try {
+        // For typed barge-in, stop any in-progress answer and let Tavus process the text
+        // as if the doctor had just spoken it. This avoids the slow app-fetch-then-echo path.
+        c.sendAppMessage({ message_type: "conversation", event_type: "conversation.interrupt", conversation_id: conversationId }, "*");
+        setTimeout(respond, 90);
+      } catch {
+        respond();
+      }
       return true;
     },
 

@@ -27,6 +27,15 @@
 - **Reduced perceived latency:** retrieval now starts in parallel with classification, and
   slow LLM composition falls back after 2.5s to the approved deterministic builder instead
   of keeping Tavus silent. Browser TTS also falls back quickly when OpenAI TTS cold-starts.
+- **Fixed the Tavus slow typed path:** normal typed questions while video is on now use
+  Tavus `conversation.respond` (the PAL treats the text as user input and calls our custom
+  LLM) instead of the old app-fetch-then-`conversation.echo` path. This removes the extra
+  browser round-trip and lets Tavus start its own response pipeline sooner.
+- **Tuned Tavus response timing:** PAL personas are created/patched with
+  `conversational_flow.turn_taking_patience = low` and `sparrow-1`, while keeping
+  `speculative_inference = true`. The Tavus custom-LLM endpoint defaults to the fast
+  deterministic approved builder (`NEXUSREP_TAVUS_COMPOSE=llm` opts back into LLM rephrasing
+  at the cost of avatar latency).
 - **Fixed transcript/slide sync edges:** typed video echo turns keep the exact gated text +
   slide id until the remote Tavus audio stream shows actual speech energy, so captions and
   slides no longer run ahead of the avatar voice. `window.__nexusrepTiming` records
@@ -35,9 +44,11 @@
 - **Made slide motion source-driven:** the orchestrator's `detailAidSlideId` is the authority.
   Spoken-text phrase matching only nudges timing; it no longer decides whether a slide should
   change. This prevents "I'll bring up the slide" answers from staying on the wrong slide.
+  Random natural questions are now covered for mechanism, LIBREXIA/program, Fast Track/status,
+  and safety/ISI slide selection.
 - **Mic behavior:** Tavus/Daily joins with the doctor's mic off; the HCP mic button is red/off
   by default in both video and non-video modes.
-- **Verified:** `npm run typecheck`; full `npm test` passed (282 passing, 1 skipped live
+- **Verified:** `npm run typecheck`; full `npm test` passed (283 passing, 1 skipped live
   DocNexus test); `npm run build` passed; Playwright E2E passed (27 passing, 2 skipped).
   New regressions cover no AI re-introduction after greeting, a deliberately bad composer
   trying to re-introduce itself, ISI cadence, LIBREXIA program routing, and

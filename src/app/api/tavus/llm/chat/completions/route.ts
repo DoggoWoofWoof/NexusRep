@@ -76,7 +76,7 @@ export async function POST(req: Request): Promise<Response> {
       market: c.demo.market,
       investigational: c.demo.investigational,
       text,
-    });
+    }, env.tavusComposeMode === "llm" ? undefined : { composer: null });
     reply = output.responseText;
   }
 

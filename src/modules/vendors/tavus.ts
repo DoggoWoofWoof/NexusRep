@@ -58,6 +58,7 @@ interface CreateConversationResponse {
 // last-applied system prompt per key so we update in place (PATCH) when it changes.
 const createdPersonas = new Map<string, string>();
 const personaPrompts = new Map<string, string>();
+const personaLayerSignatures = new Map<string, string>();
 /** In-flight creations — two concurrent first sessions for a brand must share ONE
  *  persona POST instead of each creating (and leaking) their own. */
 const personaCreations = new Map<string, Promise<string>>();
@@ -98,13 +99,25 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
    */
   private async ensurePersona(config: RealtimeSessionConfig): Promise<string> {
     const cacheKey = config.personaCacheKey ?? "default";
+    const layers = this.layersFor(config);
+    const layerSignature = JSON.stringify(layers);
     const existing = config.personaId ?? this.cfg.personaId ?? createdPersonas.get(cacheKey);
     if (existing) {
+      const patches: Record<string, unknown>[] = [];
       if (config.systemPrompt && config.systemPrompt !== personaPrompts.get(cacheKey)) {
+        patches.push({ op: "replace", path: "/system_prompt", value: config.systemPrompt });
+      }
+      if (layerSignature !== personaLayerSignatures.get(cacheKey)) {
+        // "add" to an existing object member replaces it per JSON Patch; this keeps old PALs fast
+        // when we add a latency layer after the persona was first created.
+        patches.push({ op: "add", path: "/layers", value: layers });
+      }
+      if (patches.length) {
         try {
           // Tavus persona update is JSON Patch (RFC 6902).
-          await this.api(`/personas/${existing}`, { method: "PATCH", body: JSON.stringify([{ op: "replace", path: "/system_prompt", value: config.systemPrompt }]) });
+          await this.api(`/personas/${existing}`, { method: "PATCH", body: JSON.stringify(patches) });
           personaPrompts.set(cacheKey, config.systemPrompt);
+          personaLayerSignatures.set(cacheKey, layerSignature);
         } catch (e) {
           // Reuse the persona as-is, but SAY so — a silently-stale system prompt is
           // exactly the kind of failure an operator needs to see.
@@ -114,6 +127,32 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
       return existing;
     }
 
+    const body = {
+      // Stable, per-brand name (not per-session) — one persona per brand, reused across sessions.
+      persona_name: cacheKey === "default" ? "NexusRep compliant rep" : `NexusRep compliant rep · ${cacheKey}`,
+      system_prompt: config.systemPrompt,
+      default_replica_id: config.agentId ?? this.cfg.replicaId,
+      pipeline_mode: "full",
+      ...(Object.keys(layers).length ? { layers } : {}),
+    };
+    const inFlight = personaCreations.get(cacheKey);
+    if (inFlight) return inFlight;
+    const creation = this.api<CreatePersonaResponse>("/personas", { method: "POST", body: JSON.stringify(body) })
+      .then((r) => {
+        if (!r.persona_id) throw new Error("tavus: no persona_id returned");
+        createdPersonas.set(cacheKey, r.persona_id);
+        personaPrompts.set(cacheKey, config.systemPrompt);
+        personaLayerSignatures.set(cacheKey, layerSignature);
+        return r.persona_id;
+      })
+      .finally(() => {
+        personaCreations.delete(cacheKey);
+      });
+    personaCreations.set(cacheKey, creation);
+    return creation;
+  }
+
+  private layersFor(config: RealtimeSessionConfig): Record<string, unknown> {
     const llm: Record<string, unknown> = {};
     if (config.customLlm) {
       llm.base_url = config.customLlm.baseUrl;
@@ -137,29 +176,14 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
     if (Object.keys(llm).length) layers.llm = llm;
     if (config.hotwords?.length) layers.stt = { hotwords: config.hotwords.join(", ") };
     if (config.voice?.voiceId) layers.tts = { external_voice_id: config.voice.voiceId };
-
-    const body = {
-      // Stable, per-brand name (not per-session) — one persona per brand, reused across sessions.
-      persona_name: cacheKey === "default" ? "NexusRep compliant rep" : `NexusRep compliant rep · ${cacheKey}`,
-      system_prompt: config.systemPrompt,
-      default_replica_id: config.agentId ?? this.cfg.replicaId,
-      pipeline_mode: "full",
-      ...(Object.keys(layers).length ? { layers } : {}),
+    layers.conversational_flow = {
+      turn_detection_model: "sparrow-1",
+      turn_taking_patience: "low",
+      pal_interruptibility: "medium",
+      voice_isolation: "near",
+      idle_engagement: "off",
     };
-    const inFlight = personaCreations.get(cacheKey);
-    if (inFlight) return inFlight;
-    const creation = this.api<CreatePersonaResponse>("/personas", { method: "POST", body: JSON.stringify(body) })
-      .then((r) => {
-        if (!r.persona_id) throw new Error("tavus: no persona_id returned");
-        createdPersonas.set(cacheKey, r.persona_id);
-        personaPrompts.set(cacheKey, config.systemPrompt);
-        return r.persona_id;
-      })
-      .finally(() => {
-        personaCreations.delete(cacheKey);
-      });
-    personaCreations.set(cacheKey, creation);
-    return creation;
+    return layers;
   }
 
   async startSession(config: RealtimeSessionConfig): Promise<RealtimeSession> {

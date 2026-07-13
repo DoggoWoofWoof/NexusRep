@@ -28,6 +28,7 @@ type TimingEvent = {
  *  (verbatim, via the transport's echo) — used for typed turns while on video. */
 export interface VideoAgentStageHandle {
   speak: (text: string, detailAidSlideId?: string | null) => boolean;
+  respond: (text: string) => boolean;
   /** Mute/unmute the AGENT's audio (what the doctor hears). */
   setMuted: (muted: boolean) => void;
   /** Enable/disable the doctor's own microphone on the call. */
@@ -85,6 +86,11 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   const applyMuted = (m: boolean) => { setMuted(m); onMutedChange?.(m); };
   useImperativeHandle(ref, () => ({
     speak: (text: string, detailAidSlideId?: string | null) => speakAgent(text, detailAidSlideId),
+    respond: (text: string) => {
+      const ok = transportRef.current?.respond(text) ?? false;
+      if (ok) recordTiming({ type: "typed_respond_sent", text });
+      return ok;
+    },
     setMuted: (m: boolean) => { applyMuted(m); },
     setMicEnabled: (on: boolean) => { transportRef.current?.setMicEnabled(on); },
   }));

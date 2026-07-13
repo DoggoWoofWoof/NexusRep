@@ -216,6 +216,23 @@ describe("build → converse → review → coach (end to end)", () => {
     }
   });
 
+  it("selects the right approved slide for varied natural questions, not just canned chips", async () => {
+    const c = await createContainer();
+    const cases = [
+      { q: "Can you explain what Factor XIa means here?", slide: "slide_moa", source: "ans_moa" },
+      { q: "Which conditions are being studied in the program?", slide: "slide_program", source: "ans_program" },
+      { q: "Has this received Fast Track designation?", slide: "slide_status", source: "ans_status" },
+      { q: "What safety information should I be aware of?", slide: "slide_isi", source: null },
+    ];
+    for (const item of cases) {
+      const sid = await startSession(c);
+      const { output } = await c.conversation.turn(turnCtx(c, item.q, sid));
+      expect(output.decision, item.q).toBe("approved");
+      expect(output.detailAidSlideId, item.q).toBe(item.slide);
+      if (item.source) expect(output.sourceIds[0], item.q).toBe(item.source);
+    }
+  });
+
   it("escalates an off-label turn: refusal + MSL follow-up + CRM outbox event", async () => {
     const c = await createContainer();
     const sid = await startSession(c);

@@ -331,6 +331,11 @@ export class TurnOrchestrator {
       const miIsi = classification.isiRequired ? await this.firstSafetyStatement() : undefined;
       const miEvents = miIsi ? await this.audit.forSession(ctx.sessionId) : [];
       if (miIsi && !isiAlreadyDelivered(miEvents, miIsi.text)) {
+        const retrievalSettled = await retrievalPromise;
+        if (!("error" in retrievalSettled)) {
+          const safetyAnswer = retrievalSettled.result.answers.find((a) => /safety|isi|important safety/i.test(a.topic));
+          detailAidSlideId = safetyAnswer?.detailAidSlideId ?? detailAidSlideId;
+        }
         responseText = `Here is the approved safety information I can share.
 
 Important Safety Information: ${miIsi.text}
