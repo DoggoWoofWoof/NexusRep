@@ -191,10 +191,14 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
       voice_settings: { speed: this.cfg.tts?.speed ?? 1.0 },
       ...(config.voice?.voiceId ? { external_voice_id: config.voice.voiceId } : {}),
     };
+    // Lowest-latency conversational flow per Tavus docs: sparrow-1 turn detection (fastest),
+    // turn_taking_patience "low" (eager to respond once the HCP stops), pal_interruptibility "high"
+    // (stops instantly when the HCP starts speaking — snappiest barge-in). These are the only
+    // turn/latency knobs the API exposes; the residual is Tavus's own STT/turn processing.
     layers.conversational_flow = {
       turn_detection_model: "sparrow-1",
       turn_taking_patience: "low",
-      pal_interruptibility: "medium",
+      pal_interruptibility: "high",
       voice_isolation: "near",
       idle_engagement: "off",
     };

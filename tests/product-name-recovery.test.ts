@@ -26,11 +26,15 @@ describe("canonicalizeProductNames", () => {
     expect(canonicalizeProductNames("I don't want to go through all this")).toBe("I don't want to go through all this");
   });
 
-  it("a recovered name now routes to an approved answer, not the fallback", () => {
-    const before = classify("novexian");
-    expect(route(before)).toBe("fallback"); // bare garbled name → would have bounced
+  it("canonicalizing a garbled name yields a confident product_info intent", () => {
+    // A bare garbled name classifies as "other" (unrecognized)…
+    expect(classify("novexian").intent).toBe("other");
+    // …and canonicalization recovers it to a confident product question.
     const after = classify(canonicalizeProductNames("novexian"));
     expect(after.intent).toBe("product_info");
+    // Either way the router now ATTEMPTS an approved answer (retrieval + grounding gate decide),
+    // rather than reflexively bouncing an unclear query to the fallback.
+    expect(route(classify("novexian"))).toBe("approved_answer");
     expect(route(after)).toBe("approved_answer");
   });
 });

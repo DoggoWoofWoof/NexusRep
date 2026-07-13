@@ -22,7 +22,10 @@ export function route(c: RiskClassification): PolicyRoute {
   if (c.comparativeClaimRisk >= HIGH) return "medical_information";
   if (c.intent === "human_request") return "human_handoff";
   if (c.medicalInfoRisk >= HIGH) return "medical_information";
-  if (c.intent === "other" || c.confidence < 0.6) return "fallback";
+  // Don't reflexively bounce an unclear or low-confidence question. ATTEMPT an approved answer:
+  // the orchestrator retrieves approved content and returns the safe fallback ONLY when nothing
+  // grounded matches. So the rep holds a natural conversation and answers whenever it can, while
+  // the grounding gate + retrieval (not an eager intent guess) remain the real guardrails.
   return "approved_answer";
 }
 

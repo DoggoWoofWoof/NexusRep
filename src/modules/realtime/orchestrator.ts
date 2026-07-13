@@ -10,7 +10,7 @@
  * Fail safe: if the gate blocks, the HCP gets a safe fallback, not the draft.
  */
 
-import type { HcpId, SessionId } from "@lib/ids";
+import { asId, type ApprovedAnswerId, type HcpId, type SessionId } from "@lib/ids";
 import { classify, complianceGate, route, validateGrounding, type PolicyRoute, type RiskClassification, isiAlreadyDelivered, stripEmbeddedIsi } from "@modules/compliance";
 import type { RetrievalService } from "@modules/retrieval";
 import { buildApprovedResponse, type ApprovedAnswer, type ContentService, type GroundedComposer, type SafetyStatement } from "@modules/content";
@@ -49,6 +49,11 @@ export interface TurnOutput {
 const SAFE_FALLBACK =
   "I want to make sure I only share approved information. Let me connect you with someone who can help.";
 const COMPOSER_TIMEOUT_MS = 2500;
+
+// A short message that references the slides/deck or asks to continue but names NO topic of its
+// own — its meaning depends on what was just discussed ("show me the slides", "tell me more",
+// "walk me through it", "keep going"). Retrieval biases these toward the prior turn's topic.
+const FOLLOWUP_RE = /\b(show me|show us|pull up|walk me through|the slides?|the deck|the presentation|the detail aid|tell me more|more on (that|this|it)|what about (that|this|it)|continue|keep going|go on|next)\b/i;
 
 /**
  * When the exact ISI block is appended, do not also repeat standalone safety/disclosure
@@ -177,11 +182,21 @@ export class TurnOrchestrator {
   ): Promise<TurnOutput> {
     const turnStarted = Date.now();
     const retrievalStarted = Date.now();
-    const retrievalPromise = this.retrieval
-      .retrieveApproved({
-        text: ctx.text,
-        context: { audience: ctx.audience, indication: ctx.indication, market: ctx.market },
-      })
+    // Context-aware retrieval: a bare follow-up ("show me the slides", "tell me more") carries no
+    // topic — bias it toward what we were just discussing so it surfaces the RELEVANT slide, not a
+    // generic one. Only short follow-ups pay the extra lookup; every other query still retrieves in
+    // parallel with classification exactly as before.
+    const retrievalTextPromise =
+      FOLLOWUP_RE.test(ctx.text) && ctx.text.split(/\s+/).filter(Boolean).length <= 9
+        ? this.contextualRetrievalText(ctx)
+        : Promise.resolve(ctx.text);
+    const retrievalPromise = retrievalTextPromise
+      .then((text) =>
+        this.retrieval.retrieveApproved({
+          text,
+          context: { audience: ctx.audience, indication: ctx.indication, market: ctx.market },
+        }),
+      )
       .then(
         (result) => ({ result, latencyMs: Date.now() - retrievalStarted }),
         (error: unknown) => ({ error, latencyMs: Date.now() - retrievalStarted }),
@@ -458,5 +473,28 @@ For anything beyond this, I can connect you with our medical information team.`;
 
   private async firstSafetyStatement(): Promise<SafetyStatement | undefined> {
     return this.content.latestActiveSafetyStatement();
+  }
+
+  /** Bias a bare follow-up ("show me the slides") toward the topic just discussed: prepend the most
+   *  recently-answered approved topic so retrieval surfaces the RELEVANT slide. Best-effort — any
+   *  gap (no prior answer, lookup error) falls back to the raw text. */
+  private async contextualRetrievalText(ctx: TurnContext): Promise<string> {
+    try {
+      const prior = await this.audit.forSession(ctx.sessionId);
+      const lastAnswered = [...prior]
+        .reverse()
+        .find((e) => e.type === "response_output" && Array.isArray(e.payload.sourceIds) && (e.payload.sourceIds as string[]).length > 0);
+      let id = lastAnswered ? (lastAnswered.payload.sourceIds as string[])[0] : undefined;
+      if (!id) {
+        // No prior topic yet (e.g. "show me the slides" as the first thing said) → seed with the
+        // deck's lead approved answer so it opens with a real overview instead of bouncing.
+        const active = (await this.content.listAnswers()).find((a) => a.mlr.status === "active");
+        id = active ? String(active.id) : undefined;
+      }
+      const answer = id ? await this.content.getAnswer(asId<"approved_answer_id">(id) as ApprovedAnswerId) : null;
+      return answer ? `${answer.topic} ${ctx.text}` : ctx.text;
+    } catch {
+      return ctx.text;
+    }
   }
 }
