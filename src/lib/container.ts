@@ -28,7 +28,7 @@ import { AnalyticsService, RuntimeMetrics } from "@modules/analytics";
 import { StudioService, toneDirective } from "@modules/aiRepStudio";
 import { activeSteering } from "@modules/rules";
 import { MlrService } from "@modules/mlr";
-import { getBrandProfile, setupAnswersOf, type BrandProfile, resolveBrandProfile } from "@modules/brand";
+import { getBrandProfile, setupAnswersOf, type BrandProfile, resolveBrandProfile, BLANK_PROFILE } from "@modules/brand";
 import { seedDemoHistory, seedDemoStudio, seedDraftStudio } from "@lib/demo-seed";
 
 export interface AppContainer {
@@ -67,31 +67,29 @@ export interface AppContainer {
   };
 }
 
-// All brand/campaign-specific values come from the active BrandProfile — nothing
-// Milvexian is hardcoded in the container. A new brand = a new profile (see @modules/brand).
-const brand = getBrandProfile();
-const tenantId = asId<"tenant_id">(brand.tenantId) as TenantId;
-const brandId = asId<"brand_id">(brand.brandId) as BrandId;
-const campaignId = asId<"campaign_id">(brand.campaignId) as CampaignId;
-const aiRepId = asId<"ai_rep_id">(brand.aiRepId) as AiRepId;
-// Demo identity + session are env-configurable (NEXUSREP_DEMO_HCP_ID) — not code constants.
-const hcpId = asId<"hcp_id">(env.demoHcpId) as HcpId;
-const sessionId = asId<"session_id">("session_demo") as SessionId;
-// Configure the brand lexicon into the generic engine layers (classifier / retrieval):
-// onboarding a new brand supplies vocabulary via its profile, never engine edits.
-configureClassifierLexicon([...brand.lexicon.productTerms, ...brand.persona.hotwords]);
-configureRetrievalLexicon(brand.lexicon.topicSynonyms);
-const audience = brand.clinical.audience;
-const indication = brand.clinical.indication;
-const market = brand.clinical.market;
+// The default (auth-off) brand. Its lexicon primes the generic engine layers once at load —
+// onboarding a new brand supplies vocabulary via its profile, never engine edits. Per-user
+// containers may pass their OWN brand (e.g. a blank profile for "clean" accounts).
+const baseBrand = getBrandProfile();
+configureClassifierLexicon([...baseBrand.lexicon.productTerms, ...baseBrand.persona.hotwords]);
+configureRetrievalLexicon(baseBrand.lexicon.topicSynonyms);
 
-// MLR expiry for demo-seeded content: env-configurable, defaulting to 18 months out
-// (never a frozen calendar date that silently goes stale).
-const mlrExpiry =
-  env.mlrExpiresAt || new Date(Date.now() + 548 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-
-function activeMlr(seed: string): MlrMetadata {
-  return {
+/** Build a fully-wired, demo-seeded container. Synchronous wiring; async seeding. */
+export async function createContainer(opts?: { seedHistory?: boolean; seedContent?: boolean; seedStudio?: "full" | "draft"; repos?: RepositoryFactory; brand?: BrandProfile }): Promise<AppContainer> {
+  // Brand + its derived ids/context — per container, so a "clean" account can build from a BLANK
+  // profile instead of inheriting Milvexian's deck / cohort / persona.
+  const brand = opts?.brand ?? baseBrand;
+  const tenantId = asId<"tenant_id">(brand.tenantId) as TenantId;
+  const brandId = asId<"brand_id">(brand.brandId) as BrandId;
+  const campaignId = asId<"campaign_id">(brand.campaignId) as CampaignId;
+  const aiRepId = asId<"ai_rep_id">(brand.aiRepId) as AiRepId;
+  const hcpId = asId<"hcp_id">(env.demoHcpId) as HcpId;
+  const sessionId = asId<"session_id">("session_demo") as SessionId;
+  const audience = brand.clinical.audience;
+  const indication = brand.clinical.indication;
+  const market = brand.clinical.market;
+  const mlrExpiry = env.mlrExpiresAt || new Date(Date.now() + 548 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const activeMlr = (seed: string): MlrMetadata => ({
     mlrApprovalId: asId<"mlr_approval_id">(`mlr_${seed}`) as MlrApprovalId,
     status: "active",
     version: 1,
@@ -100,11 +98,8 @@ function activeMlr(seed: string): MlrMetadata {
     market,
     expiresAt: mlrExpiry,
     sourceFile: `${brand.displayName}_MedicalInfo_v1.pptx`,
-  };
-}
+  });
 
-/** Build a fully-wired, demo-seeded container. Synchronous wiring; async seeding. */
-export async function createContainer(opts?: { seedHistory?: boolean; seedContent?: boolean; seedStudio?: "full" | "draft"; repos?: RepositoryFactory }): Promise<AppContainer> {
   // Canonical persistence: in-memory (default) or embedded Postgres (PGlite) when
   // NEXUSREP_DATA_DRIVER=postgres. Persist across restarts by setting PGLITE_DATA_DIR;
   // default it to a local data dir so the postgres demo is durable out of the box.
@@ -157,7 +152,13 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
       return brand.clinical;
     }
   };
-  const { cohort, source: audienceSource } = await loadCohort(audienceQueryFor(await resolvedClinical()));
+  // A brand with no declared targeting (e.g. a "clean" account's blank profile) gets an EMPTY
+  // cohort — no Milvexian fallback — until the user configures specialties/diagnoses.
+  const clinical0 = await resolvedClinical();
+  const hasTargeting = Boolean(clinical0.specialties?.length || clinical0.diagnosisCodes?.length);
+  const { cohort, source: audienceSource } = hasTargeting
+    ? await loadCohort(audienceQueryFor(clinical0))
+    : { cohort: [], source: "unconfigured" };
   // Coaching → behavior: each turn folds the rep's ACTIVE, compliance-cleared rules into
   // runtime steering (blocked topics reroute; lead topics re-rank). Draft/gated rules never
   // steer, so the compliance gate stays authoritative.
@@ -221,7 +222,7 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
     },
   };
   const metrics = new RuntimeMetrics();
-  const analytics = new AnalyticsService({ sessions, followups, crm, content, targeting, metrics, audit });
+  const analytics = new AnalyticsService({ sessions, followups, crm, content, targeting, metrics, audit, targetTopics: brand.targetTopics ?? [] });
   // MLR review loop: on approval, publish the answer to retrieval so the rep can
   // cite it. Nothing parsed/ingested is retrievable until it clears this gate.
   const mlr = new MlrService(content, async (a) => {
@@ -367,7 +368,7 @@ function optsForUser(userId: string | null): Parameters<typeof createContainer>[
   if (!userId) return {};
   return userData(userId) === "demo"
     ? { seedHistory: true, seedContent: true, seedStudio: "full", repos: perUserRepos(userId) }
-    : { seedHistory: false, seedContent: false, seedStudio: "draft", repos: perUserRepos(userId) };
+    : { seedHistory: false, seedContent: false, seedStudio: "draft", repos: perUserRepos(userId), brand: BLANK_PROFILE };
 }
 
 /** Per-user container cache. Key "__default__" is the shared (auth-off / doctor-link) container. */

@@ -1782,8 +1782,10 @@ function OverviewPlanCard({
           </div>
         )}
 
-        {!snap || !step ? (
+        {!snap ? (
           <div style={{ padding: "20px 8px", textAlign: "center", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Loading approved deck…</div>
+        ) : steps.length === 0 || !step ? (
+          <div style={{ padding: "20px 8px", textAlign: "center", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>No approved deck yet — upload and approve a deck in Build to draft the pitch.</div>
         ) : (
           <>
             {/* The pitch, section by section — each anchored to an approved slide. Click to edit. */}

@@ -10,13 +10,14 @@
 import { useEffect, useState } from "react";
 import {
   COMMAND_KPIS,
+  ZERO_KPIS,
   DEMO_USER,
   TONE_COLORS,
 } from "./data";
 import { BrandScreens } from "./BrandScreens";
 import { StudioScreen } from "./StudioScreen";
 import { HcpExperience } from "./HcpExperience";
-import { useBrand } from "../_components/useBrand";
+import { useBrand, invalidateBrandCache } from "../_components/useBrand";
 
 export type Screen =
   | "overview"
@@ -179,18 +180,6 @@ function LoginScreen({ onSuccess }: { onSuccess: (name: string | null) => void }
 }
 
 export function NexusRepApp() {
-  const [mode, setMode] = useState<"brand" | "hcp">("brand");
-  const [nav, setNavState] = useState<Screen>("overview");
-  const [studioMode, setStudioMode] = useState("setup");
-  const [drawerId, setDrawerId] = useState<string | null>(null);
-  const [activation, setActivation] = useState<string[]>([]);
-  const [sessionHcpId, setSessionHcpId] = useState(""); // no fake default identity
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const studioMeta = useStudioMeta(nav);
-  const [attnOpen, setAttnOpen] = useState(false);
-  const [navCollapsed, setNavCollapsed] = useState(false);
-  const brand = useBrand();
-  const attention = useAttention(); // real pending items, not a hardcoded "3"
   // Simple console auth: ask /api/auth whether a password gate is on and whether this browser
   // already holds a valid session. null = still checking. Fails OPEN if the check errors so a
   // transient blip never locks a legitimately-open (ungated) deployment out of its own console.
@@ -205,8 +194,38 @@ export function NexusRepApp() {
   }, []);
   const logout = async () => {
     try { await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }) }); } catch { /* clearing anyway */ }
+    invalidateBrandCache(); // the next user must not inherit this user's module-cached brand
     setAuth({ enabled: true, authed: false });
   };
+
+  // Doctor view is never gated. While the check is in flight, show a brief splash so the console
+  // never flashes before a required login.
+  if (auth === null) {
+    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--dn-bg)", color: "var(--dn-fg-subtle)", font: "500 13px/1 var(--dn-font-sans)" }}>Loading…</div>;
+  }
+  if (auth.enabled && !auth.authed) {
+    return <LoginScreen onSuccess={(name) => { invalidateBrandCache(); setAuth({ enabled: true, authed: true, name }); }} />;
+  }
+
+  // Keyed by the signed-in user so EVERY data hook inside (brand, studio meta, attention, and the
+  // screens) mounts fresh and fetches with THIS user's session cookie — never the pre-login /
+  // default container a shared top-level mount would have cached before login.
+  return <AuthedConsole key={auth.name ?? "console"} name={auth.name ?? null} authEnabled={auth.enabled} onLogout={logout} />;
+}
+
+function AuthedConsole({ name, authEnabled, onLogout }: { name: string | null; authEnabled: boolean; onLogout: () => void }) {
+  const [mode, setMode] = useState<"brand" | "hcp">("brand");
+  const [nav, setNavState] = useState<Screen>("overview");
+  const [studioMode, setStudioMode] = useState("setup");
+  const [drawerId, setDrawerId] = useState<string | null>(null);
+  const [activation, setActivation] = useState<string[]>([]);
+  const [sessionHcpId, setSessionHcpId] = useState(""); // no fake default identity
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const studioMeta = useStudioMeta(nav);
+  const [attnOpen, setAttnOpen] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(false);
+  const brand = useBrand();
+  const attention = useAttention(); // real pending items, not a hardcoded "3"
 
   const setNav = (s: Screen) => {
     setNavState(s);
@@ -216,28 +235,19 @@ export function NexusRepApp() {
   const toggleActivation = (id: string) =>
     setActivation((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
 
-  const account = auth?.name
-    ? { initials: auth.name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "U", name: auth.name, role: "Brand user" }
+  const account = name
+    ? { initials: name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "U", name, role: "Brand user" }
     : { initials: DEMO_USER.initials, name: DEMO_USER.shortName, role: DEMO_USER.role };
 
   const app: AppState = {
     nav, setNav, mode, setMode, activation, toggleActivation,
     drawerId, setDrawerId, sessionHcpId, setSessionHcpId, studioMode, setStudioMode,
     selectedSessionId, setSelectedSessionId,
-    userName: auth?.name ?? null,
+    userName: name,
   };
 
   if (mode === "hcp") {
     return <HcpExperience app={app} />;
-  }
-
-  // Console auth gate (doctor view above is never gated). While the check is in flight, show a
-  // brief splash so the console never flashes before a required login.
-  if (auth === null) {
-    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--dn-bg)", color: "var(--dn-fg-subtle)", font: "500 13px/1 var(--dn-font-sans)" }}>Loading…</div>;
-  }
-  if (auth.enabled && !auth.authed) {
-    return <LoginScreen onSuccess={(name) => setAuth({ enabled: true, authed: true, name })} />;
   }
 
   return (
@@ -289,8 +299,8 @@ export function NexusRepApp() {
             <div style={{ font: "600 12px/1.2 var(--dn-font-sans)", color: "#fff" }}>{account.name}</div>
             <div style={{ font: "400 11px/1.2 var(--dn-font-sans)", color: "rgba(255,255,255,.5)" }}>{account.role}</div>
           </div>}
-          {!navCollapsed && auth?.enabled && (
-            <span onClick={() => void logout()} title="Sign out" style={{ marginLeft: "auto", font: "600 10.5px/1 var(--dn-font-sans)", color: "rgba(255,255,255,.55)", cursor: "pointer" }}>Sign out</span>
+          {!navCollapsed && authEnabled && (
+            <span onClick={() => void onLogout()} title="Sign out" style={{ marginLeft: "auto", font: "600 10.5px/1 var(--dn-font-sans)", color: "rgba(255,255,255,.55)", cursor: "pointer" }}>Sign out</span>
           )}
         </div>
       </aside>
@@ -300,7 +310,7 @@ export function NexusRepApp() {
         <header style={{ height: 60, flexShrink: 0, background: "#fff", borderBottom: "1px solid var(--dn-border)", display: "flex", alignItems: "center", padding: "0 22px", gap: 16 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--dn-success)", boxShadow: "0 0 0 3px rgba(22,163,74,.15)" }} />
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: studioMeta.repState === "live" ? "var(--dn-success)" : "var(--dn-fg-subtle)", boxShadow: studioMeta.repState === "live" ? "0 0 0 3px rgba(22,163,74,.15)" : "none" }} />
               <span style={{ font: "700 14px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{brand?.campaign.title ?? "AI Rep Studio"}</span>
             </div>
             <span style={{ font: "500 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)", paddingLeft: 16 }}>{brand?.campaign.subtitle ?? ""}</span>
@@ -326,7 +336,7 @@ export function NexusRepApp() {
               </span>
             )}
             <div style={{ width: 1, height: 26, background: "var(--dn-border)" }} />
-            <div style={{ width: 30, height: 30, borderRadius: "50%", background: "var(--dn-brand-base)", display: "flex", alignItems: "center", justifyContent: "center", font: "600 11px/1 var(--dn-font-sans)", color: "#fff" }}>JR</div>
+            <div title={account.name} style={{ width: 30, height: 30, borderRadius: "50%", background: "var(--dn-brand-base)", display: "flex", alignItems: "center", justifyContent: "center", font: "600 11px/1 var(--dn-font-sans)", color: "#fff" }}>{account.initials}</div>
           </div>
         </header>
 
@@ -398,12 +408,17 @@ function useAttention(): AttentionItem[] {
 
 type TopicMix = { total: number; slices: { label: string; count: number; pct: number }[] };
 
-function useCommandKpis(): { kpis: CommandKpi[]; live: boolean; topicMix: TopicMix | null } {
-  const [kpis, setKpis] = useState<CommandKpi[]>(COMMAND_KPIS);
+function useCommandKpis(configured: boolean): { kpis: CommandKpi[]; live: boolean; topicMix: TopicMix | null } {
+  // A configured brand's demo fixture only makes sense once a brand exists; a clean/unconfigured
+  // brand shows a neutral zero-state while analytics loads (never another brand's demo numbers).
+  const fallbackKpis = configured ? COMMAND_KPIS : ZERO_KPIS;
+  const [kpis, setKpis] = useState<CommandKpi[]>(fallbackKpis);
   const [live, setLive] = useState(false);
   const [topicMix, setTopicMix] = useState<TopicMix | null>(null);
   useEffect(() => {
     let alive = true;
+    const fb = configured ? COMMAND_KPIS : ZERO_KPIS;
+    setKpis(fb); // keep the placeholder in step if brand-config resolves after mount
     (async () => {
       try {
         const res = await fetch("/api/analytics");
@@ -421,7 +436,7 @@ function useCommandKpis(): { kpis: CommandKpi[]; live: boolean; topicMix: TopicM
           find("content", "gaps"),
           find("crm_ops", "crm_success"),
         ];
-        const derived: CommandKpi[] = COMMAND_KPIS.map((fallback, i) => {
+        const derived: CommandKpi[] = fb.map((fallback, i) => {
           const m = matches[i];
           const label = [
             "Sessions completed", "Target HCPs", "Follow-ups created",
@@ -440,12 +455,16 @@ function useCommandKpis(): { kpis: CommandKpi[]; live: boolean; topicMix: TopicM
       }
     })();
     return () => { alive = false; };
-  }, []);
+  }, [configured]);
   return { kpis, live, topicMix };
 }
 
 function OverviewScreen({ app }: { app: AppState }) {
-  const { kpis: commandKpis, live: kpisLive, topicMix } = useCommandKpis();
+  const brand = useBrand();
+  // A brand with no talking points is unconfigured (a clean account before setup). It must never
+  // borrow another brand's illustrative sample/KPIs — it shows an honest zero/empty state instead.
+  const brandConfigured = (brand?.talkingPoints?.length ?? 0) > 0;
+  const { kpis: commandKpis, live: kpisLive, topicMix } = useCommandKpis(brandConfigured);
   // Show the REAL question mix once there's enough classified volume to be meaningful;
   // below that, keep the labeled illustrative sample so a sparse demo doesn't look broken.
   const TOPIC_MIN = 8;
@@ -453,7 +472,8 @@ function OverviewScreen({ app }: { app: AppState }) {
   const topicRows: [string, number, string][] = topicLive
     ? topicMix!.slices.slice(0, 6).map((s) => [s.label, Math.round((s.pct / (topicMix!.slices[0]!.pct || 1)) * 100), `${s.pct}%`])
     : [["What the product is / mechanism", 100, "34%"], ["The program", 72, "23%"], ["Investigational & FDA status", 58, "19%"], ["Dosing / efficacy (→ Medical Info)", 44, "14%"], ["Comparative questions (→ Medical Info)", 32, "10%"]];
-  const brand = useBrand();
+  // Live data always renders; the illustrative sample only for a CONFIGURED brand without volume yet.
+  const showTopicBars = topicLive || brandConfigured;
   // Real "needs coaching" list: sessions whose compliance status isn't clean, from the live API.
   const [coachRows, setCoachRows] = useState<{ id: string; hcp: string; comp: string }[] | null>(null);
   useEffect(() => {
@@ -504,10 +524,10 @@ function OverviewScreen({ app }: { app: AppState }) {
         <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "18px 20px", boxShadow: "var(--dn-shadow-card)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
             <span style={{ font: "600 13px/1 var(--dn-font-sans)" }}>What HCPs are asking</span>
-            {!topicLive && samplePill}
+            {!topicLive && showTopicBars && samplePill}
           </div>
-          <div style={{ font: "400 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 16 }}>{topicLive ? `Measured across ${topicMix!.total} classified questions this campaign` : "Illustrative topic mix — the real distribution appears once sessions accrue"}</div>
-          {topicRows.map(([label, pct, val]) => (
+          <div style={{ font: "400 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 16 }}>{topicLive ? `Measured across ${topicMix!.total} classified questions this campaign` : showTopicBars ? "Illustrative topic mix — the real distribution appears once sessions accrue" : "The question mix appears here once doctors start talking to your rep."}</div>
+          {showTopicBars && topicRows.map(([label, pct, val]) => (
             <div key={label as string} style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 10 }}>
               <span style={{ width: 150, flexShrink: 0, font: "500 11.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{label}</span>
               <span style={{ flex: 1, height: 13, borderRadius: 4, background: "var(--dn-surface-2)", overflow: "hidden" }}><span style={{ display: "block", height: "100%", borderRadius: 4, background: "var(--dn-brand-light)", width: `${pct}%` }} /></span>

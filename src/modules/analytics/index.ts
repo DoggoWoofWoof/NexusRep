@@ -50,10 +50,6 @@ export interface Metric {
   drillTo?: string;
 }
 
-/** Public-info topics the investigational rep should cover; gaps = uncovered.
- *  (Clinical specifics are intentionally routed to Medical Info, not "gaps".) */
-const TARGET_TOPICS = ["mechanism", "program", "status"];
-
 /** Rolling in-memory runtime metrics, fed by the live turn controller. */
 export class RuntimeMetrics {
   private latencies: number[] = [];
@@ -92,6 +88,9 @@ export interface AnalyticsDeps {
   targeting: TargetingService;
   metrics: RuntimeMetrics;
   audit: AuditService;
+  /** Public-info topic keys this brand should cover; content gaps = the uncovered ones.
+   *  Brand-derived (never a hardcoded product's topics), so a blank brand shows zero gaps. */
+  targetTopics: string[];
 }
 
 /** The measured question mix + a compliance rollup, aggregated from the audit trail. */
@@ -145,7 +144,7 @@ export class AnalyticsService {
     const crmFailed = crm.filter((c) => c.status === "failed" || c.status === "retrying").length;
 
     const coveredTopics = new Set(answers.map((a) => a.topic));
-    const gaps = TARGET_TOPICS.filter((topic) => !coveredTopics.has(topic));
+    const gaps = this.deps.targetTopics.filter((topic) => !coveredTopics.has(topic));
 
     const seg = t.segmentCounts();
     const rt = this.deps.metrics.snapshot();
@@ -166,7 +165,7 @@ export class AnalyticsService {
       content: [
         { key: "assets", tone: "blue", value: String(answers.length), label: "Approved answers live", sub: "Usable by the AI rep", drillTo: "studio" },
         { key: "grounded", tone: "green", value: groundedPct, label: "Answers source-grounded", sub: cc.grounded ? `${cc.grounded} answers tied to an MLR source` : "No answers delivered yet" },
-        { key: "gaps", tone: gaps.length ? "red" : "green", value: String(gaps.length), label: "Content gaps", sub: gaps.length ? `No approved answer: ${gaps.join(", ")}` : "All target topics covered" },
+        { key: "gaps", tone: gaps.length ? "red" : "green", value: String(gaps.length), label: "Content gaps", sub: gaps.length ? `No approved answer: ${gaps.join(", ")}` : this.deps.targetTopics.length ? "All target topics covered" : "No target topics configured yet" },
         { key: "unapproved", tone: cc.unapprovedBlocked ? "yellow" : "green", value: String(cc.unapprovedBlocked), label: "Unapproved answers blocked", sub: "Off-label / AE content stopped by the gate" },
       ],
       compliance: [

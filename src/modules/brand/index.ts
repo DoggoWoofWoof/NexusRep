@@ -104,6 +104,10 @@ export interface BrandProfile {
   /** Short talking-point labels the Setup Assistant offers (the rep's key topics). */
   talkingPoints: string[];
   recommendedTopics: BrandRecommendedTopics;
+  /** Public-info topic KEYS the rep is expected to cover; "content gaps" = the uncovered ones
+   *  (matched against approved-answer topics). A blank/unconfigured brand has none, so it shows
+   *  zero gaps until its own content defines what to cover — never another brand's topics. */
+  targetTopics?: string[];
   /**
    * Brand-specific language layered onto the engine's GENERIC clinical heuristics:
    * `productTerms` bias intent + overview detection and upload topic inference;
@@ -174,6 +178,40 @@ export function toPublicBrand(p: BrandProfile): PublicBrand {
     productTerms: p.lexicon.productTerms,
   };
 }
+
+/**
+ * A BLANK profile for "clean" accounts that build a rep from scratch — no Milvexian brand, deck,
+ * cohort, seeded answers, or campaign. Only the mandatory AI/Medical-Information disclosure stays
+ * in the greeting/persona. The Setup Assistant + content ingestion fill the rest.
+ */
+export const BLANK_PROFILE: BrandProfile = {
+  tenantId: "tenant_blank",
+  brandId: "brand_blank",
+  campaignId: "camp_blank",
+  aiRepId: "airep_blank",
+  displayName: "Your AI Rep",
+  sponsor: "",
+  tagline: "an AI representative",
+  palette: { navy: "#04307a", ink: "#1e2535", red: "#dc2626", slate: "#64748b", mist: "#eef2f8", paper: "#ffffff" },
+  greeting: "Hello, doctor. I'm an AI representative. I share only approved information and connect you with Medical Information for any clinical question.",
+  persona: {
+    systemPrompt: "You are an AI representative. Speak ONLY the approved text provided to you; never add a fact, number, dose, or claim. Disclose that you are AI and route any clinical question to Medical Information.",
+    customGreeting: "",
+    context: "No product is configured yet. No patient-level data.",
+    hotwords: [],
+    language: "english",
+  },
+  deck: [],
+  deckPptxUrl: "",
+  campaign: { title: "New AI Rep", subtitle: "Not configured yet" },
+  clinical: { audience: "healthcare professionals", indication: "", market: "", investigational: true, specialties: [], diagnosisCodes: [] },
+  approvedAnswers: [],
+  isiText: "",
+  tryQuestions: [],
+  talkingPoints: [],
+  recommendedTopics: { trendNegative: "", lowShare: "", default: "" },
+  lexicon: { productTerms: [], topicSynonyms: {} },
+};
 
 /**
  * The J&J Milvexian / LIBREXIA-cardiology profile — the first registered brand.
@@ -280,6 +318,7 @@ export const MILVEXIAN_PROFILE: BrandProfile = {
     "Can I use it off-label?",
   ],
   talkingPoints: ["mechanism of action", "the LIBREXIA program", "FDA status"],
+  targetTopics: ["mechanism", "program", "status"],
   recommendedTopics: {
     trendNegative: "Development & FDA status",
     lowShare: "Milvexian mechanism (FXIa)",

@@ -164,8 +164,8 @@ export async function seedDraftStudio(deps: { studio: StudioService; aiRepId: Ai
   const persona: AIRepPersona = {
     id: asPersonaId<"persona_id">(`persona_${b.brandId}`),
     type: "brand_persona",
-    displayName: `${b.displayName} Medical AI Specialist`,
-    voiceStyle: "clinical",
+    displayName: b.displayName, // generic for a clean/blank brand (e.g. "Your AI Rep") — user renames it
+    voiceStyle: "professional",
     disclosureText: b.greeting,
     greeting: b.greeting,
   };

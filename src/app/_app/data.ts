@@ -172,6 +172,18 @@ export const COMMAND_KPIS = [
   { tone: "red", label: "CRM export issues", value: "2", sub: "Failed — awaiting retry" },
 ];
 
+/** Neutral zero-state KPIs for an unconfigured (clean-slate) brand — shown while analytics loads
+ *  so a fresh account never flashes another brand's demo numbers. Labels match the live-derived
+ *  labels so there's no relabel when real data arrives. */
+export const ZERO_KPIS = [
+  { tone: "blue", label: "Sessions completed", value: "0", sub: "No sessions yet" },
+  { tone: "fg", label: "Target HCPs", value: "0", sub: "Set up your audience" },
+  { tone: "fg", label: "Follow-ups created", value: "0", sub: "Auto-created from sessions" },
+  { tone: "green", label: "ISI delivery", value: "—", sub: "No ISI-required turns yet" },
+  { tone: "green", label: "Content gaps", value: "0", sub: "No target topics configured yet" },
+  { tone: "green", label: "CRM export success", value: "—", sub: "0/0 delivered to connector" },
+];
+
 export const VENDOR_STACK = [
   { role: "Realtime / conversation", vendor: "GPT Realtime (adapter)" },
   { role: "Voice — TTS", vendor: "Browser / ElevenLabs (adapter)" },

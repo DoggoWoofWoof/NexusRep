@@ -101,10 +101,11 @@ function useAudience(): { rows: Hcp[]; summary: AudienceSummary | null; live: bo
         if (!res.ok) return;
         const json = (await res.json()) as AudienceResponse;
         if (!alive) return;
-        if (json.rows && json.rows.length) {
-          setRows(json.rows.map(mapHcp));
-          setLive(true);
-        }
+        // A successful response IS the real cohort — adopt it even when empty. An unconfigured
+        // brand (no targeting yet) legitimately has zero doctors; keeping the canned fixture there
+        // would show another brand's cardiology sample as if it were this rep's audience.
+        setRows((json.rows ?? []).map(mapHcp));
+        setLive(true);
         setDegraded(Boolean(json.degraded) || String(json.source ?? "").includes("fallback"));
         if (json.summary) setSummary(json.summary);
       } catch {
@@ -203,7 +204,9 @@ function Audience({ app }: { app: AppState }) {
         })}
         {filtered.length === 0 && (
           <div style={{ padding: "26px 18px", textAlign: "center", font: "400 12.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
-            No doctors match — clear the search or specialty filter.
+            {hcps.length === 0
+              ? "No target cohort yet — set the product, indication, and specialties in the AI Rep Studio to build your audience."
+              : "No doctors match — clear the search or specialty filter."}
           </div>
         )}
         {filtered.length > 12 && (

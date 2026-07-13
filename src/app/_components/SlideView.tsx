@@ -84,9 +84,13 @@ export function SlideView({ focusId, compact = false, fill = false }: { focusId?
   useEffect(() => { if (focusId && deck.length) setI(idxOf(focusId)); }, [focusId, deck.length]);
 
   if (!brand || deck.length === 0) {
+    // Distinguish "still fetching" from "brand loaded, but no slides yet" — an empty deck is the
+    // real state for a clean account (or a configured brand before content is approved), not a
+    // perpetual spinner. Message stays neutral so it's safe in the doctor view too (no jargon).
+    const msg = !brand ? "Loading deck…" : "No slides yet.";
     return (
       <div style={fill ? { flex: 1, minHeight: 0, display: "flex" } : { aspectRatio: "16 / 9", display: "flex" }}>
-        <div style={{ margin: "auto", font: "500 12px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Loading deck…</div>
+        <div style={{ margin: "auto", font: "500 12px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{msg}</div>
       </div>
     );
   }
