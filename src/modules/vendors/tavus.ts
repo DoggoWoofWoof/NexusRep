@@ -209,6 +209,12 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog {
     }
   }
 
+  /** The vendor's stock library ships novelty / seasonal characters (Santa, a zombie, an elf,
+   *  costumed personas, etc.) alongside the business presenters. They have no place representing
+   *  a pharma rep to a doctor, so the stock sweep drops any whose name matches this. Personal
+   *  agents the brand trained are never filtered. Extend the list rather than loosening it. */
+  private static readonly NOVELTY_STOCK = /\b(santa|claus|s?kringle|elf|reindeer|rudolph|christmas|xmas|holiday|hanukkah|kwanzaa|new[\s-]?year|halloween|spooky|ghost|zombie|vampire|witch|skeleton|pumpkin|jack[\s-]?o|thanksgiving|turkey|easter|bunny|valentine|cupid|leprechaun|patrick|costume|cosplay|superhero|santa'?s|mrs\.?\s*claus|gnome|fairy|wizard|pirate|clown|mascot)\b/i;
+
   /** Map one raw Tavus replica record into the canonical AgentSummary. This is the ONLY
    *  place the vendor's "replica" vocabulary exists — callers only see agents. */
   private static toSummary(raw: Record<string, unknown>, fallbackKind: "stock" | "personal"): AgentSummary | null {
@@ -248,6 +254,8 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog {
     }
     for (const raw of TavusRealtimeProvider.parseReplicaList(stock)) {
       const r = TavusRealtimeProvider.toSummary(raw, "stock");
+      // Drop novelty/seasonal stock characters — they can't front a compliant pharma rep.
+      if (r && TavusRealtimeProvider.NOVELTY_STOCK.test(r.name)) continue;
       // A personal record wins over the same id appearing in the stock sweep.
       if (r && !out.has(r.id)) out.set(r.id, r);
     }

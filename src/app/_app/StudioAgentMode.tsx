@@ -11,25 +11,9 @@
  * shapes) — no vendor names, ids, or vocabulary anywhere in this file.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-
-interface AgentInfo {
-  id: string;
-  name: string;
-  kind: "stock" | "personal";
-  status: "ready" | "training" | "error";
-  thumbnailUrl?: string;
-}
-
-interface AgentsPayload {
-  configured: boolean;
-  selected: string | null;
-  selectedName: string | null;
-  defaultReplicaId: string | null;
-  agents: AgentInfo[];
-  note?: string;
-  error?: string;
-}
+import { memo, useMemo, useState } from "react";
+import { useAgents, setAgentsCache, type AgentInfo, type AgentsPayload } from "../_components/useAgents";
+import { BrowserVoiceProvider, toneSpeechOpts } from "@lib/browser-speech";
 
 const card: React.CSSProperties = { background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)" };
 const cardHead: React.CSSProperties = { padding: "12px 14px 10px", borderBottom: "1px solid var(--dn-border)", font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" };
@@ -55,33 +39,64 @@ function settingOf(a: AgentInfo): string | null {
 const isDeprecated = (a: AgentInfo): boolean => /deprecated/i.test(a.name);
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** Thumbnail that plays on hover — a quick feel for the agent without autoplaying a wall of video. */
-function AgentThumb({ agent }: { agent: AgentInfo }) {
-  const initials = agent.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
-  if (!agent.thumbnailUrl) {
-    return (
-      <div style={{ aspectRatio: "4 / 3", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, var(--dn-surface-2), var(--dn-border))", borderRadius: 9 }}>
-        <span style={{ font: "700 22px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{initials || "?"}</span>
-      </div>
-    );
-  }
-  return (
-    <video
-      src={agent.thumbnailUrl}
-      muted
-      playsInline
-      loop
-      preload="metadata"
-      onMouseEnter={(e) => { void e.currentTarget.play().catch(() => {}); }}
-      onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }}
-      style={{ width: "100%", aspectRatio: "4 / 3", objectFit: "cover", borderRadius: 9, background: "#0a1a33", display: "block" }}
-    />
-  );
+// One shared browser voice for the whole gallery. Hovering an agent speaks a short spoken
+// preview A BEAT LATER (the thumbnail clip is muted) so the brand user can actually HEAR the
+// selected tone — debounced + single-flight so sweeping the mouse never stacks overlapping
+// speech. This is the point of the tone control: you hear it right where you pick the agent.
+let galleryVoice: BrowserVoiceProvider | null = null;
+let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+function galleryHoverSpeak(agentName: string, style?: string): void {
+  if (hoverTimer) clearTimeout(hoverTimer);
+  const first = agentName.split(/\s[-–—]\s/)[0]?.trim() || "your rep";
+  hoverTimer = setTimeout(() => {
+    if (!galleryVoice) { galleryVoice = new BrowserVoiceProvider(); void galleryVoice.warmup(); }
+    galleryVoice.cancel();
+    void galleryVoice.speak(`Hi, I'm ${first}. Here's how I sound when I speak with your doctors.`, toneSpeechOpts(style));
+  }, 280);
+}
+function galleryHoverStop(): void {
+  if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+  galleryVoice?.cancel();
 }
 
+/** Thumbnail that plays on hover AND speaks a short tone preview. The video element is mounted
+ *  ONLY while hovered — a 90-cell gallery used to mount 90 <video> tags at once (each opening a
+ *  connection for preload="metadata"), which made scrolling stutter. Default is a cheap
+ *  gradient+initials poster. Memoized so filtering/typing doesn't re-reconcile every cell. */
+const AgentThumb = memo(function AgentThumb({ agent, voiceStyle }: { agent: AgentInfo; voiceStyle?: string }) {
+  const [hover, setHover] = useState(false);
+  const initials = agent.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+  const poster = (
+    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, var(--dn-surface-2), var(--dn-border))" }}>
+      <span style={{ font: "700 22px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{initials || "?"}</span>
+    </div>
+  );
+  return (
+    <div
+      onMouseEnter={() => { setHover(true); galleryHoverSpeak(agent.name, voiceStyle); }}
+      onMouseLeave={() => { setHover(false); galleryHoverStop(); }}
+      style={{ position: "relative", width: "100%", aspectRatio: "4 / 3", borderRadius: 9, overflow: "hidden", background: "#0a1a33" }}
+    >
+      {poster}
+      {hover && agent.thumbnailUrl && (
+        <video
+          src={agent.thumbnailUrl}
+          muted
+          playsInline
+          loop
+          autoPlay
+          preload="none"
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        />
+      )}
+    </div>
+  );
+});
+
 export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: string; onVoiceStyle: (value: string) => void | Promise<unknown> }) {
-  const [data, setData] = useState<AgentsPayload | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Cached at module scope (useAgents) — switching Studio tabs and returning is instant
+  // instead of re-fetching the 90+ agent list every mount.
+  const { data, loading, refresh } = useAgents();
   const [busy, setBusy] = useState<string | null>(null); // agent id (or "create") with an action in flight
   const [msg, setMsg] = useState("");
   const [createName, setCreateName] = useState("");
@@ -94,23 +109,9 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
   const [setting, setSetting] = useState<string | null>(null);
   const [showDeprecated, setShowDeprecated] = useState(false);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/realtime/agents");
-      const d = (await res.json()) as AgentsPayload;
-      setData(d);
-      // Surface a gallery-load problem on a CONFIGURED deployment (e.g. the vendor list
-      // timed out). When unconfigured, the note already renders in the left card + empty state.
-      if (d.error) setMsg(d.error);
-      else if (d.configured && d.note) setMsg(d.note);
-    } catch (e) {
-      setMsg(`Couldn't load the gallery: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-  useEffect(() => { void refresh(); }, [refresh]);
+  // A configured-deployment load problem (e.g. the vendor list timed out) shows above the grid;
+  // action feedback (msg, set by post) takes precedence. Unconfigured notes render in the empty state.
+  const banner = msg || data?.error || (data?.configured ? data?.note : "") || "";
 
   const post = async (body: Record<string, unknown>, busyKey: string, okMsg: string) => {
     setBusy(busyKey);
@@ -118,7 +119,7 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
     try {
       const res = await fetch("/api/realtime/agents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const d = (await res.json()) as AgentsPayload;
-      setData(d);
+      setAgentsCache(d); // update the shared cache; every mounted consumer re-reads it
       setMsg(d.error ?? d.note ?? okMsg);
       return !d.error;
     } catch (e) {
@@ -177,7 +178,7 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
           const isActive = a.id === activeId;
           return (
             <div key={a.id} data-testid="agent-card" style={{ border: isActive ? "2px solid var(--dn-brand-base)" : "1px solid var(--dn-border)", borderRadius: 11, padding: 7, background: "#fff", display: "flex", flexDirection: "column", gap: 7 }}>
-              <AgentThumb agent={a} />
+              <AgentThumb agent={a} voiceStyle={voiceStyle} />
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, minWidth: 0 }}>
                 <span title={a.name} style={{ font: "600 11px/1.25 var(--dn-font-sans)", color: "var(--dn-fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
                 {a.status !== "ready" && (
@@ -211,7 +212,7 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
           <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 9 }}>
             {data?.configured ? (
               <>
-                {active ? <AgentThumb agent={active} /> : null}
+                {active ? <AgentThumb agent={active} voiceStyle={voiceStyle} /> : null}
                 <div style={{ font: "600 12.5px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)" }}>
                   {active?.name ?? data.selectedName ?? (activeId ? activeId : "Default agent")}
                   <span style={{ font: "500 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginLeft: 7 }}>{data.selected ? "your pick" : "deployment default"}</span>
@@ -240,7 +241,7 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
                 <button key={v.value} onClick={() => void onVoiceStyle(v.value)} title={v.blurb} style={{ padding: "7px 12px", borderRadius: 16, border: voiceStyle === v.value ? "1.5px solid var(--dn-brand-base)" : "1px solid var(--dn-border)", background: voiceStyle === v.value ? "var(--dn-brand-base)" : "#fff", color: voiceStyle === v.value ? "#fff" : "var(--dn-fg-muted)", font: "600 11px/1 var(--dn-font-sans)", cursor: "pointer" }}>{v.label}</button>
               ))}
             </div>
-            <div style={hint}>Sets how the rep <strong>speaks and writes</strong> — chat answers, the built-in avatar&apos;s delivery, the pitch. A live video agent&apos;s actual voice is part of the agent you pick in the gallery.</div>
+            <div style={hint}>Sets how the rep <strong>speaks and writes</strong> — it restyles composed chat/pitch wording and changes the built-in voice&apos;s delivery. <strong>Hover any agent</strong> in the gallery to hear this tone. (A live video agent&apos;s own voice is part of the agent you pick.)</div>
           </div>
         </div>
 
@@ -272,7 +273,7 @@ export function StudioAgentMode({ voiceStyle, onVoiceStyle }: { voiceStyle?: str
           <span onClick={() => { if (!loading) void refresh(); }} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", cursor: "pointer" }}>{loading ? "Loading…" : "↻ Refresh"}</span>
         </div>
         <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 11 }}>
-          {msg && <div data-testid="agent-msg" style={{ font: "500 11px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-muted)", background: "var(--dn-surface-2)", border: "1px solid var(--dn-border)", borderRadius: 9, padding: "8px 11px" }}>{msg}</div>}
+          {banner && <div data-testid="agent-msg" style={{ font: "500 11px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-muted)", background: "var(--dn-surface-2)", border: "1px solid var(--dn-border)", borderRadius: 9, padding: "8px 11px" }}>{banner}</div>}
           {loading && !data ? (
             <div style={hint}>Loading the gallery…</div>
           ) : !data?.configured ? (

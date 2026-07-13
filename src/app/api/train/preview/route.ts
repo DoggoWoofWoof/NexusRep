@@ -17,6 +17,7 @@ import { complianceGate, isiAlreadyDelivered, type PolicyRoute, type RiskClassif
 import { composeGreeting, firstAvailableComposer, mergePlan, PresentationSkill } from "@modules/content";
 import { isOverviewPrompt } from "@modules/content/overviewPrompt";
 import { presentationGuidance, rehearsalStyleGuidance } from "@modules/rules";
+import { toneDirective } from "@modules/aiRepStudio";
 
 export const dynamic = "force-dynamic";
 
@@ -92,10 +93,12 @@ export async function POST(req: Request): Promise<NextResponse> {
   const sessionId = previewSessionId(body.previewSessionId);
   const studioSnap = await c.studio.get(c.demo.aiRepId);
   const rules = studioSnap?.rules ?? [];
+  // The rep's chosen tone styles the rehearsal wording too (phrasing only — grounded + gated).
+  const tone = toneDirective(studioSnap?.rep.persona.voiceStyle);
 
   if (body.kind === "overview" || isOverviewPrompt(text, c.brand.lexicon)) {
     const savedDeckGuidance = presentationGuidance(rules, { hcpId: c.demo.hcpId, rehearsal: true });
-    const guidance = Array.from(new Set([...savedDeckGuidance, ...coaching].map((g) => g.trim()).filter(Boolean)));
+    const guidance = Array.from(new Set([...savedDeckGuidance, ...coaching, ...(tone ? [tone] : [])].map((g) => g.trim()).filter(Boolean)));
     const presentation = new PresentationSkill(c.content);
     const ctx = { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market };
     // ALWAYS speak from the effective plan (saved ?? DocNexus default) — the same plan the
@@ -176,7 +179,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   // orchestrator uses approved text only, and we report usedLlm:false.
   const composer = firstAvailableComposer();
   const savedGuidance = rehearsalStyleGuidance(rules, { hcpId: c.demo.hcpId });
-  const guidance = Array.from(new Set([...savedGuidance, ...coaching].map((g) => g.trim()).filter(Boolean)));
+  const guidance = Array.from(new Set([...savedGuidance, ...coaching, ...(tone ? [tone] : [])].map((g) => g.trim()).filter(Boolean)));
   const opts = { preview: true as const, composer, coaching: guidance };
 
   const output = await c.orchestrator.handleTurn(

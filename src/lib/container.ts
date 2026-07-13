@@ -24,7 +24,7 @@ import { TurnOrchestrator, ConversationService } from "@modules/realtime";
 import { SessionService } from "@modules/sessions";
 import { TargetingService, loadCohort, audienceQueryFor } from "@modules/audience";
 import { AnalyticsService, RuntimeMetrics } from "@modules/analytics";
-import { StudioService } from "@modules/aiRepStudio";
+import { StudioService, toneDirective } from "@modules/aiRepStudio";
 import { activeSteering } from "@modules/rules";
 import { MlrService } from "@modules/mlr";
 import { getBrandProfile, setupAnswersOf, type BrandProfile, resolveBrandProfile } from "@modules/brand";
@@ -168,7 +168,14 @@ export async function createContainer(opts?: { seedHistory?: boolean; repos?: Re
   const conversation = new ConversationService({
     orchestrator, sessions, crm, audit,
     context: { brandId, campaignId },
-    steeringFor: async (hcpId) => activeSteering((await studio.get(aiRepId))?.rules ?? [], { hcpId }),
+    steeringFor: async (hcpId) => {
+      const snap = await studio.get(aiRepId);
+      const steering = activeSteering(snap?.rules ?? [], { hcpId });
+      // The persona's chosen tone becomes a style directive the composer honors (phrasing only,
+      // under the grounding rules) — so "professional / warm / clinical" actually changes wording.
+      const tone = toneDirective(snap?.rep.persona.voiceStyle);
+      return tone ? { ...steering, styleGuidance: [...(steering.styleGuidance ?? []), tone] } : steering;
+    },
     // CRM identity via the targeting service (prefix-tolerant, and self-healing when the
     // live cohort recovers). No NPI → truthful "needs_mapping" in the outbox.
     npiFor: (hcpId) => targeting.get(hcpId)?.npi,

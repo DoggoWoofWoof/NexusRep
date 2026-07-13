@@ -9,7 +9,7 @@ import { isOverviewPrompt } from "./overviewPrompt";
 import { SlideView } from "../_components/SlideView";
 import { VideoAgentStage } from "../_components/VideoAgentStage";
 import { StudioAgentMode } from "./StudioAgentMode";
-import { BrowserVoiceProvider } from "@lib/browser-speech";
+import { BrowserVoiceProvider, createRecognizer, setSpeechLanguage, toneSpeechOpts, type ClientRecognizer } from "@lib/browser-speech";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 
 type StudioMode = "setup" | "agent" | "pitch" | "train" | "rules" | "readiness";
@@ -226,8 +226,8 @@ export function StudioScreen({ app }: { app: AppState }) {
 
       {mode === "setup" && <BuildMode repName={repName} snap={snap} post={post} app={app} refresh={refresh} />}
       {mode === "agent" && <StudioAgentMode voiceStyle={snap?.rep.voiceStyle} onVoiceStyle={(v) => post({ action: "answer", questionKey: "voice_style", value: v })} />}
-      {mode === "pitch" && <PitchMode />}
-      {mode === "train" && <TrainMode rules={rules} post={post} repName={repName} app={app} />}
+      {mode === "pitch" && <PitchMode voiceStyle={snap?.rep.voiceStyle} />}
+      {mode === "train" && <TrainMode rules={rules} post={post} repName={repName} app={app} voiceStyle={snap?.rep.voiceStyle} />}
       {mode === "rules" && <RulesMode rules={rules} post={post} />}
       {mode === "readiness" && <ReadinessMode snap={snap} submitState={submitState} onSubmit={submit} />}
     </div>
@@ -829,7 +829,7 @@ function loadTrainState(brandName?: string): TrainStore {
 // The trainer HEARS a recoached line immediately — same browser voice the doctor
 // view uses, so coaching judges cadence and tone, not just the words on screen.
 let trainerVoice: BrowserVoiceProvider | null = null;
-async function speakCoached(text: string): Promise<void> {
+async function speakCoached(text: string, style?: string): Promise<void> {
   const [body] = splitIsi(text);
   if (!body.trim()) return;
   if (!trainerVoice) {
@@ -837,7 +837,7 @@ async function speakCoached(text: string): Promise<void> {
     await trainerVoice.warmup();
   }
   trainerVoice.cancel();
-  void trainerVoice.speak(body);
+  void trainerVoice.speak(body, toneSpeechOpts(style)); // tone changes the delivery, not just the words
 }
 
 function splitIsi(text: string): [string, string | null] {
@@ -850,7 +850,7 @@ function splitIsi(text: string): [string, string | null] {
  * source deck on the left, the knowledge base drafts the script, the middle column is the script
  * line by line (coach any line in place), and the right column edits sections. Rules live below
  * the deck. Nothing here creates sessions — it is all rehearsal against the compliance graph. */
-function PitchMode() {
+function PitchMode({ voiceStyle }: { voiceStyle?: string }) {
   const {
     overviewPlan, activePlanStepId, setActivePlanStepId, activePlanSlideId,
     planNote, setPlanNote, planMsg, persistOverviewPlan, updatePlanStep,
@@ -903,7 +903,7 @@ function PitchMode() {
     const fresh = await generate();
     // Hear the coached line as the rep would deliver it.
     const updated = fresh.find((x) => x.stepId && x.stepId === (seg.stepId ?? activePlanStepId));
-    if (updated) void speakCoached(updated.response);
+    if (updated) void speakCoached(updated.response, voiceStyle);
   };
 
   // ── Deck sources: which uploaded/approved documents feed the deck + script.
@@ -1187,7 +1187,7 @@ function useOverviewPlan() {
   };
 }
 
-function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; repName: string; app: AppState }) {
+function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[]; post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; repName: string; app: AppState; voiceStyle?: string }) {
   const brand = useBrand();
   // Rehydrate the coaching thread from localStorage so it survives tab switches / reload.
   const [exchanges, setExchanges] = useState<Exchange[]>(() => loadTrainState().exchanges ?? []);
@@ -1196,6 +1196,10 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
   const [coachDraft, setCoachDraft] = useState<Record<number, string>>(() => loadTrainState().coachDraft ?? {});
   const [busyIdx, setBusyIdx] = useState<number | null>(null);
   const [showVideo, setShowVideo] = useState(false);
+  // Talk to the rep to rehearse, exactly like a doctor would — same browser ASR the HCP view uses.
+  const [listening, setListening] = useState(false);
+  const [micSupported, setMicSupported] = useState(false);
+  const recRef = useRef<ClientRecognizer | null>(null);
   const [previewSessionId, setPreviewSessionId] = useState(() => loadTrainState().previewSessionId ?? makePreviewSessionId());
   // Shared script plan (per-line coaching writes to it; the deck panel follows the convo).
   const { activePlanStepId, setActivePlanStepId, activePlanSlideId, applyPlanNote } = useOverviewPlan();
@@ -1211,6 +1215,16 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     const el = threadRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [exchanges, busyIdx]);
+
+  // Browser ASR for voice rehearsal (created once; supported() gates the mic button).
+  useEffect(() => {
+    const rec = createRecognizer();
+    recRef.current = rec;
+    setMicSupported(rec.supported());
+    return () => { try { rec.stop(); } catch { /* already stopped */ } };
+  }, []);
+  // ASR/TTS locale follows the brand persona's language, set at start() time so a late brand load isn't stale.
+  useEffect(() => { setSpeechLanguage(brand?.language); }, [brand?.language]);
 
   const coachingRules = rules.filter((r) => r.source === "feedback");
 
@@ -1274,6 +1288,19 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     setAsking(false);
   };
 
+  // Push-to-talk rehearsal: tap the mic, speak a question, the recognized text drives ask().
+  const toggleMic = () => {
+    const rec = recRef.current;
+    if (!rec || !rec.supported()) return;
+    if (listening) { rec.stop(); setListening(false); return; }
+    trainerVoice?.cancel(); // barge-in: stop the rep speaking before we listen
+    setListening(true);
+    rec.start(
+      (text) => { setListening(false); setInput(""); void ask(text); },
+      () => setListening(false),
+    );
+  };
+
   // Session review → "Coach this exchange": the reviewed doctor question arrives via a one-shot
   // seed, so coaching starts from the exact line that needed work — no retyping.
   useEffect(() => {
@@ -1302,7 +1329,7 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
     setFollowSlideId((a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId) ?? null);
     setCoachDraft((d) => ({ ...d, [idx]: "" }));
     setBusyIdx(null);
-    void speakCoached(a.text); // hear the retake, don't just read it
+    void speakCoached(a.text, voiceStyle); // hear the retake, don't just read it
   };
 
   // Accept the current answer. Greeting → persist the new opening line. Otherwise → compact the
@@ -1342,7 +1369,10 @@ function TrainMode({ rules, post, repName, app }: { rules: UiRule[]; post: (body
         <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "14px 15px", boxShadow: "var(--dn-shadow-card)" }}>
           <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginBottom: 9 }}>Play the provider — ask, then coach</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-            <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void ask(); }} placeholder="Ask the rep a question…" style={{ flex: 1, padding: "10px 12px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 12.5px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
+            <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void ask(); }} placeholder={listening ? "Listening…" : micSupported ? "Ask the rep — type or tap the mic to talk…" : "Ask the rep a question…"} style={{ flex: 1, minWidth: 0, padding: "10px 12px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 12.5px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
+            {micSupported && (
+              <button onClick={toggleMic} title={listening ? "Stop listening" : "Talk to the rep"} aria-label={listening ? "Stop listening" : "Talk to the rep"} style={{ ...btnGhost, padding: "10px 12px", border: listening ? "1px solid var(--dn-danger)" : undefined, color: listening ? "var(--dn-danger)" : "var(--dn-fg-muted)" }}>{listening ? "● Stop" : "🎤"}</button>
+            )}
             <button onClick={() => void ask()} disabled={asking} style={{ ...btnPrimary, padding: "10px 14px" }}>{asking ? "…" : "Ask"}</button>
           </div>
           <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>

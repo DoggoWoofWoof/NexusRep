@@ -33,6 +33,23 @@ export interface ReadinessItem {
   blocking: boolean;
 }
 
+/** Map a persona voice tone to a STYLE directive for the composer. Phrasing only — it is
+ *  layered UNDER the composer's absolute grounding rules and the compliance gate, so it can
+ *  never add a fact, number, or claim; it only changes HOW approved content is worded. This
+ *  is what makes the "tone" choice actually change what the rep says. */
+export function toneDirective(style?: string): string {
+  switch (style) {
+    case "professional":
+      return "Speak in a crisp, professional tone — lead with the point, minimal preamble, no filler.";
+    case "warm":
+      return "Speak in a warm, conversational tone — approachable and human, like a helpful colleague.";
+    case "clinical":
+      return "Speak in a measured, clinical, data-first tone — precise and understated.";
+    default:
+      return "";
+  }
+}
+
 /** Readiness score = share of completed items; launch requires no blocking items. */
 export function readiness(items: ReadinessItem[]): { pct: number; canLaunch: boolean } {
   if (items.length === 0) return { pct: 0, canLaunch: false };

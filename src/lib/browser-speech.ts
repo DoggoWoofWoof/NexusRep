@@ -17,6 +17,21 @@ export interface SpeakOptions {
   voiceHint?: string;
 }
 
+/** Map a persona voice tone to TTS delivery params, so picking a tone audibly changes how the
+ *  built-in voice sounds — not just the words. Deltas are gentle so speech stays natural. */
+export function toneSpeechOpts(style?: string): SpeakOptions {
+  switch (style) {
+    case "warm":
+      return { rate: 0.97, pitch: 1.06 };
+    case "clinical":
+      return { rate: 0.92, pitch: 0.95 };
+    case "professional":
+      return { rate: 1.03, pitch: 1.0 };
+    default:
+      return {};
+  }
+}
+
 export interface ClientVoiceProvider {
   readonly name: string;
   /** Speak text aloud. Resolves when speech finishes (or the pacing fallback elapses). */
