@@ -36,6 +36,12 @@ const FABRICATED_DOSE = /\b\d+(\.\d+)?\s?(mg|milligrams?|mcg|g)\b/i;
 async function run(label, user, pass, docs, productTerms) {
   console.log(`\n### ${label} — deep content + Q&A verification ###`);
   const j = await login(user, pass);
+
+  // Insufficient content: an empty / no-text document must be REJECTED (asks for a real doc) —
+  // never fabricated into a deck. (Rejection creates nothing, so the account stays clean.)
+  const blank = await api(j, "POST", "/api/content/ingest", { filename: "Blank_Deck_No_Text.pptx", contentBase64: b64("Blank_Deck_No_Text.pptx") });
+  check("empty/no-text doc → rejected, not fabricated", Boolean(blank.error) && !blank.parsed, `error="${(blank.error || "").slice(0, 60)}"`);
+
   const built = await buildContent(j, docs);
   check("content approved (answers + ISI)", built.answers >= 3 && built.safety >= 1, `${built.answers} answers, ${built.safety} safety`);
 

@@ -17,6 +17,7 @@ import {
   MockVoiceProvider,
 } from "./mock";
 import { TavusRealtimeProvider } from "./tavus";
+import { hasAgentCatalog } from "./types";
 import type {
   AvatarProvider,
   CrmAdapter,
@@ -42,6 +43,23 @@ export function getRealtimeProvider(): RealtimeProvider {
 }
 
 export { TavusRealtimeProvider, type TavusConfig } from "./tavus";
+
+// The default video agent — "Charlie" — resolved BY NAME from the gallery so it's Charlie
+// regardless of the deployment's env replica id (which may be someone else). Cached per process
+// (the stock catalog is stable); falls back to env.tavusReplicaId when no Charlie is available.
+let cachedDefaultAgentId: string | undefined;
+export async function resolveDefaultAgentId(): Promise<string | undefined> {
+  if (cachedDefaultAgentId !== undefined) return cachedDefaultAgentId || undefined;
+  const provider = getRealtimeProvider();
+  if (hasAgentCatalog(provider)) {
+    try {
+      const charlie = (await provider.listAgents()).find((a) => /\bcharlie\b/i.test(a.name) && a.status === "ready");
+      if (charlie) { cachedDefaultAgentId = charlie.id; return charlie.id; }
+    } catch { /* fall through to the env default */ }
+  }
+  cachedDefaultAgentId = env.tavusReplicaId || "";
+  return cachedDefaultAgentId || undefined;
+}
 
 export function getVoiceProvider(): VoiceProvider {
   return new MockVoiceProvider();

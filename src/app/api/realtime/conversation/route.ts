@@ -11,7 +11,7 @@ import { NextResponse } from "next/server";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { env } from "@lib/env";
-import { getRealtimeProvider } from "@modules/vendors";
+import { getRealtimeProvider, resolveDefaultAgentId } from "@modules/vendors";
 import { resolveBrandProfile, setupAnswersOf } from "@modules/brand";
 import { setActiveCallSession } from "@lib/active-call";
 
@@ -48,9 +48,10 @@ async function startConversation(req: Request): Promise<NextResponse> {
   const studioSnap = await c.studio.get(c.demo.aiRepId);
   const draft = studioSnap?.draft;
   const persona = resolveBrandProfile(c.brand, setupAnswersOf(draft)).persona;
-  // The Studio's Agent gallery selection wins over the deployment default — this is
-  // how "pick a different agent (face + voice)" reaches the live call.
-  const agentId = studioSnap?.appearance?.agentId || env.tavusReplicaId || undefined;
+  // The Studio's Agent gallery selection wins over the default — this is how "pick a different
+  // agent (face + voice)" reaches the live call. With no selection, the default is Charlie
+  // (resolved by name from the gallery), matching what the Agent gallery shows.
+  const agentId = studioSnap?.appearance?.agentId || (await resolveDefaultAgentId());
 
   // Identity: honor the invite link's hcpId only when it resolves to a real cohort member.
   const hcpId = typeof body.hcpId === "string" && c.targeting.has(body.hcpId) ? asId<"hcp_id">(body.hcpId) : c.demo.hcpId;
