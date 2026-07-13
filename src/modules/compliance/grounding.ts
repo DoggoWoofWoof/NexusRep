@@ -13,9 +13,40 @@
  *      highest-risk failure, so any ungrounded number fails immediately.
  *   2. Lexical coverage — the share of content tokens present in the blocks
  *      must clear a threshold, catching wholesale fabrication / topic drift.
+ *   3. Claim polarity — a high-stakes claim asserted POSITIVELY in the answer
+ *      (approved, indicated, effective, safe, superior…) must also be asserted
+ *      positively in the blocks. Token-set coverage alone treats "not FDA
+ *      approved" and "FDA approved" as identical (the words all match, and "not"
+ *      is a stop word), so a dropped/flipped negation used to pass. This catches
+ *      that flip — the single highest-risk fabrication for an investigational drug.
  */
 
 import { env } from "@lib/env";
+
+// Negation cues (apostrophes stripped before lookup) and the high-stakes claim terms whose
+// polarity matters. Kept deliberately small + precise; a false positive here is safe (the
+// caller falls back to the verbatim approved text), so we err toward catching flips.
+const NEG_CUES = new Set([
+  "not", "no", "never", "without", "cannot", "cant", "isnt", "arent", "wasnt", "werent",
+  "dont", "doesnt", "didnt", "non", "un", "neither", "nor", "yet", "pending", "investigational",
+]);
+const CLAIM_TERMS = new Set([
+  "approved", "approval", "indicated", "recommended", "superior", "safe", "effective",
+  "efficacious", "proven", "established", "preferred", "curative", "cures", "guaranteed",
+]);
+
+/** Claim terms asserted POSITIVELY (no negation cue in the preceding 4-token window). */
+function positiveClaims(text: string): Set<string> {
+  const toks = (text.toLowerCase().match(/[a-z']+/g) ?? []).map((t) => t.replace(/'/g, ""));
+  const out = new Set<string>();
+  for (let i = 0; i < toks.length; i++) {
+    if (!CLAIM_TERMS.has(toks[i]!)) continue;
+    let negated = false;
+    for (let j = Math.max(0, i - 4); j < i; j++) if (NEG_CUES.has(toks[j]!)) { negated = true; break; }
+    if (!negated) out.add(toks[i]!);
+  }
+  return out;
+}
 
 const STOP = new Set([
   "the", "is", "a", "an", "of", "to", "in", "and", "or", "at", "as", "with", "for", "on", "by",
@@ -40,6 +71,8 @@ export interface GroundingResult {
   novelTokens: string[];
   /** Numbers in the answer that appear in no approved block (highest risk). */
   ungroundedNumbers: string[];
+  /** Claim terms asserted positively in the answer but not positively in any block (a flip). */
+  polarityDrift: string[];
 }
 
 export interface GroundingInput {
@@ -70,6 +103,12 @@ export function validateGrounding(input: GroundingInput): GroundingResult {
 
   const ungroundedNumbers = [...new Set(numbers(input.answer))].filter((n) => !blockNums.has(n));
 
-  const grounded = ungroundedNumbers.length === 0 && coverage >= minCoverage;
-  return { grounded, coverage, novelTokens, ungroundedNumbers };
+  // Polarity: a positive claim in the answer that the blocks never assert positively is a flip
+  // (e.g. "is FDA approved" against "not FDA approved") — the words all match, so only this catches it.
+  const blockClaims = new Set<string>();
+  for (const b of input.blocks) for (const c of positiveClaims(b)) blockClaims.add(c);
+  const polarityDrift = [...positiveClaims(input.answer)].filter((c) => !blockClaims.has(c));
+
+  const grounded = ungroundedNumbers.length === 0 && coverage >= minCoverage && polarityDrift.length === 0;
+  return { grounded, coverage, novelTokens, ungroundedNumbers, polarityDrift };
 }
