@@ -55,16 +55,16 @@
   fields it filled; progress questions ("what's filled / what's left") get a real answer;
   coaching, "Ask DocNexus to revise", and section confirm are untouched (separate render
   branches).
-- **Barge-in on the greeting (and any answer) — speech-triggered and freeze-safe.** When the
-  doctor ACTUALLY starts speaking while the rep is mid-utterance (including the long greeting), a
-  single `conversation.interrupt` stops the rep so they don't have to wait it out. The crux of
-  not re-freezing: it's GATED on `repSpeakingRef` (fires only while the rep is genuinely speaking)
-  and only on speech-start — never before the first answer, never on an idle VAD blip, and NOT on
-  turning the mic on (turning the mic on means "getting ready", not "talking"). The earlier freeze
-  came from an ungated interrupt firing before the rep spoke + on every utterance, which cancelled
-  the pending answer and wedged ASR. The doctor's mic must be live for their speech to be detected
-  (mic-on = ready; speaking = the trigger). `src/app/_components/VideoAgentStage.tsx`,
-  `src/app/_components/video-transport.ts`.
+- **Barge-in must be Tavus-native — a client interrupt makes latency WORSE.** We tried a
+  client-side `conversation.interrupt` on the doctor's speech to stop the greeting. Even gated on
+  `repSpeakingRef` and fired only on speech-start, it races Tavus's own turn-taking: it
+  stops/restarts the replica and delays transcribing the doctor's question, so the answer "doesn't
+  render until much later" (an earlier ungated version hard-froze the turn entirely). So the voice
+  path sends NO client interrupt — `pal_interruptibility: "high"` lets Tavus own barge-in. The open
+  item: for the doctor to barge in over the ~14 s greeting, Tavus needs to hear them, which needs
+  the mic live during the greeting (it's click-to-talk / muted by default). Reliable levers are a
+  live mic during the greeting (Tavus-native barge-in) or a shorter greeting — NOT a client
+  interrupt. `src/app/_components/VideoAgentStage.tsx`.
 - **Speech reads naturally (no spoken em dashes) + the Claude classifier always returns JSON.**
   Dashes-as-pauses in a spoken answer become comma pauses (`stripSpeechMarkdown`), and the
   composer is told to write for the ear. The Claude classifier now prefills its reply with `{`
