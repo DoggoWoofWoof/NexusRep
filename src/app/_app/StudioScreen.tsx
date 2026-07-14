@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import type { AppState } from "./NexusRepApp";
 import { btnGhost, btnPrimary } from "./NexusRepApp";
 import { streamArena } from "@lib/arena-client";
-import { DEFAULT_RULES, KNOWLEDGE_ASSETS, TRAIN_SEED_KEY } from "./data";
+import { DEFAULT_RULES, KNOWLEDGE_ASSETS, TRAIN_SEED_KEY, setupTopicsFor } from "./data";
 import { isOverviewPrompt } from "./overviewPrompt";
 import { SlideView } from "../_components/SlideView";
 import { VideoAgentStage } from "../_components/VideoAgentStage";
@@ -118,6 +118,23 @@ function fallbackRules(): UiRule[] {
   }));
 }
 
+/* UI SETUP_TOPICS key → server questionKey (persists a scripted answer to the right field) */
+const ANSWER_KEY: Record<string, string> = {
+  brand: "brand",
+  indication: "indication",
+  persona: "persona_type",
+  audience: "target_audience",
+  knowledge: "approved_content",
+  escalation: "msl_contact",
+  talking: "talking_points",
+  forbidden: "blocked_topics",
+  voice: "greeting",
+  sponsor: "sponsor",
+  tagline: "tagline",
+  voice_style: "voice_style",
+  try_questions: "try_questions",
+  hotwords: "hotwords",
+};
 /* UI SECTIONS key → server section key */
 const SECTION_KEY: Record<string, string> = {
   profile: "profile",
@@ -220,12 +237,10 @@ export function StudioScreen({ app }: { app: AppState }) {
 /* ---------- BUILD MODE ---------- */
 function BuildMode({ repName, snap, post, app, refresh }: { repName: string; snap: StudioSnap | null; post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; app: AppState; refresh: () => Promise<void> }) {
   const brand = useBrand();
-  const [chat, setChat] = useState<{ role: "assistant" | "user"; text: string }[]>([
-    { role: "assistant", text: "Hi — I can help you build your AI rep. Tell me about your product, ask me to change something (“focus it on atrial fibrillation”), set a rule (“never discuss dosing”), or drop in a deck / PI / FAQ and I’ll pull it in and fill the setup from it." },
-  ]);
+  const [step, setStep] = useState(0);
+  const [chat, setChat] = useState<{ role: "assistant" | "user"; text: string }[]>([]);
   const [proposed, setProposed] = useState<SetupProposedAction[]>([]);
   const [chatBusy, setChatBusy] = useState(false);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [input, setInput] = useState("");
   const [open, setOpen] = useState<string | null>("profile");
   const [status, setStatus] = useState<Record<string, string>>({});
@@ -444,27 +459,81 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
     setStatus(next);
   }, [snap]);
 
-  // One agentic setup turn: send the message (+ any attached document) to the assistant, append the
-  // reply, and surface its PROPOSED actions as confirm chips. Nothing changes until the user confirms.
-  async function sendChat(message: string, file?: File | null) {
+  const topics = setupTopicsFor(brand);
+
+  // Seed the guided script ONCE: greeting + first question. The scripted Q&A is the backbone the
+  // brand user follows; typed instructions are layered on top (see submitInput / sendChat).
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current || !topics.length) return;
+    seededRef.current = true;
+    setChat([
+      { role: "assistant", text: "I’ll set up your AI rep — answer a few quick questions and I’ll draft each section on the right. You can also just tell me what you want at any point (“focus it on atrial fibrillation”, “never discuss dosing”) or upload a document and I’ll fill it in." },
+      { role: "assistant", text: topics[0]!.q },
+    ]);
+  }, [topics]);
+
+  // Answer the CURRENT scripted question (chip click, or a plain typed answer): record it in the
+  // chat, persist it, and advance the guided script to the next question — instant, no round-trip.
+  const answerScripted = (value: string) => {
+    const t = topics[step];
+    if (!t) return;
+    setInput("");
+    const qk = ANSWER_KEY[t.key];
+    if (qk) void post({ action: "answer", questionKey: qk, value });
+    setStatus((s) => (s[t.section] === "confirmed" ? s : { ...s, [t.section]: "drafted" }));
+    const next = step + 1;
+    setStep(next);
+    setOpen(topics[next]?.section ?? t.section);
+    setChat((c) => [
+      ...c,
+      { role: "user" as const, text: value },
+      topics[next]
+        ? { role: "assistant" as const, text: topics[next]!.q }
+        : { role: "assistant" as const, text: "That’s everything I need — review and confirm each section on the right. Tell me anytime if you’d like to change something." },
+    ]);
+  };
+
+  // "Decide for me": draft every section with sensible defaults (first chip each), skip to the end.
+  const autoFill = () => {
+    topics.forEach((t) => {
+      const qk = ANSWER_KEY[t.key];
+      if (qk) void post({ action: "answer", questionKey: qk, value: t.chips[0]![1] });
+    });
+    setStatus((s) => {
+      const n = { ...s };
+      topics.forEach((t) => { if (n[t.section] !== "confirmed") n[t.section] = "drafted"; });
+      return n;
+    });
+    setStep(topics.length);
+    setChat((c) => [...c, { role: "assistant", text: "Done — I drafted every section with sensible defaults. Review and confirm them on the right, or tell me what to change." }]);
+  };
+
+  // A typed message is an INSTRUCTION/question (→ agent) rather than a plain answer to the current
+  // question when it reads like a command or a question, or is long. Otherwise it's the scripted
+  // answer, so the guided flow stays snappy. Chips are always the unambiguous quick path.
+  const INSTRUCTION_RE = /\?\s*$|^\s*(use|ingest|upload|add|set|change|rename|focus|make|never|don'?t|do not|always|remove|delete|drop|show|what|how|why|when|who|which|can you|could you|please|turn|enable|disable|draft|create|also|update|switch|target|block|avoid|include|exclude|tell me|give me)\b/i;
+  const looksLikeInstruction = (t: string) => INSTRUCTION_RE.test(t) || t.split(/\s+/).length > 12;
+  const submitInput = () => {
+    const t = input.trim();
+    if (!t) return;
+    if (step < topics.length && !looksLikeInstruction(t)) answerScripted(t);
+    else void sendChat(t);
+  };
+
+  // Free-form instruction/question → the agentic assistant. It replies and PROPOSES actions
+  // (confirm chips); nothing changes until the user confirms. Works mid-script or after it.
+  async function sendChat(message: string) {
     const text = message.trim();
-    if ((!text && !file) || chatBusy) return;
+    if (!text || chatBusy) return;
     setInput("");
     setChatBusy(true);
-    const label = file ? (text ? `${text}  ·  📎 ${file.name}` : `📎 ${file.name}`) : text;
     const history = chat.slice(-12);
-    setChat((c) => [...c, { role: "user", text: label }]);
+    setChat((c) => [...c, { role: "user", text }]);
     try {
-      let attachment: { filename: string; contentBase64: string } | undefined;
-      if (file) {
-        const buf = new Uint8Array(await file.arrayBuffer());
-        let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-        attachment = { filename: file.name, contentBase64: btoa(bin) };
-        setPendingFile(file); // kept so a confirmed ingest posts the SAME bytes to /api/content/ingest
-      }
       const res = await fetch("/api/setup/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text || `Please use ${file?.name}`, history, attachment }),
+        body: JSON.stringify({ message: text, history }),
       });
       const d = (await res.json()) as { reply?: string; actions?: SetupProposedAction[]; error?: string };
       setChat((c) => [...c, { role: "assistant", text: res.ok ? (d.reply || "Okay.") : `I couldn't do that: ${d.error ?? res.status}` }]);
@@ -476,33 +545,26 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
     }
   }
 
-  // Execute ONE confirmed action through endpoints that already exist — the assistant only proposes;
-  // this is where anything actually changes. Ingest routes through MLR (never instantly live/spoken).
+  // Execute ONE confirmed action via existing endpoints. If a set_field answers the CURRENT scripted
+  // question, advance the guided script too so the two stay in lockstep.
   async function confirmAction(action: SetupProposedAction) {
     setProposed((p) => p.filter((a) => a !== action));
     const say = (text: string) => setChat((c) => [...c, { role: "assistant", text }]);
     try {
-      if (action.type === "ingest_document") {
-        let msg = "Done — it’s in the MLR review queue under Approved knowledge. Approve the passages there to make them live rep knowledge.";
-        if (pendingFile) {
-          const r = await onUpload(pendingFile);
-          setPendingFile(null);
-          if (r) {
-            const parts = [`${r.blocks} passage${r.blocks === 1 ? "" : "s"} sent to MLR review`];
-            if (r.safety) parts.push(`${r.safety} ISI statement${r.safety === 1 ? "" : "s"}`);
-            const filledNote = r.filled.length
-              ? ` I also filled ${r.filled.map((f) => f.replace(/_/g, " ")).join(", ")} from it — review the sections on the right.`
-              : "";
-            msg = `Done — ${parts.join(" and ")}.${filledNote} Approve the passages under Approved knowledge to make them live rep knowledge.`;
-          }
-        }
-        setOpen("knowledge");
-        say(msg);
-      } else if (action.type === "set_field" && action.fieldKey && action.value) {
+      if (action.type === "set_field" && action.fieldKey && action.value) {
         await post({ action: "answer", questionKey: action.fieldKey, value: action.value });
         if (action.fieldKey === "brand") invalidateBrandCache();
         await refresh();
-        say(`${action.summary ?? "Updated"}. Fine-tune it in the sections on the right if you like.`);
+        const cur = topics[step];
+        if (cur && ANSWER_KEY[cur.key] === action.fieldKey) {
+          setStatus((s) => (s[cur.section] === "confirmed" ? s : { ...s, [cur.section]: "drafted" }));
+          const next = step + 1;
+          setStep(next);
+          setOpen(topics[next]?.section ?? cur.section);
+          say(topics[next] ? `${action.summary ?? "Done"}. ${topics[next]!.q}` : `${action.summary ?? "Done"}. That’s the essentials — review and confirm on the right.`);
+        } else {
+          say(`${action.summary ?? "Updated"}. Fine-tune it in the sections on the right if you like.`);
+        }
       } else if (action.type === "draft_rule" && action.ruleFeedback) {
         await post({ action: "rule", feedback: action.ruleFeedback, scope: action.ruleScope ?? "persona" });
         await refresh();
@@ -510,9 +572,10 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
       } else if (action.type === "flag_isi") {
         setOpen("knowledge");
         say("Opened Approved knowledge — add or confirm the ISI there. It’s required before the rep can go live.");
-      } else if (action.type === "request_upload") {
+      } else {
+        // request_upload / ingest_document (no in-chat attachment): point at the upload affordances.
         setOpen("knowledge");
-        say("Use “Add source file” under Approved knowledge, or attach a document here in the chat.");
+        say("Use “Autofill from a document” below, or “Add source file” under Approved knowledge, and I’ll extract the setup + safety content for MLR review.");
       }
     } catch (e) {
       say(`That didn’t go through: ${e instanceof Error ? e.message : String(e)}`);
@@ -562,7 +625,19 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
             </div>
           ))}
           {chatBusy && <div style={{ paddingLeft: 31, font: "500 11.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Thinking…</div>}
-          {/* Proposed actions — the assistant only ever PROPOSES; nothing changes until Confirm. */}
+          {/* Current scripted question — click a suggestion to answer instantly (the glued guided path). */}
+          {step < topics.length && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7, paddingLeft: 31, marginTop: 2, alignItems: "center" }}>
+              {topics[step]!.optional && <span data-testid="setup-optional" style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", background: "var(--dn-surface-2)", padding: "4px 7px", borderRadius: 5 }}>optional</span>}
+              {topics[step]!.chips.map((c) => (
+                <span key={c[0]} data-testid="setup-chip" onClick={() => answerScripted(c[1])} style={{ padding: "8px 12px", background: "#fff", border: "1px solid var(--dn-brand-light)", borderRadius: 9, font: "600 11.5px/1.2 var(--dn-font-sans)", color: "var(--dn-brand-base)", cursor: "pointer" }}>{c[0]}</span>
+              ))}
+              {topics[step]!.optional && (
+                <span data-testid="setup-skip" onClick={() => { const next = step + 1; setStep(next); setOpen(topics[next]?.section ?? null); setChat((ch) => topics[next] ? [...ch, { role: "assistant", text: topics[next]!.q }] : [...ch, { role: "assistant", text: "All set — review and confirm each section on the right." }]); }} style={{ padding: "8px 12px", border: "1px dashed var(--dn-border)", borderRadius: 9, font: "600 11.5px/1.2 var(--dn-font-sans)", color: "var(--dn-fg-muted)", cursor: "pointer" }}>Skip →</span>
+              )}
+            </div>
+          )}
+          {/* Proposed actions from a typed instruction — the assistant only PROPOSES; nothing changes until Confirm. */}
           {proposed.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingLeft: 31 }}>
               {proposed.map((a, i) => (
@@ -578,13 +653,27 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
           )}
         </div>
         <div style={{ padding: "12px 14px", borderTop: "1px solid var(--dn-border)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 9, flexWrap: "wrap" }}>
+            <span style={{ font: "500 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{Math.min(step, topics.length)} of {topics.length} answered</span>
+            <span style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              {/* Upload once instead of answering one-by-one: the document fills the blanks. */}
+              <label style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }} title="Upload a deck / PI / FAQ — I'll fill the setup answers from it">
+                📎 Autofill from a document
+                <input data-testid="upload-autofill" type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => void onUpload(e.target.files?.[0])} style={{ display: "none" }} />
+              </label>
+              {step < topics.length && <span onClick={autoFill} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>Decide for me →</span>}
+            </span>
+          </div>
+          {/* Footer surfaces the autofill outcome (or a failure); the full parse/approve detail lives
+              in the Approved-knowledge section, not duplicated here. */}
+          {(() => {
+            const note = uploadMsg.match(/Auto-filled[^]*$/)?.[0] ?? (/^(Couldn't parse|Upload failed|Parsing)/.test(uploadMsg) ? uploadMsg : null);
+            return note ? <div style={{ font: "500 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginBottom: 9 }}>{note}</div> : null;
+          })()}
+          <div style={{ height: 5, borderRadius: 3, background: "var(--dn-surface-2)", overflow: "hidden", marginBottom: 11 }}><div style={{ height: "100%", borderRadius: 3, background: "var(--dn-brand-base)", width: `${(Math.min(step, topics.length) / Math.max(topics.length, 1)) * 100}%` }} /></div>
           <div style={{ display: "flex", gap: 8 }}>
-            <label title="Attach a deck / PI / ISI / FAQ" style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 38, borderRadius: 9, border: "1px solid var(--dn-border)", background: "var(--dn-surface-2)", cursor: "pointer", color: "var(--dn-brand-base)", fontSize: 15 }}>
-              📎
-              <input data-testid="setup-attach" type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => { const f = e.target.files?.[0]; e.currentTarget.value = ""; if (f) void sendChat("", f); }} style={{ display: "none" }} />
-            </label>
-            <input data-testid="setup-input" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && input.trim()) void sendChat(input); }} placeholder="Type an answer…" style={{ flex: 1, padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 12px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
-            <button data-testid="setup-send" onClick={() => input.trim() && void sendChat(input)} disabled={chatBusy} style={{ ...btnPrimary, padding: "9px 14px", font: "600 12px/1 var(--dn-font-sans)", opacity: chatBusy ? 0.6 : 1 }}>Send</button>
+            <input data-testid="setup-input" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submitInput(); }} placeholder="Type an answer, or tell me what to change…" style={{ flex: 1, padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 12px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
+            <button data-testid="setup-send" onClick={submitInput} disabled={chatBusy} style={{ ...btnPrimary, padding: "9px 14px", font: "600 12px/1 var(--dn-font-sans)", opacity: chatBusy ? 0.6 : 1 }}>Send</button>
           </div>
         </div>
       </div>

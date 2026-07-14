@@ -22,7 +22,19 @@ test.describe("Self-serve setup (chat + UI only)", () => {
   // NOTE: the re-brand-by-chat test lives in rebrand.spec.ts — it mutates global server
   // state, so it runs in a dependent project AFTER this parallel suite.
 
-  test("the setup assistant understands a free-form instruction and proposes a confirmable action", async ({ page }) => {
+  test("essentials come first; polish questions are labeled optional and skippable", async ({ page }) => {
+    await openBuild(page);
+    // Answer the eight essentials via the first suggestion chip each time (the guided scripted path).
+    for (let i = 0; i < 8; i++) {
+      await page.getByTestId("setup-chip").first().click();
+    }
+    // Now in the optional block: the pill + Skip control appear, and Skip advances.
+    await expect(page.getByTestId("setup-optional")).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId("setup-skip").click();
+    await expect(page.getByTestId("setup-optional")).toBeVisible(); // next optional question
+  });
+
+  test("the setup assistant understands a free-form instruction mid-script and proposes a confirmable action", async ({ page }) => {
     await openBuild(page);
     // A plain-language instruction — the assistant maps it to a conversation-rule action.
     // (E2E runs with no LLM key, so this exercises the deterministic fallback intent-mapping.)
