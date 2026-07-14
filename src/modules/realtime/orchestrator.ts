@@ -312,9 +312,9 @@ export class TurnOrchestrator {
       const covered = [...new Set(priorReplies)].slice(-8); // recent, de-duplicated
       const antiRepeat = covered.length
         ? [
-            `You have ALREADY told this doctor the following, earlier in THIS conversation:\n${covered
+            `Earlier in THIS conversation you already said:\n${covered
               .map((t, i) => `(${i + 1}) ${t.slice(0, 180)}`)
-              .join("\n")}\nDo NOT repeat these points or reuse that phrasing. Answer the new question with information or an angle you have NOT already given. If the question overlaps something covered, add a NEW detail or briefly point them to a specific aspect rather than restating it, and word it differently. When you have genuinely nothing new from the approved content, say so briefly and offer to go deeper or connect them — do not pad with the same background again.`,
+              .join("\n")}\nDon't sound repetitive: avoid reusing the same sentences or wording, and don't pad a reply with background that isn't what was asked. Restating an important or directly-relevant point IS fine — just say it in DIFFERENT words and framing, and lead with something new. When the approved content genuinely has nothing new to add, say so briefly and offer to go deeper rather than repeating an earlier answer verbatim.`,
           ]
         : [];
       const guidance = [...(opts?.coaching ?? []), ...steeringGuidance, ...slideHint, ...antiRepeat];

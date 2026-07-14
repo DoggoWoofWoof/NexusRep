@@ -79,7 +79,11 @@ function getPipe() {
       };
       tf.env.allowLocalModels = false;
       const model = process.env.NEXUSREP_EMBEDDINGS_MODEL || "Xenova/all-MiniLM-L6-v2";
-      return tf.pipeline("feature-extraction", model);
+      const pipe = await tf.pipeline("feature-extraction", model);
+      // Positive confirmation in the logs that NEURAL is actually running (not the silent lexical
+      // fallback) — pair with the absence of the "[embeddings] neural model unavailable" warning.
+      console.info(`[embeddings] neural model ready: ${model}${process.env.HF_TOKEN ? " (HF token present)" : ""}`);
+      return pipe;
     })();
   }
   return pipePromise;
