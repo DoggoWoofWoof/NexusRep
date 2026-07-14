@@ -301,7 +301,17 @@ export class TurnOrchestrator {
       const steeringGuidance = (opts?.steering?.styleGuidance ?? []).filter(
         (g) => !disclosureGiven || !/disclos|investigational|not fda/i.test(g),
       );
-      const guidance = [...(opts?.coaching ?? []), ...steeringGuidance, ...slideHint];
+      // Conversation-aware de-dup: show the composer what it JUST said so it answers with a fresh
+      // angle instead of re-stating the same boilerplate — the "answers feel repetitive" fix.
+      // Advisory only (never overrides grounding/gate); the deterministic builder ignores it.
+      const lastRep = [...priorEvents]
+        .reverse()
+        .find((e) => e.type === "response_output" && typeof e.payload.text === "string" && (e.payload.text as string).trim().length > 20);
+      const lastSaid = lastRep ? (lastRep.payload.text as string).split(/\n\nImportant Safety Information:/)[0]!.trim().slice(0, 300) : "";
+      const antiRepeat = lastSaid
+        ? [`Moments ago you already told this doctor: "${lastSaid}" — do NOT repeat those sentences or that framing. Answer the new question with different wording and add something new; don't just restate what they just heard.`]
+        : [];
+      const guidance = [...(opts?.coaching ?? []), ...steeringGuidance, ...slideHint, ...antiRepeat];
       const overrideComposer = opts?.composer;
       const activeComposer = overrideComposer !== undefined ? overrideComposer : this.composer;
       const composeFn = activeComposer?.available()
