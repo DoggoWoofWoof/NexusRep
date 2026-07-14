@@ -301,15 +301,21 @@ export class TurnOrchestrator {
       const steeringGuidance = (opts?.steering?.styleGuidance ?? []).filter(
         (g) => !disclosureGiven || !/disclos|investigational|not fda/i.test(g),
       );
-      // Conversation-aware de-dup: show the composer what it JUST said so it answers with a fresh
-      // angle instead of re-stating the same boilerplate — the "answers feel repetitive" fix.
-      // Advisory only (never overrides grounding/gate); the deterministic builder ignores it.
-      const lastRep = [...priorEvents]
-        .reverse()
-        .find((e) => e.type === "response_output" && typeof e.payload.text === "string" && (e.payload.text as string).trim().length > 20);
-      const lastSaid = lastRep ? (lastRep.payload.text as string).split(/\n\nImportant Safety Information:/)[0]!.trim().slice(0, 300) : "";
-      const antiRepeat = lastSaid
-        ? [`Moments ago you already told this doctor: "${lastSaid}" — do NOT repeat those sentences or that framing. Answer the new question with different wording and add something new; don't just restate what they just heard.`]
+      // Conversation-aware de-dup across the WHOLE session (not just the last turn): show the
+      // composer EVERYTHING it has already told this doctor so it answers with genuinely new
+      // information or a fresh angle instead of re-stating the same few blocks. Deduped + capped so
+      // the prompt stays lean. Advisory only (never overrides grounding/gate); deterministic ignores it.
+      const priorReplies = priorEvents
+        .filter((e) => e.type === "response_output" && typeof e.payload.text === "string")
+        .map((e) => (e.payload.text as string).split(/\n\nImportant Safety Information:/)[0]!.trim())
+        .filter((t) => t.length > 20);
+      const covered = [...new Set(priorReplies)].slice(-8); // recent, de-duplicated
+      const antiRepeat = covered.length
+        ? [
+            `You have ALREADY told this doctor the following, earlier in THIS conversation:\n${covered
+              .map((t, i) => `(${i + 1}) ${t.slice(0, 180)}`)
+              .join("\n")}\nDo NOT repeat these points or reuse that phrasing. Answer the new question with information or an angle you have NOT already given. If the question overlaps something covered, add a NEW detail or briefly point them to a specific aspect rather than restating it, and word it differently. When you have genuinely nothing new from the approved content, say so briefly and offer to go deeper or connect them — do not pad with the same background again.`,
+          ]
         : [];
       const guidance = [...(opts?.coaching ?? []), ...steeringGuidance, ...slideHint, ...antiRepeat];
       const overrideComposer = opts?.composer;
