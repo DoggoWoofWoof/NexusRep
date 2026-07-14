@@ -478,9 +478,12 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             if (/hcp|user|human|participant|remote/i.test(e.role)) {
               if (/start(?:ed)?[_\s.-]*speak/i.test(e.type)) {
                 recordTiming({ type: "hcp_started_speaking", reason: e.type });
-                // The doctor started talking → flush the replica's current speech NOW so the new
-                // question isn't queued behind a still-playing answer (barge-in, immediate).
-                transportRef.current?.interrupt();
+                // Barge-in: interrupt ONLY while the rep is actually speaking, so the doctor talking
+                // over a (possibly long) answer drops it. Interrupting when the rep is NOT yet
+                // speaking — a stray VAD blip during the connect/think window before the first answer
+                // — cancels the pending response and the turn never recovers (the "frozen before it
+                // speaks" bug). repSpeakingRef flips on the replica's own started/stopped events.
+                if (repSpeakingRef.current) transportRef.current?.interrupt();
               } else if (/stop(?:ped)?[_\s.-]*speak|done[_\s.-]*speak/i.test(e.type)) {
                 recordTiming({ type: "hcp_stopped_speaking", reason: e.type });
               }
@@ -501,16 +504,10 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // the connect boot + any idle before the rep speaks. No-op once already recording.
             if (speaker === "rep") maybeStartRec();
             // The doctor's SPOKEN words must appear in the captions like typed ones do —
-            // without this, a voice-only conversation has no "You" lines at all.
-            if (speaker === "hcp") {
-              // Barge-in DROP: a new doctor question supersedes whatever the rep was about to say.
-              // Interrupt HERE too (not only on hcp_started_speaking, which Tavus doesn't reliably
-              // emit on the pure-voice path) so the prior/queued answer is DROPPED rather than played
-              // out ahead of the new one — this is what stops the voice queue from stacking (the
-              // 9→23s think-to-voice creep). The ASR noise filter above already excluded non-speech.
-              transportRef.current?.interrupt();
-              onHcpUtterance?.(text);
-            }
+            // without this, a voice-only conversation has no "You" lines at all. (Barge-in
+            // interrupt is handled on hcp_started_speaking, gated on the rep actually speaking —
+            // interrupting from here fired on stray blips before the rep spoke and froze the turn.)
+            if (speaker === "hcp") onHcpUtterance?.(text);
             const sid = sessionIdRef.current;
             if (!sid) return;
             const key = `${speaker}:${text}`;

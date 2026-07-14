@@ -55,11 +55,13 @@
   fields it filled; progress questions ("what's filled / what's left") get a real answer;
   coaching, "Ask DocNexus to revise", and section confirm are untouched (separate render
   branches).
-- **Barge-in DROP (video-rep latency).** The rep's queued/playing answer is now dropped
-  the moment the doctor's next question lands (interrupt on the utterance signal Tavus
-  reliably emits, not only `hcp_started_speaking`), so the voice queue stops stacking —
-  what caused the 9→23s think-to-voice creep. No answer-length cap.
-  `src/app/_components/VideoAgentStage.tsx`.
+- **Barge-in DROP (video-rep latency), gated so it can't freeze the turn.** When the doctor
+  talks over the rep WHILE it is actually speaking, the current (possibly long) answer is
+  dropped so the queue doesn't stack. Critically the interrupt is gated on `repSpeakingRef` —
+  interrupting before the rep has started (a stray VAD blip in the connect/think window, or an
+  over-eager interrupt on every finalized utterance) cancelled the pending first answer and the
+  turn never recovered ("frozen before it speaks"). Only a real talk-over while the rep speaks
+  interrupts now. No answer-length cap. `src/app/_components/VideoAgentStage.tsx`.
 - **Verified:** `tsc` clean; unit suite green (setup-agent 12, transcript 6); Playwright
   E2E green incl. the scripted essentials/optional/skip flow, a mid-script free-form
   instruction, and rebrand-by-chat (now via a confirm chip); `studio-build` visual baseline
