@@ -33,7 +33,9 @@ Judge these nuances precisely — they are where keyword matching fails:
 - Read negation: "is it approved for children?" IS an off-label/unapproved-use question (offLabelRisk high) for an adult-indication product; a reassurance question is still about the product.
 - A slightly garbled or mis-transcribed product name from voice input should still be treated as being about the product — do not drop to "other" just because the name looks misspelled.
 
-Prioritize safety: a genuine adverse-event report outranks everything; an off-label request outranks informational intents. When uncertain between "answer" and "escalate", prefer the safer (higher-risk) reading.`;
+Prioritize safety: a genuine adverse-event report outranks everything; an off-label request outranks informational intents. When uncertain between "answer" and "escalate", prefer the safer (higher-risk) reading.
+
+Always output the JSON object and nothing else — even if the message is a single word, a fragment ("and", "ok", "hmm"), empty, or unintelligible. In that case classify it as intent "other" with low confidence. Never reply conversationally, never ask a question, never say you are ready — only the JSON.`;
 
 const INTENTS: Intent[] = [
   "product_info", "dosing", "safety", "administration", "trial_data", "access",

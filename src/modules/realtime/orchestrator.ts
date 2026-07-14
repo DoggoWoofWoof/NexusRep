@@ -321,7 +321,7 @@ export class TurnOrchestrator {
         ? [
             `Earlier in THIS conversation you already said:\n${covered
               .map((t, i) => `(${i + 1}) ${t.slice(0, 180)}`)
-              .join("\n")}\nDon't sound repetitive: avoid reusing the same sentences or wording, and don't pad a reply with background that isn't what was asked. Restating an important or directly-relevant point IS fine — just say it in DIFFERENT words and framing, and lead with something new. When the approved content genuinely has nothing new to add, say so briefly and offer to go deeper rather than repeating an earlier answer verbatim.`,
+              .join("\n")}\nDon't sound repetitive: do NOT repeat an earlier answer word-for-word or open with the same phrase, and don't pad a reply with background that isn't what was asked. Restating an important or directly-relevant point is fine, but say it in DIFFERENT words and framing and lead with something new. When the approved content genuinely has nothing new to add, say so briefly and offer to go deeper rather than repeating an earlier answer verbatim.`,
           ]
         : [];
       const guidance = [...(opts?.coaching ?? []), ...steeringGuidance, ...slideHint, ...antiRepeat];

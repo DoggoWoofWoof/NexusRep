@@ -24,12 +24,19 @@ export const claudeClassifier: LlmClassifier = {
     const t0 = Date.now();
     const res = await client.messages.create({
       model: model(),
-      max_tokens: 1024,
+      max_tokens: 512,
       system: CLASSIFIER_SYSTEM,
-      messages: [{ role: "user", content: text }],
+      messages: [
+        { role: "user", content: text?.trim() || "(no message)" },
+        // Prefill the reply with "{" so Claude MUST continue a JSON object and can never answer
+        // conversationally. Without this it replied "I'm ready to help…" to the fragment "And",
+        // which isn't JSON and silently dropped us to the keyword classifier. We re-attach the
+        // brace before parsing (the prefill text is not echoed back in the response content).
+        { role: "assistant", content: "{" },
+      ],
     });
     const latencyMs = Date.now() - t0;
-    const raw = res.content.find((b) => b.type === "text")?.text ?? "";
+    const raw = `{${res.content.find((b) => b.type === "text")?.text ?? ""}`;
     return {
       result: parseClassification(raw),
       latencyMs,

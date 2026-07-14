@@ -33,4 +33,13 @@ describe("parseClassification tolerates real model output", () => {
     const nested = `{"intent":"other","confidence":0.5,"offLabelRisk":0,"adverseEventRisk":0,"medicalInfoRisk":0,"promptInjectionRisk":0,"comparativeClaimRisk":0,"isiRequired":false} trailing`;
     expect(parseClassification(nested).intent).toBe("other");
   });
+
+  it("parses the Claude prefill continuation ('{' + the model's remainder)", () => {
+    // claude.ts prefills the reply with "{" and prepends it back before parsing, so the model's
+    // output is the object MINUS its opening brace. This is the shape parseClassification now sees.
+    const continuation = `"intent":"other","confidence":0.3,"offLabelRisk":0,"adverseEventRisk":0,"medicalInfoRisk":0,"promptInjectionRisk":0,"comparativeClaimRisk":0,"isiRequired":false}`;
+    const out = parseClassification("{" + continuation);
+    expect(out.intent).toBe("other");
+    expect(out.confidence).toBeCloseTo(0.3);
+  });
 });

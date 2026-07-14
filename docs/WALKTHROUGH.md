@@ -64,6 +64,13 @@
   turn-taking; the dead `interrupt()` transport method was removed (typed `speak`/`respond` still
   send their own interrupt app-message, unaffected). `src/app/_components/VideoAgentStage.tsx`,
   `src/app/_components/video-transport.ts`.
+- **Speech reads naturally (no spoken em dashes) + the Claude classifier always returns JSON.**
+  Dashes-as-pauses in a spoken answer become comma pauses (`stripSpeechMarkdown`), and the
+  composer is told to write for the ear. The Claude classifier now prefills its reply with `{`
+  so it can never answer conversationally — it had replied "I'm ready to help…" to the fragment
+  "And", which isn't JSON and dropped the turn to the keyword classifier. Prompt hardened for
+  one-word/gibberish inputs, and the anti-repeat guidance is firmer (no verbatim/same-opening
+  repeats). `tests/speech-punctuation.test.ts`, `tests/classifier-parse.test.ts`.
 - **Verified:** `tsc` clean; unit suite green (setup-agent 12, transcript 6); Playwright
   E2E green incl. the scripted essentials/optional/skip flow, a mid-script free-form
   instruction, and rebrand-by-chat (now via a confirm chip); `studio-build` visual baseline
