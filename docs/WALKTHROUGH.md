@@ -55,13 +55,15 @@
   fields it filled; progress questions ("what's filled / what's left") get a real answer;
   coaching, "Ask DocNexus to revise", and section confirm are untouched (separate render
   branches).
-- **Barge-in DROP (video-rep latency), gated so it can't freeze the turn.** When the doctor
-  talks over the rep WHILE it is actually speaking, the current (possibly long) answer is
-  dropped so the queue doesn't stack. Critically the interrupt is gated on `repSpeakingRef` —
-  interrupting before the rep has started (a stray VAD blip in the connect/think window, or an
-  over-eager interrupt on every finalized utterance) cancelled the pending first answer and the
-  turn never recovered ("frozen before it speaks"). Only a real talk-over while the rep speaks
-  interrupts now. No answer-length cap. `src/app/_components/VideoAgentStage.tsx`.
+- **Barge-in is Tavus-native — no client interrupt (fixes the freeze).** Attempting a
+  client-side `conversation.interrupt` on the doctor's speech (to drop a superseded answer)
+  raced Tavus's own turn-taking: fired before/around the first answer it cancelled that answer
+  AND wedged the pipeline so the doctor's NEXT question wasn't even detected — a hard freeze.
+  The persona already sets `pal_interruptibility: "high"`, so Tavus stops the replica natively
+  when the doctor speaks. We now send NO client interrupt on the voice path and let Tavus own
+  turn-taking; the dead `interrupt()` transport method was removed (typed `speak`/`respond` still
+  send their own interrupt app-message, unaffected). `src/app/_components/VideoAgentStage.tsx`,
+  `src/app/_components/video-transport.ts`.
 - **Verified:** `tsc` clean; unit suite green (setup-agent 12, transcript 6); Playwright
   E2E green incl. the scripted essentials/optional/skip flow, a mid-script free-form
   instruction, and rebrand-by-chat (now via a confirm chip); `studio-build` visual baseline
