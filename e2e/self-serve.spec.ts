@@ -22,16 +22,18 @@ test.describe("Self-serve setup (chat + UI only)", () => {
   // NOTE: the re-brand-by-chat test lives in rebrand.spec.ts — it mutates global server
   // state, so it runs in a dependent project AFTER this parallel suite.
 
-  test("essentials come first; polish questions are labeled optional and skippable", async ({ page }) => {
+  test("the setup assistant understands a free-form instruction and proposes a confirmable action", async ({ page }) => {
     await openBuild(page);
-    // Answer the eight essentials via the first suggestion chip each time.
-    for (let i = 0; i < 8; i++) {
-      await page.getByTestId("setup-chip").first().click();
-    }
-    // Now in the optional block: the pill + Skip control appear, and Skip advances.
-    await expect(page.getByTestId("setup-optional")).toBeVisible({ timeout: 10_000 });
-    await page.getByTestId("setup-skip").click();
-    await expect(page.getByTestId("setup-optional")).toBeVisible(); // next optional question
+    // A plain-language instruction — the assistant maps it to a conversation-rule action.
+    // (E2E runs with no LLM key, so this exercises the deterministic fallback intent-mapping.)
+    await page.getByTestId("setup-input").fill("never let the rep discuss dosing");
+    await page.getByTestId("setup-send").click();
+    // It PROPOSES the action; nothing changes until the user confirms it.
+    const action = page.getByTestId("setup-action").filter({ hasText: /dosing|rule/i }).first();
+    await expect(action).toBeVisible({ timeout: 15_000 });
+    await action.getByTestId("setup-action-confirm").click();
+    // On confirm it's persisted as a conversation rule (the assistant acknowledges).
+    await expect(page.getByText(/Added that as a conversation rule/i)).toBeVisible({ timeout: 15_000 });
   });
 
   test("Audience → 'Preview AI rep' runs the doctor view AS that doctor (real attribution)", async ({ page }) => {

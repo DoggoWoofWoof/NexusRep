@@ -10,6 +10,15 @@
 
 import { newId, type AiRepId } from "@lib/ids";
 
+export {
+  setupAssistantTurn,
+  SETTABLE_FIELDS,
+  type SetupTurnInput,
+  type SetupTurnResult,
+  type SetupProposedAction,
+  type SetupActionType,
+} from "./agent";
+
 export type SectionKey =
   | "profile"
   | "approved_knowledge"

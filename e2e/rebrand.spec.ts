@@ -13,11 +13,12 @@ async function chatBrandAnswer(page: Page, name: string) {
   await page.goto("/");
   await nav(page, "AI Rep").click();
   await expect(page.getByText(/Setup Assistant/i)).toBeVisible();
-  const chat = page.getByPlaceholder(/Type an answer/i);
-  await chat.fill(name);
-  await chat.press("Enter");
-  // The setup POST is fire-and-forget in the UI — wait until the server actually
-  // reflects the new name before navigating (this race broke the first version).
+  // Tell the agentic assistant to rename the brand; it PROPOSES the change (propose-then-confirm).
+  await page.getByTestId("setup-input").fill(`Rename the product to ${name}`);
+  await page.getByTestId("setup-send").click();
+  // Confirm the proposed rename — only then does it apply.
+  await page.getByTestId("setup-action").filter({ hasText: name }).first().getByTestId("setup-action-confirm").click({ timeout: 15_000 });
+  // The change persists server-side — wait until the brand actually reflects the new name.
   await expect
     .poll(async () => ((await (await page.request.get("/api/brand")).json()) as { displayName?: string }).displayName ?? "", { timeout: 15_000 })
     .toBe(name);

@@ -4,13 +4,14 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import type { AppState } from "./NexusRepApp";
 import { btnGhost, btnPrimary } from "./NexusRepApp";
 import { streamArena } from "@lib/arena-client";
-import { DEFAULT_RULES, KNOWLEDGE_ASSETS, TRAIN_SEED_KEY, setupTopicsFor } from "./data";
+import { DEFAULT_RULES, KNOWLEDGE_ASSETS, TRAIN_SEED_KEY } from "./data";
 import { isOverviewPrompt } from "./overviewPrompt";
 import { SlideView } from "../_components/SlideView";
 import { VideoAgentStage } from "../_components/VideoAgentStage";
 import { StudioAgentMode } from "./StudioAgentMode";
 import { OpenAiVoiceProvider, createRecognizer, setSpeechLanguage, toneSpeechOpts, type ClientRecognizer } from "@lib/browser-speech";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
+import type { SetupProposedAction } from "@modules/setupAssistant";
 
 type StudioMode = "setup" | "agent" | "pitch" | "train" | "rules" | "readiness";
 const MODES: { key: StudioMode; label: string }[] = [
@@ -117,24 +118,6 @@ function fallbackRules(): UiRule[] {
   }));
 }
 
-/* UI SETUP_TOPICS key → server questionKey */
-const ANSWER_KEY: Record<string, string> = {
-  brand: "brand",
-  indication: "indication",
-  persona: "persona_type",
-  audience: "target_audience",
-  knowledge: "approved_content",
-  escalation: "msl_contact",
-  talking: "talking_points",
-  forbidden: "blocked_topics",
-  voice: "greeting",
-  // Chatable brand polish — all consumed by resolveBrandProfile / the studio persona.
-  sponsor: "sponsor",
-  tagline: "tagline",
-  voice_style: "voice_style",
-  try_questions: "try_questions",
-  hotwords: "hotwords",
-};
 /* UI SECTIONS key → server section key */
 const SECTION_KEY: Record<string, string> = {
   profile: "profile",
@@ -237,8 +220,12 @@ export function StudioScreen({ app }: { app: AppState }) {
 /* ---------- BUILD MODE ---------- */
 function BuildMode({ repName, snap, post, app, refresh }: { repName: string; snap: StudioSnap | null; post: (body: Record<string, unknown>) => Promise<StudioSnap | null>; app: AppState; refresh: () => Promise<void> }) {
   const brand = useBrand();
-  const [step, setStep] = useState(0);
-  const [confirmed, setConfirmed] = useState<Record<string, string>>({});
+  const [chat, setChat] = useState<{ role: "assistant" | "user"; text: string }[]>([
+    { role: "assistant", text: "Hi — I can help you build your AI rep. Tell me about your product, ask me to change something (“focus it on atrial fibrillation”), set a rule (“never discuss dosing”), or drop in a deck / PI / FAQ and I’ll pull it in and fill the setup from it." },
+  ]);
+  const [proposed, setProposed] = useState<SetupProposedAction[]>([]);
+  const [chatBusy, setChatBusy] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [input, setInput] = useState("");
   const [open, setOpen] = useState<string | null>("profile");
   const [status, setStatus] = useState<Record<string, string>>({});
@@ -300,8 +287,8 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
   // Add source files (PPT/PDF/txt) -> /api/content/ingest. Parsed blocks land as
   // in-MLR drafts (never live until approved), so a brand user adds knowledge from the UI —
   // no code, no API tool. The Setup Assistant can also request this by chatting.
-  async function onUpload(file: File | undefined) {
-    if (!file) return;
+  async function onUpload(file: File | undefined): Promise<{ blocks: number; safety: number; filled: string[] } | null> {
+    if (!file) return null;
     setUploadMsg(`Parsing "${file.name}"…`);
     try {
       const buf = new Uint8Array(await file.arrayBuffer());
@@ -321,11 +308,13 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
         void loadKnowledge();
         void loadPendingBlocks(); // the new passages appear in the review queue immediately
         if (filled.length) void refresh(); // drafted sections update from the inferred answers
-      } else {
-        setUploadMsg(`Couldn't parse: ${d.error ?? res.status}`);
+        return { blocks: d.parsed.blocks, safety: safetyCount, filled };
       }
+      setUploadMsg(`Couldn't parse: ${d.error ?? res.status}`);
+      return null;
     } catch (e) {
       setUploadMsg(`Upload failed: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
     }
   }
 
@@ -455,31 +444,80 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
     setStatus(next);
   }, [snap]);
 
-  const topics = setupTopicsFor(brand);
-  const answer = (value: string) => {
-    const i = step;
-    if (i >= topics.length) return;
-    const t = topics[i]!;
-    setConfirmed((c) => ({ ...c, [t.key]: value }));
-    setStatus((s) => (s[t.section] === "confirmed" ? s : { ...s, [t.section]: "drafted" }));
-    setStep(i + 1);
+  // One agentic setup turn: send the message (+ any attached document) to the assistant, append the
+  // reply, and surface its PROPOSED actions as confirm chips. Nothing changes until the user confirms.
+  async function sendChat(message: string, file?: File | null) {
+    const text = message.trim();
+    if ((!text && !file) || chatBusy) return;
     setInput("");
-    setOpen(topics[i + 1]?.section ?? t.section);
-    // Best-effort persist of the answer (ignore if no mapping exists).
-    const questionKey = ANSWER_KEY[t.key];
-    if (questionKey) void post({ action: "answer", questionKey, value });
-  };
-  const autoFill = () => {
-    const c: Record<string, string> = { ...confirmed };
-    const s: Record<string, string> = { ...status };
-    topics.forEach((t) => {
-      if (c[t.key] === undefined) c[t.key] = t.chips[0]![1];
-      if (s[t.section] !== "confirmed") s[t.section] = "drafted";
-      const questionKey = ANSWER_KEY[t.key];
-      if (questionKey) void post({ action: "answer", questionKey, value: c[t.key]! });
-    });
-    setConfirmed(c); setStatus(s); setStep(topics.length); setOpen("profile");
-  };
+    setChatBusy(true);
+    const label = file ? (text ? `${text}  ·  📎 ${file.name}` : `📎 ${file.name}`) : text;
+    const history = chat.slice(-12);
+    setChat((c) => [...c, { role: "user", text: label }]);
+    try {
+      let attachment: { filename: string; contentBase64: string } | undefined;
+      if (file) {
+        const buf = new Uint8Array(await file.arrayBuffer());
+        let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+        attachment = { filename: file.name, contentBase64: btoa(bin) };
+        setPendingFile(file); // kept so a confirmed ingest posts the SAME bytes to /api/content/ingest
+      }
+      const res = await fetch("/api/setup/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text || `Please use ${file?.name}`, history, attachment }),
+      });
+      const d = (await res.json()) as { reply?: string; actions?: SetupProposedAction[]; error?: string };
+      setChat((c) => [...c, { role: "assistant", text: res.ok ? (d.reply || "Okay.") : `I couldn't do that: ${d.error ?? res.status}` }]);
+      if (res.ok) setProposed(d.actions ?? []);
+    } catch (e) {
+      setChat((c) => [...c, { role: "assistant", text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}` }]);
+    } finally {
+      setChatBusy(false);
+    }
+  }
+
+  // Execute ONE confirmed action through endpoints that already exist — the assistant only proposes;
+  // this is where anything actually changes. Ingest routes through MLR (never instantly live/spoken).
+  async function confirmAction(action: SetupProposedAction) {
+    setProposed((p) => p.filter((a) => a !== action));
+    const say = (text: string) => setChat((c) => [...c, { role: "assistant", text }]);
+    try {
+      if (action.type === "ingest_document") {
+        let msg = "Done — it’s in the MLR review queue under Approved knowledge. Approve the passages there to make them live rep knowledge.";
+        if (pendingFile) {
+          const r = await onUpload(pendingFile);
+          setPendingFile(null);
+          if (r) {
+            const parts = [`${r.blocks} passage${r.blocks === 1 ? "" : "s"} sent to MLR review`];
+            if (r.safety) parts.push(`${r.safety} ISI statement${r.safety === 1 ? "" : "s"}`);
+            const filledNote = r.filled.length
+              ? ` I also filled ${r.filled.map((f) => f.replace(/_/g, " ")).join(", ")} from it — review the sections on the right.`
+              : "";
+            msg = `Done — ${parts.join(" and ")}.${filledNote} Approve the passages under Approved knowledge to make them live rep knowledge.`;
+          }
+        }
+        setOpen("knowledge");
+        say(msg);
+      } else if (action.type === "set_field" && action.fieldKey && action.value) {
+        await post({ action: "answer", questionKey: action.fieldKey, value: action.value });
+        if (action.fieldKey === "brand") invalidateBrandCache();
+        await refresh();
+        say(`${action.summary ?? "Updated"}. Fine-tune it in the sections on the right if you like.`);
+      } else if (action.type === "draft_rule" && action.ruleFeedback) {
+        await post({ action: "rule", feedback: action.ruleFeedback, scope: action.ruleScope ?? "persona" });
+        await refresh();
+        say("Added that as a conversation rule — you’ll see it under Rules for review.");
+      } else if (action.type === "flag_isi") {
+        setOpen("knowledge");
+        say("Opened Approved knowledge — add or confirm the ISI there. It’s required before the rep can go live.");
+      } else if (action.type === "request_upload") {
+        setOpen("knowledge");
+        say("Use “Add source file” under Approved knowledge, or attach a document here in the chat.");
+      }
+    } catch (e) {
+      say(`That didn’t go through: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   const confirmSection = (uiKey: string) => {
     setStatus((s) => ({ ...s, [uiKey]: "confirmed" }));
@@ -496,31 +534,6 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
     const serverKey = SECTION_KEY[uiKey];
     if (serverKey) void post({ action: "section", section: serverKey, status: "needs_input" });
   };
-
-  // What the assistant should EXPLICITLY surface once documents exist: critical items it filled
-  // (confirm) or couldn't find (provide). ISI is compliance-critical — a rep can't go live without
-  // an approved one, so a missing ISI is flagged as a required, blocking action.
-  const fieldVal = (sk: string, fk: string) => snap?.sections.find((s) => s.key === sk)?.fields.find((f) => f.key === fk)?.value ?? "";
-  const started = (sourceDocs?.length ?? 0) > 0 || Boolean(fieldVal("profile", "brand"));
-  const hasIsi = Boolean(safety?.active?.text?.trim());
-  const setupNotes: string[] = [];
-  if (started) {
-    setupNotes.push(
-      hasIsi
-        ? "✓ I extracted an Important Safety Information statement from your documents — please review and approve it in the queue below (required before launch)."
-        : "⚠ I couldn't find an Important Safety Information (ISI) statement in your documents. An ISI is required before the rep can go live — add or paste it in Approved knowledge below.",
-    );
-    if (fieldVal("escalation", "msl_contact")) setupNotes.push("I set escalation routing (clinical → Medical Information, adverse events → Pharmacovigilance) as a safe default — confirm or edit it below.");
-    setupNotes.push("Everything I filled from your documents is a suggestion — review and confirm each section on the right before launch. Anything I couldn't find, I'll ask you for here.");
-  }
-
-  const messages: { role: "assistant" | "user"; text: string }[] = [{ role: "assistant", text: "I'll set up your AI rep. Answer a few questions and I'll draft each section on the right." }];
-  topics.slice(0, step).forEach((t) => {
-    messages.push({ role: "assistant", text: t.q });
-    if (confirmed[t.key]) messages.push({ role: "user", text: `Use ${confirmed[t.key]}.` });
-  });
-  if (step < topics.length) messages.push({ role: "assistant", text: topics[step]!.q });
-  for (const n of setupNotes) messages.push({ role: "assistant", text: n });
 
   const statusOf = (key: string): string => status[key] ?? "needs input";
   const statusStyle = (key: string): React.CSSProperties => {
@@ -542,47 +555,36 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
           <div style={{ lineHeight: 1.3 }}><div style={{ font: "600 13.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>DocNexus Setup Assistant</div></div>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-          {messages.map((m, i) => (
+          {chat.map((m, i) => (
             <div key={i} style={{ display: "flex", gap: 9, flexDirection: m.role === "user" ? "row-reverse" : "row" }}>
               {m.role === "assistant" && <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 7, background: "var(--dn-gradient-ai)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11 }}>✦</span>}
-              <span style={{ maxWidth: "82%", padding: "9px 12px", borderRadius: 10, font: "400 12px/1.5 var(--dn-font-sans)", background: m.role === "user" ? "var(--dn-brand-base)" : "var(--dn-surface-2)", color: m.role === "user" ? "#fff" : "var(--dn-fg)" }}>{m.text}</span>
+              <span style={{ maxWidth: "82%", padding: "9px 12px", borderRadius: 10, font: "400 12px/1.5 var(--dn-font-sans)", whiteSpace: "pre-wrap", background: m.role === "user" ? "var(--dn-brand-base)" : "var(--dn-surface-2)", color: m.role === "user" ? "#fff" : "var(--dn-fg)" }}>{m.text}</span>
             </div>
           ))}
-          {step < topics.length && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 7, paddingLeft: 31, marginTop: 2, alignItems: "center" }}>
-              {topics[step]!.optional && <span data-testid="setup-optional" style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", background: "var(--dn-surface-2)", padding: "4px 7px", borderRadius: 5 }}>optional</span>}
-              {topics[step]!.chips.map((c) => (
-                <span key={c[0]} data-testid="setup-chip" onClick={() => answer(c[1])} style={{ padding: "8px 12px", background: "#fff", border: "1px solid var(--dn-brand-light)", borderRadius: 9, font: "600 11.5px/1.2 var(--dn-font-sans)", color: "var(--dn-brand-base)", cursor: "pointer" }}>{c[0]}</span>
+          {chatBusy && <div style={{ paddingLeft: 31, font: "500 11.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Thinking…</div>}
+          {/* Proposed actions — the assistant only ever PROPOSES; nothing changes until Confirm. */}
+          {proposed.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingLeft: 31 }}>
+              {proposed.map((a, i) => (
+                <div key={i} data-testid="setup-action" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "9px 11px", background: "#fff", border: "1px solid var(--dn-brand-light)", borderRadius: 10 }}>
+                  <span style={{ minWidth: 0, font: "500 11.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{a.summary}</span>
+                  <span style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                    <button data-testid="setup-action-confirm" onClick={() => void confirmAction(a)} style={{ ...btnPrimary, padding: "6px 11px", font: "600 11px/1 var(--dn-font-sans)" }}>Confirm</button>
+                    <button onClick={() => setProposed((p) => p.filter((x) => x !== a))} style={{ ...btnGhost, padding: "6px 9px", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>Dismiss</button>
+                  </span>
+                </div>
               ))}
-              {topics[step]!.optional && (
-                <span data-testid="setup-skip" onClick={() => { setStep(step + 1); setOpen(topics[step + 1]?.section ?? null); }} style={{ padding: "8px 12px", border: "1px dashed var(--dn-border)", borderRadius: 9, font: "600 11.5px/1.2 var(--dn-font-sans)", color: "var(--dn-fg-muted)", cursor: "pointer" }}>Skip →</span>
-              )}
             </div>
           )}
-          {step >= topics.length && <div style={{ paddingLeft: 31, font: "500 11.5px/1.4 var(--dn-font-sans)", color: "var(--dn-success)" }}>All set — review and confirm each section on the right.</div>}
         </div>
         <div style={{ padding: "12px 14px", borderTop: "1px solid var(--dn-border)" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 9, flexWrap: "wrap" }}>
-            <span style={{ font: "500 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{Math.min(step, topics.length)} of {topics.length} answered</span>
-            <span style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              {/* Upload once instead of answering one-by-one: the document fills the blanks. */}
-              <label style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }} title="Upload a deck / PI / FAQ — I'll fill the setup answers from it">
-                📎 Autofill from a document
-                <input data-testid="upload-autofill" type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => void onUpload(e.target.files?.[0])} style={{ display: "none" }} />
-              </label>
-              {step < topics.length && <span onClick={autoFill} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>Decide for me →</span>}
-            </span>
-          </div>
-          {/* Footer shows only what matters HERE: the autofill outcome (or a failure) — the full
-              parse/approve message lives in the Approved-knowledge section, not duplicated. */}
-          {(() => {
-            const note = uploadMsg.match(/Auto-filled[^]*$/)?.[0] ?? (/^(Couldn't parse|Upload failed|Parsing)/.test(uploadMsg) ? uploadMsg : null);
-            return note ? <div style={{ font: "500 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginBottom: 9 }}>{note}</div> : null;
-          })()}
-          <div style={{ height: 5, borderRadius: 3, background: "var(--dn-surface-2)", overflow: "hidden", marginBottom: 11 }}><div style={{ height: "100%", borderRadius: 3, background: "var(--dn-brand-base)", width: `${(Math.min(step, topics.length) / topics.length) * 100}%` }} /></div>
           <div style={{ display: "flex", gap: 8 }}>
-            <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && input.trim()) answer(input.trim()); }} placeholder="Type an answer…" style={{ flex: 1, padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 12px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
-            <button onClick={() => input.trim() && answer(input.trim())} style={{ ...btnPrimary, padding: "9px 14px", font: "600 12px/1 var(--dn-font-sans)" }}>Send</button>
+            <label title="Attach a deck / PI / ISI / FAQ" style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 38, borderRadius: 9, border: "1px solid var(--dn-border)", background: "var(--dn-surface-2)", cursor: "pointer", color: "var(--dn-brand-base)", fontSize: 15 }}>
+              📎
+              <input data-testid="setup-attach" type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => { const f = e.target.files?.[0]; e.currentTarget.value = ""; if (f) void sendChat("", f); }} style={{ display: "none" }} />
+            </label>
+            <input data-testid="setup-input" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && input.trim()) void sendChat(input); }} placeholder="Type an answer…" style={{ flex: 1, padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 12px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
+            <button data-testid="setup-send" onClick={() => input.trim() && void sendChat(input)} disabled={chatBusy} style={{ ...btnPrimary, padding: "9px 14px", font: "600 12px/1 var(--dn-font-sans)", opacity: chatBusy ? 0.6 : 1 }}>Send</button>
           </div>
         </div>
       </div>

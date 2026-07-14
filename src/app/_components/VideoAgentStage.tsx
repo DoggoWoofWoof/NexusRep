@@ -502,7 +502,15 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             if (speaker === "rep") maybeStartRec();
             // The doctor's SPOKEN words must appear in the captions like typed ones do —
             // without this, a voice-only conversation has no "You" lines at all.
-            if (speaker === "hcp") onHcpUtterance?.(text);
+            if (speaker === "hcp") {
+              // Barge-in DROP: a new doctor question supersedes whatever the rep was about to say.
+              // Interrupt HERE too (not only on hcp_started_speaking, which Tavus doesn't reliably
+              // emit on the pure-voice path) so the prior/queued answer is DROPPED rather than played
+              // out ahead of the new one — this is what stops the voice queue from stacking (the
+              // 9→23s think-to-voice creep). The ASR noise filter above already excluded non-speech.
+              transportRef.current?.interrupt();
+              onHcpUtterance?.(text);
+            }
             const sid = sessionIdRef.current;
             if (!sid) return;
             const key = `${speaker}:${text}`;

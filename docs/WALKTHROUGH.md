@@ -10,7 +10,44 @@
 
 ## 1. Current build status
 
-### Latest: Tavus compose-path cleanup + abbreviation fix + fuzz cadence tests (2026-07-14)
+### Latest: Agentic Setup Assistant + never-drop transcript + barge-in drop (2026-07-14)
+
+- **Doctor transcript never drops a rep answer (pushed `2f2a919`).** Two bugs dropped
+  spoken answers from the captions/audit transcript: the consumer de-duped against EVERY
+  prior message (so a follow-up that re-used the same approved text vanished), and the
+  caption producer held one slot across an async slide-hydration fetch and seq-dropped a
+  turn under the backed-up voice queue. Fixed with one shared rule `src/lib/transcript.ts`
+  (`appendTurn` — suppress only a CONSECUTIVE re-emit) used by all three transcript
+  writers; `notifyPendingRepEcho` now frees its slot before hydration and ALWAYS delivers.
+  `tests/transcript-append.test.ts`.
+- **The DocNexus Setup Assistant is now genuinely agentic (propose-then-confirm).** The
+  Build chat was a scripted question-script rendered as bubbles; it is now a real
+  tool-using assistant: `src/modules/setupAssistant/agent.ts` (`setupAssistantTurn`)
+  understands free-form instructions ("here's our deck, use it", "focus it on AFib",
+  "never discuss dosing", "what have you filled?") and returns a humanlike reply + a list
+  of PROPOSED actions (`ingest_document`, `set_field`, `draft_rule`, `flag_isi`,
+  `request_upload`). Nothing changes until the brand user CONFIRMS. Thin route
+  `src/app/api/setup/chat/route.ts`; the Build panel (`StudioScreen.tsx`) renders the chat
+  + Confirm/Dismiss chips and executes confirmed actions through the EXISTING endpoints
+  (`/api/content/ingest` for docs → stays in-MLR until approved, `/api/studio` for fields
+  and rules). Guardrails hold even if the model misbehaves: ingest only with an attachment,
+  no ICD/unknown field keys, no no-op overwrites, no ISI nag when one already exists; a
+  deterministic fallback keeps it useful with no LLM key. `tests/setup-agent.test.ts`.
+- **No setup regression, just smarter:** uploaded documents still extract + autofill
+  (unchanged `/api/content/ingest`), and the chat now reports what it pulled in and which
+  fields it filled; progress questions ("what's filled / what's left") get a real answer;
+  coaching, "Ask DocNexus to revise", and section confirm are untouched (separate render
+  branches).
+- **Barge-in DROP (video-rep latency).** The rep's queued/playing answer is now dropped
+  the moment the doctor's next question lands (interrupt on the utterance signal Tavus
+  reliably emits, not only `hcp_started_speaking`), so the voice queue stops stacking —
+  what caused the 9→23s think-to-voice creep. No answer-length cap.
+  `src/app/_components/VideoAgentStage.tsx`.
+- **Verified:** `tsc` clean; unit suite green (setup-agent 12, transcript 6); Playwright
+  E2E green incl. rebrand-by-chat (now via a confirm chip) and the new self-serve agent
+  test; `studio-build` visual baseline regenerated for the new chat panel.
+
+### Tavus compose-path cleanup + abbreviation fix + fuzz cadence tests (2026-07-14)
 
 - **Root cause of the Render repetition, diagnosed and reproduced:** the repeated
   "I'm an AI representative…" preamble, missing ISI dedup, and slide-that-never-switches all
