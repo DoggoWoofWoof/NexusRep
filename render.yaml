@@ -40,11 +40,12 @@ services:
       # PGLITE_DATA_DIR=/var/data/nexusrep, and uncomment the disk above for persistence.
       - key: NEXUSREP_DATA_DRIVER
         value: memory
-      # Starter instances have 512MB — the neural embeddings model (Transformers.js)
-      # OOMs at boot when the retrieval index builds. Lexical retrieval runs through the
-      # exact same validation + compliance gate; flip to "auto" on a >=2GB instance.
+      # "auto" = neural semantic embeddings (Transformers.js / MiniLM), falling back to lexical only
+      # if the model can't load. Needs a >=2GB instance (the model OOMs a 512MB Starter at boot) AND
+      # an HF_TOKEN secret (HF 403s anonymous downloads from Render). On a 512MB Starter set this to
+      # "lexical" instead — same validation + compliance gate, just keyword ranking.
       - key: NEXUSREP_EMBEDDINGS
-        value: lexical
+        value: auto
       # Flip to "tavus" once TAVUS_* secrets are set to enable the live video rep.
       - key: NEXUSREP_REALTIME_PROVIDER
         value: mock
