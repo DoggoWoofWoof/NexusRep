@@ -453,7 +453,13 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
               const g = greetingRef.current;
               if (g) {
                 greetedRef.current = true;
-                setTimeout(() => { transportRef.current?.speak(g, false); }, 900);
+                setTimeout(() => {
+                  transportRef.current?.speak(g, false);
+                  // Caption it ourselves: an echoed greeting doesn't reliably emit a Tavus utterance
+                  // event (the native custom_greeting did), so without this the opening never lands
+                  // in the transcript. armRepCaption releases it with the voice (or the safety timer).
+                  armRepCaption({ text: g });
+                }, 900);
               }
             }
           },
