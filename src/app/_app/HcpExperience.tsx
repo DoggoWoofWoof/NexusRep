@@ -8,13 +8,14 @@ import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/Vide
 import { SlideView } from "../_components/SlideView";
 import { useBrand } from "../_components/useBrand";
 import { isOverviewPrompt } from "./overviewPrompt";
+import { appendTurn, type TranscriptMsg } from "@lib/transcript";
 
 // The server's approved-content pipeline chooses the slide. The transcript text only nudges
 // timing a little so the deck moves like a presenter, not as a brittle keyword trigger.
 const SLIDE_CUE_DELAY_MS = 850;
 
 type HcpScreen = "invite" | "convo" | "complete";
-interface Msg { role: "hcp" | "rep"; text: string }
+type Msg = TranscriptMsg;
 interface OverviewSegment { response: string; detailAidSlideId?: string | null; sourceIds?: string[]; isiDelivered?: boolean }
 
 export function HcpExperience({ app }: { app?: AppState }) {
@@ -90,14 +91,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
   // appended as soon as the gated answer arrives (never held back to match the voice). Guarded
   // against a consecutive duplicate so it can't double a bubble if called more than once.
   function showRep(text: string) {
-    const t = text.trim();
-    if (!t) return;
-    setMsgs((m) => {
-      const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-      const last = m[m.length - 1];
-      if (last && last.role === "rep" && norm(last.text) === norm(t)) return m;
-      return [...m, { role: "rep", text: t }];
-    });
+    setMsgs((m) => appendTurn(m, "rep", text));
   }
 
   // One place that delivers a rep turn to the doctor, so every caller (ask / deckStep / overview)
@@ -168,23 +162,15 @@ export function HcpExperience({ app }: { app?: AppState }) {
   function syncVideoRepTurn(turn: { text: string; detailAidSlideId?: string | null }) {
     const text = turn.text.trim();
     if (!text) return;
-    setMsgs((current) => {
-      const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-      if (current.some((m) => m.role === "rep" && norm(m.text) === norm(text))) return current;
-      return [...current, { role: "rep", text }];
-    });
+    // appendTurn drops only a consecutive re-emit — NOT an answer that merely repeats one given
+    // earlier (a follow-up legitimately re-uses the same approved text). The old all-messages check
+    // here is what silently ate repeated turns, leaving the rep bubble missing from the transcript.
+    setMsgs((current) => appendTurn(current, "rep", text));
     cueSlide(turn.detailAidSlideId, text);
   }
 
   function addSpokenHcpTurn(text: string) {
-    const t = text.trim();
-    if (!t) return;
-    setMsgs((current) => {
-      const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-      const last = current[current.length - 1];
-      if (last?.role === "hcp" && norm(last.text) === norm(t)) return current; // re-emit dedup
-      return [...current, { role: "hcp", text: t }];
-    });
+    setMsgs((current) => appendTurn(current, "hcp", text));
   }
 
   // Monotonic playback generation: each new ask bumps it, so an in-flight multi-segment

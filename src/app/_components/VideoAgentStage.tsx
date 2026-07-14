@@ -37,7 +37,7 @@ export interface VideoAgentStageHandle {
 }
 
 type RepTurnNotice = { text: string; detailAidSlideId?: string | null; sourceIds?: string[] };
-type PendingRepEcho = { seq: number; text: string; detailAidSlideId?: string | null; timer?: number; notified: boolean; queuedAt: number };
+type PendingRepEcho = { text: string; detailAidSlideId?: string | null; timer?: number; notified: boolean; queuedAt: number };
 
 export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; onHcpUtterance?: (text: string) => void; hcpId?: string; onMutedChange?: (muted: boolean) => void }>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, hcpId, onMutedChange }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -61,7 +61,6 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   // Tavus finalized utterance. Keep the pending gated text here so the transcript can still be
   // written when the replica starts speaking, with the slide id already known.
   const pendingRepEchoRef = useRef<PendingRepEcho | null>(null);
-  const pendingRepEchoSeqRef = useRef(0);
   // True while the replica is currently producing audio (between started/stopped-speaking).
   // A caption armed while this is true is released at once (the voice is already out); one armed
   // before it flips releases when speaking starts — so the caption lands WITH the voice, either order.
@@ -118,7 +117,6 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     // speaking never lands in the transcript. Idempotent: no-op if it was already released.
     void notifyPendingRepEcho("superseded", true);
     const pending: PendingRepEcho = {
-      seq: ++pendingRepEchoSeqRef.current,
       text: t,
       detailAidSlideId: input.detailAidSlideId ?? null,
       notified: false,
@@ -264,7 +262,13 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     if (!pending || pending.notified || !notify) return;
     pending.notified = true;
     if (pending.timer) window.clearTimeout(pending.timer);
-    const seq = pending.seq;
+    // Release the single pending slot NOW, BEFORE the async slide hydration below. Previously the
+    // slot stayed occupied across the await and a sequence re-check dropped the turn if a newer
+    // answer arrived meanwhile — so under a backed-up voice queue (answers landing back-to-back)
+    // a real, spoken answer silently vanished from the transcript. The transcript is the audit
+    // record: a produced answer must ALWAYS land. Suppressing re-emits is the consumer's job
+    // (syncVideoRepTurn), which now dedups only a consecutive repeat, so this can't double a bubble.
+    pendingRepEchoRef.current = null;
     recordTiming({
       type: "caption_release",
       reason,
@@ -272,7 +276,6 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
       text: pending.text,
       detailAidSlideId: pending.detailAidSlideId ?? null,
     });
-    if (pendingRepEchoRef.current?.seq !== seq) return;
     const sid = sessionIdRef.current;
     let notice: RepTurnNotice = { text: pending.text, detailAidSlideId: pending.detailAidSlideId };
     if (!skipHydrate && serverLogsRef.current && sid) {
@@ -284,9 +287,6 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
         sourceIds: hydrated.sourceIds,
       };
     }
-    // If a newer echo replaced this one while the best-effort hydration was in flight, drop it.
-    if (pendingRepEchoRef.current?.seq !== seq) return;
-    pendingRepEchoRef.current = null;
     notify(notice);
   }
 
@@ -516,7 +516,16 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
               // Greeting / voice-driven turn (a typed echo already armed its own caption with the
               // slide id): arm the caption and let it release when the replica's audio starts, so
               // it doesn't appear before the voice. Duplicate suppression happens caption-side.
-              if (speaker === "rep" && !pendingRepEchoRef.current) armRepCaption({ text });
+              // Arm a caption for a genuinely new rep utterance. Skip ONLY when this exact text is
+              // already the pending caption — a typed ask we armed ourselves, now echoed back by
+              // Tavus; re-arming that would double it. A DIFFERENT utterance arriving while one is
+              // still pending is a real new turn: arm it (armRepCaption flushes the previous first)
+              // so back-to-back answers under a backed-up voice queue can never drop one.
+              if (speaker === "rep") {
+                const pend = pendingRepEchoRef.current;
+                const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+                if (!pend || norm(pend.text) !== norm(text)) armRepCaption({ text });
+              }
               return;
             }
             void fetch("/api/sessions/utterance", {
