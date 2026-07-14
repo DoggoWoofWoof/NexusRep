@@ -282,7 +282,11 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
       persona_id: personaId,
       ...(replicaId ? { replica_id: replicaId } : {}),
       conversation_name: config.sessionId,
-      ...(config.customGreeting ? { custom_greeting: config.customGreeting } : {}),
+      // NOTE: we deliberately do NOT set custom_greeting. Tavus makes the custom greeting ALWAYS
+      // non-interruptible and drops anything the doctor says during it (docs: "The face's greeting
+      // is always non-interruptible … these settings only take effect after the greeting
+      // completes"). Instead the client speaks the opening as a normal echoed utterance once the
+      // replica is live, so it obeys pal_interruptibility and the doctor can barge in over it.
       ...(config.context ? { conversational_context: config.context } : {}),
       ...(config.audioOnly ? { audio_only: true } : {}),
       ...(config.callbackUrl ? { callback_url: config.callbackUrl } : {}),

@@ -82,7 +82,9 @@ describe("Tavus realtime adapter", () => {
     const convo = calls.find((c) => c.url.endsWith("/conversations"))!;
     expect(convo.body?.persona_id).toBe("p1");
     expect(convo.body?.replica_id).toBe("r1");
-    expect(convo.body?.custom_greeting).toBe("hi doctor");
+    // We deliberately do NOT send Tavus's custom_greeting — it's always non-interruptible. The
+    // client speaks the opening as a normal (interruptible) echoed utterance instead.
+    expect(convo.body?.custom_greeting).toBeUndefined();
     expect((convo.body?.properties as { enable_closed_captions?: boolean } | undefined)?.enable_closed_captions).toBe(false);
 
     await tavus.endSession();

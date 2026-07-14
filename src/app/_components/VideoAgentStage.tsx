@@ -11,7 +11,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { createVideoTransport, type VideoCallTransport } from "./video-transport";
 
-type ConvResp = { provider: string; configured: boolean; conversationUrl: string | null; token: string | null; note: string; reachableLlm?: boolean; sessionId?: string };
+type ConvResp = { provider: string; configured: boolean; conversationUrl: string | null; token: string | null; note: string; reachableLlm?: boolean; sessionId?: string; greeting?: string | null };
 type Stage = "loading" | "unconfigured" | "joining" | "live" | "ended" | "error";
 type TimingEvent = {
   type: string;
@@ -48,6 +48,10 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   const convIdRef = useRef<string>("");
   const lastUtterRef = useRef<string>("");
   const onRepTurnRef = useRef<typeof onRepTurn>(onRepTurn);
+  // The opening line we speak as a normal (interruptible) echo once the replica is live — instead
+  // of Tavus's custom_greeting, which is always non-interruptible. Echoed exactly once.
+  const greetingRef = useRef<string | null>(null);
+  const greetedRef = useRef(false);
   // When the vendor can reach our compliance endpoint, the server logs the authoritative
   // transcript (with detail-aid slideIds) and the client logs NOTHING (avoids doubling).
   // Only when it can't (localhost / no public URL) does the client log the spoken
@@ -355,6 +359,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
           return;
         }
         sessionIdRef.current = d.sessionId ?? null;
+        greetingRef.current = d.greeting ?? null;
         convIdRef.current = (() => { try { return new URL(d.conversationUrl!).pathname.split("/").filter(Boolean).pop() || ""; } catch { return ""; } })();
         // Expose ids for automation/QA (the record bot reads these to attach the
         // recording to the right session). Harmless in normal use.
@@ -440,6 +445,17 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // seconds after the video track arrives so we never miss a clip. The PRIMARY start is
             // on the agent's first spoken words (see onUtterance) — that trims the connect boot.
             if (kind === "video") setTimeout(maybeStartRec, 6000);
+            // Speak the opening greeting as a NORMAL (interruptible) echoed utterance, once the
+            // replica is live. We don't use Tavus's custom_greeting (always non-interruptible); this
+            // way the doctor can barge in over it (mic live + pal_interruptibility). Pure echo (no
+            // interrupt). Small delay so the replica's speech pipeline is ready to render it.
+            if (kind === "video" && !greetedRef.current) {
+              const g = greetingRef.current;
+              if (g) {
+                greetedRef.current = true;
+                setTimeout(() => { transportRef.current?.speak(g, false); }, 900);
+              }
+            }
           },
           onRawEvent: (e) => {
             // QA aid: record ALL conversation events so tests can see what the agent

@@ -20,8 +20,11 @@ export interface VideoTransportEvents {
 export interface VideoCallTransport {
   /** Connect to the call and start delivering events. */
   join(events: VideoTransportEvents): Promise<void>;
-  /** Make the agent speak our (already gated) text verbatim. False if not connected. */
-  speak(text: string): boolean;
+  /** Make the agent speak our (already gated) text verbatim. False if not connected.
+   *  bargeIn (default true) sends a brief interrupt before the echo so a typed ask cuts in over
+   *  any in-progress speech; pass false for a PURE echo with no interrupt (e.g. the opening
+   *  greeting on join, where there's nothing to interrupt and an interrupt could disrupt Tavus). */
+  speak(text: string, bargeIn?: boolean): boolean;
   /** Send typed doctor text into the PAL as user input, so Tavus runs its fast response path. */
   respond(text: string): boolean;
   /** Enable/disable the doctor's microphone on the call (push-to-mute). */
@@ -96,13 +99,16 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
       try { call.setLocalAudio(false); } catch { /* keep default mic-off best-effort */ }
     },
 
-    speak(text: string): boolean {
+    speak(text: string, bargeIn = true): boolean {
       const t = (text || "").trim();
       if (!call || !t) return false;
       const c = call;
       const echo = () => {
         try { c.sendAppMessage({ message_type: "conversation", event_type: "conversation.echo", conversation_id: conversationId, properties: { text: t } }, "*"); } catch { /* not connected */ }
       };
+      // Pure echo (no interrupt) — used for the opening greeting: nothing is speaking yet, and a
+      // stray interrupt around join is exactly what disrupts Tavus's turn-taking.
+      if (!bargeIn) { echo(); return true; }
       try {
         // Gently stop any in-progress speech, then a short natural beat before the new answer.
         c.sendAppMessage({ message_type: "conversation", event_type: "conversation.interrupt", conversation_id: conversationId }, "*");

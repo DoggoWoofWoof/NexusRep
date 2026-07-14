@@ -155,6 +155,9 @@ async function startConversation(req: Request): Promise<NextResponse> {
     // Our reviewable session id (the client logs utterances here). The Tavus
     // conversation id is separate and lives on the session as vendorConversationId.
     sessionId: hist.id,
+    // The opening line for the CLIENT to speak as a normal (interruptible) echoed utterance —
+    // we no longer use Tavus's custom_greeting, which the platform makes non-interruptible.
+    greeting: persona.customGreeting || null,
     reachableLlm,
     note: !session.transportUrl
       ? "The DocNexus Agent isn't configured yet — using the built-in avatar meanwhile."

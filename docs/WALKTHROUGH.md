@@ -55,16 +55,17 @@
   fields it filled; progress questions ("what's filled / what's left") get a real answer;
   coaching, "Ask DocNexus to revise", and section confirm are untouched (separate render
   branches).
-- **Barge-in must be Tavus-native — a client interrupt makes latency WORSE.** We tried a
-  client-side `conversation.interrupt` on the doctor's speech to stop the greeting. Even gated on
-  `repSpeakingRef` and fired only on speech-start, it races Tavus's own turn-taking: it
-  stops/restarts the replica and delays transcribing the doctor's question, so the answer "doesn't
-  render until much later" (an earlier ungated version hard-froze the turn entirely). So the voice
-  path sends NO client interrupt — `pal_interruptibility: "high"` lets Tavus own barge-in. The open
-  item: for the doctor to barge in over the ~14 s greeting, Tavus needs to hear them, which needs
-  the mic live during the greeting (it's click-to-talk / muted by default). Reliable levers are a
-  live mic during the greeting (Tavus-native barge-in) or a shorter greeting — NOT a client
-  interrupt. `src/app/_components/VideoAgentStage.tsx`.
+- **Greeting is now an echoed utterance so it's interruptible; NO client interrupt anywhere.**
+  Two confirmed facts drove this: (a) a client `conversation.interrupt` on the doctor's speech
+  races Tavus's turn-taking and makes latency WORSE (even gated on `repSpeakingRef` — an earlier
+  ungated version hard-froze the turn), and (b) Tavus's `custom_greeting` is per the docs/FAQ
+  ALWAYS non-interruptible and drops any mic input during it. So: we no longer set
+  `custom_greeting`; the client speaks the opening via a PURE `conversation.echo` (no interrupt)
+  ~900 ms after the replica's video is live. As a normal utterance it obeys `pal_interruptibility:
+  "high"`, so the doctor can barge in over it just by talking (mic must be live). Barge-in on any
+  turn is Tavus-native. `route.ts` returns the greeting text, `tavus.ts` omits custom_greeting,
+  `VideoAgentStage` + `video-transport` echo it. Verify live: echoed-utterance interruptibility
+  (docs don't confirm, but the greeting is the only documented exception) and echo timing. `src/app/_components/VideoAgentStage.tsx`.
 - **Speech reads naturally (no spoken em dashes) + the Claude classifier always returns JSON.**
   Dashes-as-pauses in a spoken answer become comma pauses (`stripSpeechMarkdown`), and the
   composer is told to write for the ear. The Claude classifier now prefills its reply with `{`
