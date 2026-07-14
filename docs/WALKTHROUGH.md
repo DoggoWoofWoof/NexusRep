@@ -10,7 +10,29 @@
 
 ## 1. Current build status
 
-### Latest: Agentic Setup Assistant + never-drop transcript + barge-in drop (2026-07-14)
+### Latest: Off-video ASR — hotword correction + latency telemetry (experiment) (2026-07-14)
+
+- **Goal:** make the video-OFF speech input better at drug/program names and measurable, so it can
+  be A/B'd against the Tavus ASR (~4–5 s `asrMs`) with **zero video credits**; if it's better,
+  route the video path's ASR through it later (browser recognizer → `respond()`).
+- **Hotword correction** (`src/lib/asr-correct.ts`, pure + tested): Web Speech / on-device Whisper
+  mangle "Milvexian" → "malvaxian", "LIBREXIA" → "librexia", "Factor XIa" → "factor 11a". A fuzzy
+  matcher snaps close token-windows to the brand's canonical terms; conservative enough that an
+  ordinary word is never turned into a drug name (wild mis-hearings are left for the composer's
+  charitable interpretation). Also **re-ranks Web Speech alternatives** — the right proper noun is
+  often alternative #2, so `maxAlternatives` is now 4 and we pick the alt that recovers the most
+  terms. `tests/asr-correct.test.ts`.
+- **Canonical terms** now reach the client: `/api/brand` returns proper-cased `hotwords`
+  (`["Milvexian","LIBREXIA","Factor XIa","apixaban"]`) so corrections snap to the right spelling.
+- **Latency telemetry:** the off-video mic path logs `[nexusrep-asr]` (browser console + Render, via
+  the metrics sink) with `raw`, `corrected`, `corrections`, `finalizeMs` (last partial → final ≈
+  turn-detect+finalize) and `listenMs` — directly comparable to the Tavus `[nexusrep-latency]`
+  `asrMs`. Wired in `HcpExperience` on the video-off recognizer (default Web Speech; on-device
+  Whisper is a one-line swap).
+- Verified: `tsc` clean; unit suite **351 passed** (incl. 10 corrector cases); doctor view renders
+  and answers unchanged. The ASR path itself needs a live mic to measure (browser).
+
+### Agentic Setup Assistant + never-drop transcript + barge-in drop (2026-07-14)
 
 - **Doctor transcript never drops a rep answer (pushed `2f2a919`).** Two bugs dropped
   spoken answers from the captions/audit transcript: the consumer de-duped against EVERY

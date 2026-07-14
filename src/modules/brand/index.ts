@@ -138,6 +138,9 @@ export interface PublicBrand {
   investigational: boolean;
   /** Brand product/program names — client-side overview detection + copy. */
   productTerms: string[];
+  /** Canonical, proper-cased product/program/competitor names (e.g. "Milvexian", "LIBREXIA",
+   *  "Factor XIa") — used to correct mis-heard ASR transcripts to the right spelling. */
+  hotwords?: string[];
   /** Persona voice tone (professional / warm / clinical) — drives the doctor view's TTS
    *  delivery so the tone chosen in the Studio is heard by doctors too. Set by the /api/brand
    *  route from the live persona (not part of the static profile). */

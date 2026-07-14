@@ -273,9 +273,10 @@ export class OpenAiVoiceProvider implements ClientVoiceProvider {
 
 export interface ClientRecognizer {
   supported(): boolean;
-  /** Start listening; calls onResult with the final transcript, then onEnd. onInterim (if given)
-   *  streams live partial text so the UI can show what's being heard before the phrase finalizes. */
-  start(onResult: (text: string) => void, onEnd?: () => void, onInterim?: (text: string) => void): void;
+  /** Start listening; calls onResult with the final transcript (and, when the engine provides them,
+   *  the ranked alternatives so a caller can pick the one that best recovers known terms), then
+   *  onEnd. onInterim (if given) streams live partial text so the UI can show what's being heard. */
+  start(onResult: (text: string, alternatives?: string[]) => void, onEnd?: () => void, onInterim?: (text: string) => void): void;
   stop(): void;
   /** True when transcription runs on-device (no audio leaves the browser). */
   readonly onDevice?: boolean;
@@ -313,7 +314,7 @@ export class BrowserRecognizer implements ClientRecognizer {
     return getRecognitionCtor() !== null;
   }
 
-  start(onResult: (text: string) => void, onEnd?: () => void, onInterim?: (text: string) => void): void {
+  start(onResult: (text: string, alternatives?: string[]) => void, onEnd?: () => void, onInterim?: (text: string) => void): void {
     const Ctor = getRecognitionCtor();
     if (!Ctor) {
       onEnd?.();
@@ -326,15 +327,18 @@ export class BrowserRecognizer implements ClientRecognizer {
     // instead of waiting for a second click. One tap: speak, and it answers.
     rec.interimResults = true;
     rec.continuous = false;
-    rec.maxAlternatives = 1;
+    // Ask for several alternatives: the engine often mis-hears a drug name as its top guess but has
+    // the right proper noun lower down — the caller re-ranks them against known terms.
+    rec.maxAlternatives = 4;
     let finalText = "";
+    let finalAlts: string[] = [];
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       this.rec = null;
       const t = finalText.trim();
-      if (t) onResult(t); // deliver exactly once, on the finalized phrase
+      if (t) onResult(t, finalAlts.length > 1 ? finalAlts : undefined); // deliver once, on the finalized phrase
       onEnd?.();
     };
     rec.onresult = (e) => {
@@ -342,8 +346,13 @@ export class BrowserRecognizer implements ClientRecognizer {
       for (let i = 0; i < e.results.length; i++) {
         const r = e.results[i];
         const t = r?.[0]?.transcript ?? "";
-        if (r?.isFinal) finalText += t;
-        else interim += t;
+        if (r?.isFinal) {
+          finalText += t;
+          // Capture this final chunk's ranked alternatives (best-first) for hotword re-ranking.
+          const alts: string[] = [];
+          for (let j = 0; j < r.length; j++) { const a = r[j]?.transcript?.trim(); if (a) alts.push(a); }
+          if (alts.length) finalAlts = alts;
+        } else interim += t;
       }
       if (interim.trim()) onInterim?.(interim.trim());
     };

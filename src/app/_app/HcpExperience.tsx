@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AppState } from "./NexusRepApp";
 import { createRecognizer, setSpeechLanguage, speechVoiceHint, toneSpeechOpts, OpenAiVoiceProvider, type ClientRecognizer, type ClientVoiceProvider } from "@lib/browser-speech";
+import { correctBestAlternative } from "@lib/asr-correct";
 import { LiveAvatar, type LiveAvatarHandle } from "../_components/LiveAvatar";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { SlideView } from "../_components/SlideView";
@@ -295,10 +296,37 @@ export function HcpExperience({ app }: { app?: AppState }) {
     voiceRef.current?.cancel(); setSpeaking(false);
     setInput("");
     setListening(true);
+    // Correct mis-heard drug/program names against the brand's known terms, and log ASR latency so
+    // this off-video path can be A/B'd against the Tavus asrMs with no video credits spent.
+    const terms = [...(brand?.hotwords ?? []), ...(brand?.productTerms ?? [])];
+    const startedAt = Date.now();
+    let lastInterimAt = startedAt;
     rec.start(
-      (text) => { setListening(false); setInput(""); void ask(text); }, // final phrase → ask
+      (text, alts) => {
+        setListening(false);
+        const finalAt = Date.now();
+        const { text: corrected, corrections, chosenIndex } = correctBestAlternative(alts?.length ? alts : [text], terms);
+        const finalText = corrected || text;
+        setInput("");
+        const payload = {
+          kind: "asr" as const,
+          engine: rec.onDevice ? "whisper(on-device)" : "web-speech",
+          raw: text,
+          corrected: finalText,
+          corrections,
+          altCount: alts?.length ?? 1,
+          chosenAlt: chosenIndex,
+          listenMs: finalAt - startedAt, // mic tap → final transcript (includes speaking)
+          finalizeMs: finalAt - lastInterimAt, // last partial → final (~ turn-detect + finalize)
+          onDevice: rec.onDevice ?? false,
+        };
+        // eslint-disable-next-line no-console
+        console.info("[nexusrep-asr]", payload);
+        void fetch("/api/metrics/latency", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, question: finalText.slice(0, 60) }) }).catch(() => {});
+        void ask(finalText); // corrected phrase → ask
+      },
       () => setListening(false), // ended (silence / error) — no dangling "Listening…"
-      (interim) => { if (interim) setInput(interim); }, // live text so the doctor sees it working
+      (interim) => { lastInterimAt = Date.now(); if (interim) setInput(interim); }, // live text + finalize timing
     );
   }
   function toggleVideoMode() {

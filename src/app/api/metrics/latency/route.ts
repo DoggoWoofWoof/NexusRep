@@ -14,6 +14,24 @@ const ms = (v: unknown): number | null => (typeof v === "number" && Number.isFin
 
 export async function POST(req: Request): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  // Off-video client-side ASR telemetry (the experiment path): logged under its own tag so it can
+  // be compared to the Tavus [nexusrep-latency] asrMs without spending video credits.
+  if (body.kind === "asr") {
+    console.info(
+      "[nexusrep-asr]",
+      JSON.stringify({
+        engine: typeof body.engine === "string" ? body.engine : undefined,
+        raw: typeof body.raw === "string" ? body.raw.slice(0, 80) : undefined,
+        corrected: typeof body.corrected === "string" ? body.corrected.slice(0, 80) : undefined,
+        corrections: Array.isArray(body.corrections) ? body.corrections.slice(0, 6) : undefined,
+        finalizeMs: ms(body.finalizeMs), // last partial → final transcript (~ turn-detect + finalize)
+        listenMs: ms(body.listenMs), // mic tap → final transcript (includes the doctor speaking)
+        altCount: ms(body.altCount),
+        onDevice: Boolean(body.onDevice),
+      }),
+    );
+    return NextResponse.json({ ok: true });
+  }
   console.info(
     "[nexusrep-latency]",
     JSON.stringify({

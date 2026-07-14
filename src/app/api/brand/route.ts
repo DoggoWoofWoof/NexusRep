@@ -57,5 +57,5 @@ export async function GET(): Promise<NextResponse> {
       ? derived
       : brand.tryQuestions;
 
-  return NextResponse.json({ ...toPublicBrand(brand), voiceStyle, voiceId, voiceWholeConvo, tryQuestions, deck: mergeLiveDeck(brand.deck, live) });
+  return NextResponse.json({ ...toPublicBrand(brand), hotwords: brand.persona.hotwords, voiceStyle, voiceId, voiceWholeConvo, tryQuestions, deck: mergeLiveDeck(brand.deck, live) });
 }
