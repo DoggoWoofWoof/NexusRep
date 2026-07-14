@@ -33,6 +33,8 @@ export interface TavusConfig {
   baseUrl: string;
   replicaId: string;
   personaId?: string;
+  /** Tavus STT engine for layers.stt.stt_engine (e.g. "tavus-deepgram-medical" for clinical terms). */
+  sttEngine?: string;
   tts?: {
     engine?: string;
     model?: string;
@@ -206,7 +208,15 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
     }
     const layers: Record<string, unknown> = {};
     if (Object.keys(llm).length) layers.llm = llm;
-    if (config.hotwords?.length) layers.stt = { hotwords: config.hotwords.join(", ") };
+    // STT layer: pick the transcription engine (e.g. tavus-deepgram-medical so clinical/proper-noun
+    // terms transcribe correctly) and prioritize the product/program names as hotwords.
+    const sttEngine = this.cfg.sttEngine && this.cfg.sttEngine !== "tavus-auto" ? this.cfg.sttEngine : undefined;
+    if (sttEngine || config.hotwords?.length) {
+      layers.stt = {
+        ...(sttEngine ? { stt_engine: sttEngine } : {}),
+        ...(config.hotwords?.length ? { hotwords: config.hotwords.join(", ") } : {}),
+      };
+    }
     layers.tts = {
       // Be explicit instead of relying on the PAL's creation-era defaults. Existing cached
       // personas are patched when this signature changes, which is exactly what we want for

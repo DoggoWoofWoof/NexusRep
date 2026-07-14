@@ -43,6 +43,7 @@ export function getRealtimeProvider(): RealtimeProvider {
         speed: env.tavusTtsSpeed,
         emotionControl: env.tavusTtsEmotionControl,
       },
+      sttEngine: env.tavusSttEngine,
     });
   }
   return new MockRealtimeProvider();
