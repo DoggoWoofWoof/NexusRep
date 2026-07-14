@@ -39,8 +39,25 @@ function similarity(a: string, b: string): number {
   return 1 - levenshtein(na, nb) / m;
 }
 
-/** A window of transcript tokens "matches" a term when it's normalized-close AND shares the first
- *  letter (cheap guard against snapping unrelated short words onto a term). */
+/** Consonant skeleton: first letter, then the following consonants (vowels dropped, runs collapsed).
+ *  ASR mangles proper nouns mostly by swapping/adding VOWELS ("milvexian"→"milvaxion", "librexia"→
+ *  "libraxia"), which leaves the skeleton intact — so a skeleton match catches sound-alikes that
+ *  raw edit distance misses. */
+function skeleton(s: string): string {
+  const n = norm(s);
+  if (!n) return "";
+  let out = n[0]!;
+  for (let i = 1; i < n.length; i++) {
+    const c = n[i]!;
+    if ("aeiou".includes(c)) continue;
+    if (c !== out[out.length - 1]) out += c; // collapse doubled consonants
+  }
+  return out;
+}
+
+/** A window of transcript tokens "matches" a term when it shares the first letter (cheap guard
+ *  against snapping unrelated words) AND is either edit-distance-close OR phonetically close
+ *  (consonant skeletons align). */
 function windowMatches(window: string, term: string): boolean {
   const nw = norm(window);
   const nt = norm(term);
@@ -49,7 +66,11 @@ function windowMatches(window: string, term: string): boolean {
   if (nw[0] !== nt[0]) return false; // proper nouns almost always survive the first phoneme
   // Short terms need a tighter ratio (fewer chars → each edit costs more), long terms can be looser.
   const threshold = nt.length <= 5 ? 0.72 : SIM_THRESHOLD;
-  return similarity(nw, nt) >= threshold;
+  if (similarity(nw, nt) >= threshold) return true;
+  // Phonetic backstop: consonant skeletons equal or near-equal (catches vowel-swap mis-hearings).
+  const sw = skeleton(nw);
+  const st = skeleton(nt);
+  return st.length >= 3 && (sw === st || similarity(sw, st) >= 0.8);
 }
 
 export interface TranscriptCorrection {

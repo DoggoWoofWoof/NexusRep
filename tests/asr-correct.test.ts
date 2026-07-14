@@ -43,6 +43,24 @@ describe("correctTranscript", () => {
   });
 });
 
+describe("correctTranscript — phonetic (vowel-swap) mis-hearings", () => {
+  const TERMS2 = ["Milvexian", "LIBREXIA", "Factor XIa", "atrial fibrillation", "apixaban"];
+  it.each([
+    ["how does milvaxion work", "how does Milvexian work"],
+    ["tell me about libraxia", "tell me about LIBREXIA"],
+    ["is it a factor exia inhibitor", "is it a Factor XIa inhibitor"],
+    ["does it help atrial fibrilation", "does it help atrial fibrillation"], // dropped an 'l'
+  ])("snaps %j → %j", (input, expected) => {
+    expect(correctTranscript(input, TERMS2).text).toBe(expected);
+  });
+
+  it("still does not snap unrelated 'm' / 'a' words onto a drug name", () => {
+    for (const q of ["what medication schedule", "any adverse effects", "how is it administered"]) {
+      expect(correctTranscript(q, TERMS2).text).toBe(q);
+    }
+  });
+});
+
 describe("correctBestAlternative", () => {
   it("picks the alternative that recovers the most drug names, then corrects it", () => {
     const r = correctBestAlternative(["how does my vaccine work", "how does milvexian work"], TERMS);

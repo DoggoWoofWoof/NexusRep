@@ -10,7 +10,30 @@
 
 ## 1. Current build status
 
-### Latest: Off-video ASR — hotword correction + latency telemetry (experiment) (2026-07-14)
+### Latest: Fix product-question bounce + phonetic ASR correction + off-video barge-in (2026-07-14)
+
+- **"What is the program studying?" no longer bounces to Medical Info.** A product/program question
+  was routed to `medical_information` when the classifier over-flagged `medicalInfoRisk` (it read
+  "program studying" as a deep clinical question — the anchor word "clinical" was the only thing
+  that saved the working variant). Two latency-free fixes: (1) the classifier prompt now says
+  program/study/"what's being investigated"/indications-under-study are **product_info with LOW
+  medicalInfoRisk**, reserving Medical Info for true clinical specifics; (2) a routing guard —
+  `medicalInfoRisk` only bounces when intent is NOT product_info, so a product question is always
+  attempted (grounding + the gate still protect it). `tests/compliance.test.ts`. Verified live: the
+  exact failing question now answers from the LIBREXIA program block.
+- **Phonetic ASR correction.** Added a consonant-skeleton match to the hotword corrector so
+  vowel-swap mis-hearings snap too ("milvaxion"→Milvexian, "libraxia"→LIBREXIA, "factor exia"→
+  Factor XIa), not just tight edit-distance misses — still first-letter-guarded so ordinary words
+  never become a drug name. Brand `hotwords` expanded to the program/mechanism/indication terms
+  (FXIa, anticoagulant, the three indications) so both the corrector AND Tavus's STT bias cover
+  them. `tests/asr-correct.test.ts` (phonetic + no-over-correction cases).
+- **Off-video barge-in "like Tavus".** `src/lib/barge-vad.ts`: while the rep speaks (browser TTS),
+  an echo-cancelled energy VAD listens; sustained speech over the rep stops it and opens the
+  recognizer — no tap. Energy-based (can't transcribe → no echo loop), only runs once the mic is
+  already granted (no surprise prompt), degrades to tap-to-talk if denied/unsupported. Needs a live
+  mic to tune (headphones ideal). Wired in `HcpExperience`.
+
+### Off-video ASR — hotword correction + latency telemetry (experiment) (2026-07-14)
 
 - **Goal:** make the video-OFF speech input better at drug/program names and measurable, so it can
   be A/B'd against the Tavus ASR (~4–5 s `asrMs`) with **zero video credits**; if it's better,

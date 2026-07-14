@@ -247,7 +247,9 @@ export const MILVEXIAN_PROFILE: BrandProfile = {
       "You are an AI representative for Milvexian, an investigational compound from J&J. You share only publicly-disclosed information and route any clinical question to Medical Information. Your replies are produced by an external compliance system; speak them verbatim.",
     customGreeting: REP_GREETING,
     context: "Product: Milvexian (investigational Factor XIa inhibitor). Audience: cardiology. No patient-level data.",
-    hotwords: ["Milvexian", "LIBREXIA", "Factor XIa", "apixaban"],
+    // Product/program/mechanism/indication proper nouns that voice ASR mangles — used to bias
+    // Tavus's STT AND to correct the off-video recognizer's transcript back to the right spelling.
+    hotwords: ["Milvexian", "LIBREXIA", "Factor XIa", "FXIa", "anticoagulant", "ischemic stroke", "acute coronary syndrome", "atrial fibrillation", "apixaban"],
     language: "english",
   },
   deck: MILVEXIAN_DECK,

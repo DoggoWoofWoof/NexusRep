@@ -21,7 +21,12 @@ export function route(c: RiskClassification): PolicyRoute {
   // approved comparative answer exists (checked by the orchestrator downstream).
   if (c.comparativeClaimRisk >= HIGH) return "medical_information";
   if (c.intent === "human_request") return "human_handoff";
-  if (c.medicalInfoRisk >= HIGH) return "medical_information";
+  // A deep-medical signal routes to Medical Information — UNLESS the message is a public product/
+  // program question (intent product_info), which the rep should ANSWER from approved content. A
+  // classifier sometimes over-flags medicalInfoRisk on questions like "what is the program
+  // studying?" just because they sound clinical; grounding + the final gate still protect the
+  // answer (no approved content → the orchestrator falls back safely), so it's safe to attempt.
+  if (c.medicalInfoRisk >= HIGH && c.intent !== "product_info") return "medical_information";
   // Don't reflexively bounce an unclear or low-confidence question. ATTEMPT an approved answer:
   // the orchestrator retrieves approved content and returns the safe fallback ONLY when nothing
   // grounded matches. So the rep holds a natural conversation and answers whenever it can, while

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AppState } from "./NexusRepApp";
 import { createRecognizer, setSpeechLanguage, speechVoiceHint, toneSpeechOpts, OpenAiVoiceProvider, type ClientRecognizer, type ClientVoiceProvider } from "@lib/browser-speech";
 import { correctBestAlternative } from "@lib/asr-correct";
+import { startBargeInVad, type BargeController } from "@lib/barge-vad";
 import { LiveAvatar, type LiveAvatarHandle } from "../_components/LiveAvatar";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { SlideView } from "../_components/SlideView";
@@ -54,6 +55,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
   const liveRef = useRef<LiveAvatarHandle | null>(null);
   const videoAgentRef = useRef<VideoAgentStageHandle | null>(null);
   const recRef = useRef<ClientRecognizer | null>(null);
+  const bargeRef = useRef<BargeController | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   // This text/voice chat's own reviewable session (video uses the Tavus session).
   const chatSessionRef = useRef<string | null>(null);
@@ -62,6 +64,23 @@ export function HcpExperience({ app }: { app?: AppState }) {
 
   // The rep's speech locale (ASR + TTS) follows the brand persona's language.
   useEffect(() => { setSpeechLanguage(brand?.language); }, [brand]);
+
+  // Off-video barge-in "like Tavus": while the rep is speaking (browser TTS) and we're not already
+  // listening, watch an echo-cancelled mic; if the doctor talks over the rep for a sustained beat,
+  // stop the rep and open the recognizer to capture the question — no tap needed. Video uses Tavus's
+  // native interruptibility. Only runs once the mic is already granted (no surprise prompt).
+  useEffect(() => {
+    if (!(speaking && !videoOn && !listening)) return;
+    let cancelled = false;
+    void startBargeInVad(() => {
+      if (cancelled) return;
+      bargeRef.current = null;
+      interruptPlayback(); // stop the rep's TTS immediately
+      toggleMic(); // open the recognizer to capture what the doctor is saying
+    }).then((c) => { if (cancelled) c?.stop(); else bargeRef.current = c; });
+    return () => { cancelled = true; bargeRef.current?.stop(); bargeRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speaking, videoOn, listening]);
   useEffect(() => {
     try { setUrlHcpId(new URLSearchParams(window.location.search).get("hcp") ?? ""); } catch { /* no window */ }
     voiceRef.current = new OpenAiVoiceProvider(); // real TTS voice off-video, browser fallback

@@ -38,6 +38,22 @@ describe("policy router", () => {
   it("routes off-label to refusal", () => {
     expect(route(classify("is this approved for weight loss off-label"))).toBe("off_label_refusal");
   });
+  it("does NOT bounce a product/program question to Medical Info even with a high medical-info signal", () => {
+    // Regression: "what is the program studying?" was routed to medical_information (bounced) when
+    // the classifier over-flagged medicalInfoRisk. A product_info question must attempt an answer.
+    const productInfoDeep = {
+      intent: "product_info" as const, confidence: 0.8, offLabelRisk: 0, adverseEventRisk: 0,
+      medicalInfoRisk: 0.9, promptInjectionRisk: 0, comparativeClaimRisk: 0, isiRequired: true,
+    };
+    expect(route(productInfoDeep)).toBe("approved_answer");
+  });
+  it("still routes a genuine deep (non-product) question to Medical Info", () => {
+    const deepClinical = {
+      intent: "trial_data" as const, confidence: 0.8, offLabelRisk: 0, adverseEventRisk: 0,
+      medicalInfoRisk: 0.9, promptInjectionRisk: 0, comparativeClaimRisk: 0, isiRequired: true,
+    };
+    expect(route(deepClinical)).toBe("medical_information");
+  });
 });
 
 describe("compliance gate", () => {
