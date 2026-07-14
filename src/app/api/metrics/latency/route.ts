@@ -38,6 +38,10 @@ export async function POST(req: Request): Promise<NextResponse> {
       sessionId: typeof body.sessionId === "string" ? body.sessionId.slice(0, 40) : undefined,
       question: typeof body.question === "string" ? body.question.slice(0, 80) : undefined,
       asrMs: ms(body.asrMs), // speech end → finalized transcript (Tavus ASR / turn detection)
+      // asrMs split — attributes the 2-4s to STT vs turn-waiting (see VideoAgentStage.reportTurnLatency):
+      partialCount: ms(body.partialCount), // # of user streaming partials this turn; 0 = Tavus gives us no user partials (can't see inside)
+      sttTailAfterStopMs: ms(body.sttTailAfterStopMs), // VAD-stop → last partial: STT still transcribing after silence (STT-side)
+      finalizeMs: ms(body.finalizeMs), // last partial → final transcript: dead time after last word (turn-confirm + finalize)
       thinkToVoiceMs: ms(body.thinkToVoiceMs), // transcript → replica audio (our endpoint + Tavus TTS)
       transcriptToVoiceMs: ms(body.transcriptToVoiceMs), // rep text ready → replica audio (~Tavus TTS render)
     }),

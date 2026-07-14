@@ -209,10 +209,22 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     lastLatencyTurnRef.current = q.at;
     const stopped = [...t].reverse().find((e) => e.type === "hcp_stopped_speaking" && e.at <= q.at);
     const repText = [...t].reverse().find((e) => e.type === "rep_final_utterance" && e.at >= q.at);
+    // Split asrMs to attribute it. Scope this turn's user partials to (prevFinal, q]. Then:
+    //   sttTailAfterStopMs = VAD-stop → last partial   → STT still transcribing after silence (STT-side)
+    //   finalizeMs         = last partial → final txt   → dead time after the last word (turn-confirm)
+    // These two sum to asrMs when the last partial falls between stop and final. partialCount 0 ⇒
+    // Tavus streamed no user partials, so the whole asrMs is opaque buffering — itself an STT-side tell.
+    const prevFinal = [...t].reverse().find((e) => e.type === "hcp_final_utterance" && e.at < q.at);
+    const windowStart = prevFinal?.at ?? 0;
+    const partials = t.filter((e) => e.type === "hcp_streaming_utterance" && e.at > windowStart && e.at <= q.at);
+    const lastPartial = partials[partials.length - 1];
     const now = Date.now();
     const payload = {
       question: (q.text ?? "").slice(0, 60),
       asrMs: stopped ? q.at - stopped.at : null, // speech end → transcript (ASR / turn detection)
+      partialCount: partials.length, // user streaming partials seen this turn (0 ⇒ no visibility into the split)
+      sttTailAfterStopMs: stopped && lastPartial ? lastPartial.at - stopped.at : null, // STT still transcribing after silence
+      finalizeMs: lastPartial ? q.at - lastPartial.at : null, // last partial → final transcript (turn-confirm)
       thinkToVoiceMs: now - q.at, // transcript → replica audio (our endpoint + Tavus TTS)
       transcriptToVoiceMs: repText ? now - repText.at : null, // rep text ready → audio (~TTS render)
     };
@@ -313,9 +325,17 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
           const stopped = prevBefore(i, "hcp_stopped_speaking");
           const repSpoke = nextAfter(i, "vendor_started_speaking");
           const repText = nextAfter(i, "rep_final_utterance");
+          // asrMs split (see reportTurnLatency): partials scoped to (prevFinal, e].
+          const prevFinal = prevBefore(i, "hcp_final_utterance");
+          const ws = prevFinal?.at ?? 0;
+          const partials = t.filter((x) => x.type === "hcp_streaming_utterance" && x.at > ws && x.at <= e.at);
+          const lastPartial = partials[partials.length - 1];
           return {
             question: (e.text ?? "").slice(0, 48),
             asrMs: stopped ? e.at - stopped.at : null, // speech end → finalized transcript
+            partials: partials.length, // 0 ⇒ Tavus gave us no user partials (split unavailable)
+            sttTailAfterStopMs: stopped && lastPartial ? lastPartial.at - stopped.at : null, // STT still transcribing after silence
+            finalizeMs: lastPartial ? e.at - lastPartial.at : null, // last partial → final transcript (turn-confirm)
             thinkToVoiceMs: repSpoke ? repSpoke.at - e.at : null, // transcript → replica audio (endpoint + TTS)
             transcriptToVoiceMs: repText && repSpoke ? repSpoke.at - repText.at : null, // rep text ready → rep audio (~TTS render)
           };
@@ -498,7 +518,14 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // latency; from there → vendor_started_speaking is our endpoint + Tavus TTS. See
             // window.__nexusrepLatency() for the per-turn breakdown.
             if (/hcp|user|human|participant|remote/i.test(e.role)) {
-              if (/start(?:ed)?[_\s.-]*speak/i.test(e.type)) {
+              if (/conversation\.utterance\.streaming/i.test(e.type)) {
+                // User partial transcripts, IF Tavus streams them for the user role. Timestamped so
+                // reportTurnLatency can split asrMs into STT-tail (VAD-stop → last partial: STT still
+                // transcribing) vs finalize (last partial → final transcript: turn-confirm dead time).
+                // partialCount 0 across a session ⇒ Tavus emits no user partials and buffers the whole
+                // utterance, which itself points the finger at STT-side finalization.
+                recordTiming({ type: "hcp_streaming_utterance", reason: e.type, text: e.text });
+              } else if (/start(?:ed)?[_\s.-]*speak/i.test(e.type)) {
                 recordTiming({ type: "hcp_started_speaking", reason: e.type });
                 // NO client-side conversation.interrupt here. Tried it (even gated on repSpeakingRef,
                 // only on speech-start): it races Tavus's own turn-taking and made latency WORSE —
