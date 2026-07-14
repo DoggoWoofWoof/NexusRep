@@ -110,6 +110,24 @@ export interface SetupTopic {
 }
 
 /**
+ * First guided-setup topic index whose mapped server field is still blank (a "gap"), scanning from
+ * `from`. Returns `topics.length` when there is no gap. Pure — used to skip the questions a document
+ * already autofilled and resume the script at exactly what it left unanswered.
+ */
+export function firstSetupGapIndex(
+  topics: { key: string }[],
+  answerKey: Record<string, string>,
+  filledServerKeys: ReadonlySet<string>,
+  from = 0,
+): number {
+  for (let i = Math.max(0, from); i < topics.length; i++) {
+    const k = answerKey[topics[i]!.key];
+    if (!k || !filledServerKeys.has(k)) return i;
+  }
+  return topics.length;
+}
+
+/**
  * The Setup Assistant's questions, driven by the active brand so a NEW brand needs no
  * edits: the product/indication/talking-point chips are filled from its BrandProfile
  * (falls back to generic labels while the brand loads or when none is set). The questions

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import type { AppState } from "./NexusRepApp";
 import { btnGhost, btnPrimary } from "./NexusRepApp";
 import { streamArena } from "@lib/arena-client";
-import { DEFAULT_RULES, KNOWLEDGE_ASSETS, TRAIN_SEED_KEY, setupTopicsFor } from "./data";
+import { DEFAULT_RULES, KNOWLEDGE_ASSETS, TRAIN_SEED_KEY, setupTopicsFor, firstSetupGapIndex } from "./data";
 import { isOverviewPrompt } from "./overviewPrompt";
 import { SlideView } from "../_components/SlideView";
 import { VideoAgentStage } from "../_components/VideoAgentStage";
@@ -242,6 +242,9 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
   const [proposed, setProposed] = useState<SetupProposedAction[]>([]);
   const [chatBusy, setChatBusy] = useState(false);
   const [input, setInput] = useState("");
+  // True once a document autofilled setup: from then on the guided script SKIPS questions the doc
+  // already answered and only asks the gaps (before an upload it advances linearly, one at a time).
+  const [docAutofilled, setDocAutofilled] = useState(false);
   const [open, setOpen] = useState<string | null>("profile");
   const [status, setStatus] = useState<Record<string, string>>({});
   const [name, setName] = useState(repName);
@@ -443,6 +446,7 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
     }
     await loadSafety();
     setIsiMsg(action === "approve" ? "Approved. This exact ISI block is now used live." : "Draft ISI rejected.");
+    if (action === "approve") void nudgeOutstanding(step); // ISI in place — nudge toward whatever's left
   };
 
   // Initialize each section's UI status from the server snapshot.
@@ -460,6 +464,16 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
   }, [snap]);
 
   const topics = setupTopicsFor(brand);
+
+  // The setup question keys that already have a value on the server (from a document autofill or a
+  // prior answer). Used to SKIP questions a document already covered so only the gaps get asked.
+  const answeredServerKeys = new Set(
+    (snap?.sections ?? []).flatMap((s) => s.fields.filter((f) => (f.value ?? "").trim()).map((f) => f.key)),
+  );
+  const nextUnansweredFrom = (from: number) => firstSetupGapIndex(topics, ANSWER_KEY, answeredServerKeys, from);
+  // After a document autofill the script jumps over already-answered questions; before one, it walks
+  // linearly (so a fresh, unassisted setup still goes one question at a time).
+  const nextStepFrom = (from: number) => (docAutofilled ? nextUnansweredFrom(from) : from);
 
   // Seed the guided script ONCE: greeting + first question. The scripted Q&A is the backbone the
   // brand user follows; typed instructions are layered on top (see submitInput / sendChat).
@@ -482,16 +496,15 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
     const qk = ANSWER_KEY[t.key];
     if (qk) void post({ action: "answer", questionKey: qk, value });
     setStatus((s) => (s[t.section] === "confirmed" ? s : { ...s, [t.section]: "drafted" }));
-    const next = step + 1;
+    const next = nextStepFrom(step + 1);
     setStep(next);
     setOpen(topics[next]?.section ?? t.section);
     setChat((c) => [
       ...c,
       { role: "user" as const, text: value },
-      topics[next]
-        ? { role: "assistant" as const, text: topics[next]!.q }
-        : { role: "assistant" as const, text: "That’s everything I need — review and confirm each section on the right. Tell me anytime if you’d like to change something." },
+      ...(topics[next] ? [{ role: "assistant" as const, text: topics[next]!.q }] : []),
     ]);
+    if (!topics[next]) void nudgeOutstanding(next); // last question answered → drive to fully done
   };
 
   // "Decide for me": draft every section with sensible defaults (first chip each), skip to the end.
@@ -506,7 +519,43 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
       return n;
     });
     setStep(topics.length);
-    setChat((c) => [...c, { role: "assistant", text: "Done — I drafted every section with sensible defaults. Review and confirm them on the right, or tell me what to change." }]);
+    setChat((c) => [...c, { role: "assistant", text: "Done — I drafted every section with sensible defaults." }]);
+    void nudgeOutstanding(topics.length); // then point at whatever still needs confirming
+  };
+
+  // Skip an optional question, advancing the guided script (and driving to done if it was the last).
+  const skipStep = () => {
+    const next = nextStepFrom(step + 1);
+    setStep(next);
+    setOpen(topics[next]?.section ?? null);
+    if (topics[next]) setChat((c) => [...c, { role: "assistant", text: topics[next]!.q }]);
+    else void nudgeOutstanding(next);
+  };
+
+  // "Autofill from a document" upload: extract + fill, report what landed, then RESUME the guided
+  // script at the first field the document DIDN'T cover — so a partial extraction (say 14 values
+  // with a couple of gaps in the middle) gets those gaps asked back instead of silently left blank.
+  const onUploadAndResume = async (file: File | undefined) => {
+    if (!file) return;
+    const r = await onUpload(file);
+    if (!r) return;
+    setDocAutofilled(true);
+    const filledList = r.filled.length ? ` I filled ${r.filled.map((f) => f.replace(/_/g, " ")).join(", ")}.` : "";
+    const lead = `Pulled ${r.blocks} passage${r.blocks === 1 ? "" : "s"}${r.safety ? ` and ${r.safety} ISI statement${r.safety === 1 ? "" : "s"}` : ""} from “${file.name}” for MLR review.${filledList}`;
+    // Recompute what's still blank from the fresh snapshot, then jump the script to the first gap.
+    let sections = snap?.sections ?? [];
+    try { const res = await fetch("/api/studio"); if (res.ok) { const s = (await res.json()) as StudioSnap | null; if (s) sections = s.sections; } } catch { /* fall back to current snap */ }
+    const filled = new Set(sections.flatMap((sec) => sec.fields.filter((f) => (f.value ?? "").trim()).map((f) => f.key)));
+    const gap = firstSetupGapIndex(topics, ANSWER_KEY, filled);
+    if (gap >= topics.length) {
+      setStep(topics.length);
+      setChat((c) => [...c, { role: "assistant", text: lead }]);
+      void nudgeOutstanding(topics.length);
+    } else {
+      setStep(gap);
+      setOpen(topics[gap]!.section);
+      setChat((c) => [...c, { role: "assistant", text: `${lead} A few things it didn’t cover — let’s fill those in. ${topics[gap]!.q}` }]);
+    }
   };
 
   // A typed message is an INSTRUCTION/question (→ agent) rather than a plain answer to the current
@@ -537,12 +586,42 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
       });
       const d = (await res.json()) as { reply?: string; actions?: SetupProposedAction[]; error?: string };
       setChat((c) => [...c, { role: "assistant", text: res.ok ? (d.reply || "Okay.") : `I couldn't do that: ${d.error ?? res.status}` }]);
-      if (res.ok) setProposed(d.actions ?? []);
+      if (res.ok) {
+        setProposed(d.actions ?? []);
+        // No action to confirm → the detour is done, so drive back to finishing setup.
+        if (!(d.actions ?? []).length) void nudgeOutstanding(step);
+      }
     } catch (e) {
       setChat((c) => [...c, { role: "assistant", text: `Something went wrong: ${e instanceof Error ? e.message : String(e)}` }]);
     } finally {
       setChatBusy(false);
     }
+  }
+
+  // Completeness driver: after any turn, keep the setup moving toward FULLY done. If scripted
+  // questions remain, re-ask the current one; once they're all answered, surface whatever is still
+  // open from the real readiness checklist (sections to confirm, ISI, etc.) until nothing's left.
+  // `stepNow` is passed explicitly because setStep is async and the closure's `step` may be stale.
+  async function nudgeOutstanding(stepNow: number) {
+    if (stepNow < topics.length) {
+      setChat((c) => [...c, { role: "assistant", text: `Back to setup — ${topics[stepNow]!.q}` }]);
+      return;
+    }
+    let items = snap?.readiness.items ?? [];
+    try {
+      const res = await fetch("/api/studio");
+      if (res.ok) { const s = (await res.json()) as StudioSnap | null; if (s) items = s.readiness.items; }
+    } catch { /* fall back to the current snapshot */ }
+    const left = items.filter((i) => !i.done);
+    const isiMissing = !safety?.active?.text?.trim();
+    if (!left.length && !isiMissing) {
+      setChat((c) => [...c, { role: "assistant", text: "That’s everything — the rep is fully set up and ready to review and launch. 🎉" }]);
+      return;
+    }
+    const bullets = left.map((i) => `• ${i.label}${i.blocking ? " (required)" : ""}`);
+    if (isiMissing) bullets.push("• Approved ISI in place (required)");
+    const focus = isiMissing ? "the approved ISI" : (left.find((i) => i.blocking) ?? left[0])!.label;
+    setChat((c) => [...c, { role: "assistant", text: `Before this is fully done, a few things are still open on the right:\n${bullets.slice(0, 5).join("\n")}\n\nLet’s finish ${focus} next.` }]);
   }
 
   // Execute ONE confirmed action via existing endpoints. If a set_field answers the CURRENT scripted
@@ -561,14 +640,21 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
           const next = step + 1;
           setStep(next);
           setOpen(topics[next]?.section ?? cur.section);
-          say(topics[next] ? `${action.summary ?? "Done"}. ${topics[next]!.q}` : `${action.summary ?? "Done"}. That’s the essentials — review and confirm on the right.`);
+          if (topics[next]) {
+            say(`${action.summary ?? "Done"}. ${topics[next]!.q}`);
+          } else {
+            say(`${action.summary ?? "Done"}.`);
+            void nudgeOutstanding(next); // last question just answered → drive to fully done
+          }
         } else {
           say(`${action.summary ?? "Updated"}. Fine-tune it in the sections on the right if you like.`);
+          void nudgeOutstanding(step);
         }
       } else if (action.type === "draft_rule" && action.ruleFeedback) {
         await post({ action: "rule", feedback: action.ruleFeedback, scope: action.ruleScope ?? "persona" });
         await refresh();
         say("Added that as a conversation rule — you’ll see it under Rules for review.");
+        void nudgeOutstanding(step);
       } else if (action.type === "flag_isi") {
         setOpen("knowledge");
         say("Opened Approved knowledge — add or confirm the ISI there. It’s required before the rep can go live.");
@@ -582,11 +668,13 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
     }
   }
 
-  const confirmSection = (uiKey: string) => {
+  const confirmSection = async (uiKey: string) => {
     setStatus((s) => ({ ...s, [uiKey]: "confirmed" }));
     setOpen(null);
     const serverKey = SECTION_KEY[uiKey];
-    if (serverKey) void post({ action: "section", section: serverKey, status: "complete" });
+    if (serverKey) await post({ action: "section", section: serverKey, status: "complete" });
+    // Keep prompting from our side after every bit of progress — until onboarding is fully done.
+    void nudgeOutstanding(step);
   };
 
   // "Ask DocNexus to revise" — reopen the section for re-drafting: mark it needs_input
@@ -633,7 +721,7 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
                 <span key={c[0]} data-testid="setup-chip" onClick={() => answerScripted(c[1])} style={{ padding: "8px 12px", background: "#fff", border: "1px solid var(--dn-brand-light)", borderRadius: 9, font: "600 11.5px/1.2 var(--dn-font-sans)", color: "var(--dn-brand-base)", cursor: "pointer" }}>{c[0]}</span>
               ))}
               {topics[step]!.optional && (
-                <span data-testid="setup-skip" onClick={() => { const next = step + 1; setStep(next); setOpen(topics[next]?.section ?? null); setChat((ch) => topics[next] ? [...ch, { role: "assistant", text: topics[next]!.q }] : [...ch, { role: "assistant", text: "All set — review and confirm each section on the right." }]); }} style={{ padding: "8px 12px", border: "1px dashed var(--dn-border)", borderRadius: 9, font: "600 11.5px/1.2 var(--dn-font-sans)", color: "var(--dn-fg-muted)", cursor: "pointer" }}>Skip →</span>
+                <span data-testid="setup-skip" onClick={skipStep} style={{ padding: "8px 12px", border: "1px dashed var(--dn-border)", borderRadius: 9, font: "600 11.5px/1.2 var(--dn-font-sans)", color: "var(--dn-fg-muted)", cursor: "pointer" }}>Skip →</span>
               )}
             </div>
           )}
@@ -659,7 +747,7 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
               {/* Upload once instead of answering one-by-one: the document fills the blanks. */}
               <label style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }} title="Upload a deck / PI / FAQ — I'll fill the setup answers from it">
                 📎 Autofill from a document
-                <input data-testid="upload-autofill" type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => void onUpload(e.target.files?.[0])} style={{ display: "none" }} />
+                <input data-testid="upload-autofill" type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => void onUploadAndResume(e.target.files?.[0])} style={{ display: "none" }} />
               </label>
               {step < topics.length && <span onClick={autoFill} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>Decide for me →</span>}
             </span>
@@ -844,7 +932,7 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 9, marginTop: 16 }}>
-                  <button onClick={() => confirmSection(sec.key)} style={{ ...btnPrimary, padding: "9px 15px", font: "600 12px/1 var(--dn-font-sans)" }}>Confirm section</button>
+                  <button onClick={() => void confirmSection(sec.key)} style={{ ...btnPrimary, padding: "9px 15px", font: "600 12px/1 var(--dn-font-sans)" }}>Confirm section</button>
                   <button onClick={() => reviseSection(sec.key)} style={{ ...btnGhost, padding: "9px 15px", font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>Ask DocNexus to revise</button>
                 </div>
               </div>

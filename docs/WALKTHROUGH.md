@@ -36,6 +36,20 @@
   script in lockstep. Guardrails hold even if the model misbehaves (no ICD/unknown field
   keys, no no-op overwrites, no ISI nag when one exists); a deterministic fallback keeps it
   useful with no LLM key. `tests/setup-agent.test.ts`.
+- **The script drives to FULLY done.** After any turn, a completeness driver keeps setup
+  moving: if scripted questions remain it re-asks the next one; once they're all answered it
+  surfaces whatever is still open from the real readiness checklist (sections to confirm,
+  approved ISI, blocking items) and asks the user to finish them — only celebrating when the
+  rep is genuinely launch-ready. So a detour to answer a free-form instruction always returns
+  to the guided flow rather than stalling. It also keeps prompting after right-panel progress —
+  confirming a section or approving the ISI re-checks readiness and points at what's still left,
+  right up to "ready to launch". The goal isn't to seem clever; it's to finish onboarding.
+- **Partial document extractions get their gaps asked back.** When "Autofill from a document"
+  fills only some fields (a deck rarely covers all of them), the assistant reports what it
+  pulled in, then RESUMES the guided script at the first field the document didn't cover and
+  skips the ones it did — so a 14-of-N extraction with holes in the middle gets exactly those
+  holes asked, nothing silently left blank. The gap finder is a pure, unit-tested helper
+  (`firstSetupGapIndex` in `src/app/_app/data.ts`, `tests/setup-gaps.test.ts`).
 - **No setup regression, just smarter:** uploaded documents still extract + autofill
   (unchanged `/api/content/ingest`), and the chat now reports what it pulled in and which
   fields it filled; progress questions ("what's filled / what's left") get a real answer;
