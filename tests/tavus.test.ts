@@ -120,6 +120,44 @@ describe("Tavus realtime adapter", () => {
     expect(convo.body?.persona_id).toBe("existing_pal"); // reused the one already on the account
     expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/personas"))).toBe(false); // no new PAL
   });
+
+  it("ignores an invalid stt_engine (e.g. a mis-pasted env-var name) — keeps hotwords, no 400", async () => {
+    const calls: { url: string; method?: string; body: Record<string, unknown> | null }[] = [];
+    vi.stubGlobal("fetch", (async (url: string, init?: RequestInit) => {
+      const u = String(url); const m = init?.method ?? "GET";
+      calls.push({ url: u, method: m, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (u.includes("/personas") && m === "GET") return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      if (u.endsWith("/personas")) return new Response(JSON.stringify({ persona_id: "p1" }), { status: 200 });
+      if (u.endsWith("/conversations")) return new Response(JSON.stringify({ conversation_id: "c1", conversation_url: "https://tavus.daily.co/c1", status: "active" }), { status: 200 });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch);
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1", sttEngine: "NEXUSREP_TAVUS_STT" });
+    await tavus.startSession({ sessionId: "s", systemPrompt: "sp", personaCacheKey: "invalid_stt_brand", customLlm: { baseUrl: "https://app.example/api/tavus/llm", model: "nexusrep-compliance" }, agentId: "r1", tools: [], hotwords: ["Milvexian"] });
+    const persona = calls.find((c) => c.method === "POST" && c.url.endsWith("/personas"))!;
+    const stt = (persona.body?.layers as { stt?: { stt_engine?: string; hotwords?: string } } | undefined)?.stt;
+    expect(stt?.stt_engine).toBeUndefined(); // invalid value dropped, not sent
+    expect(stt?.hotwords).toContain("Milvexian"); // hotwords still applied
+  });
+
+  it("retries persona creation without stt_engine when Tavus rejects it, so the rep still starts", async () => {
+    let personaPosts = 0;
+    vi.stubGlobal("fetch", (async (url: string, init?: RequestInit) => {
+      const u = String(url); const m = init?.method ?? "GET";
+      if (u.includes("/personas") && m === "GET") return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      if (u.endsWith("/personas") && m === "POST") {
+        personaPosts++;
+        const b = JSON.parse(String(init!.body)) as { layers?: { stt?: { stt_engine?: string } } };
+        if (b.layers?.stt?.stt_engine) return new Response(JSON.stringify({ error: "Invalid stt_engine" }), { status: 400 });
+        return new Response(JSON.stringify({ persona_id: "p1" }), { status: 200 });
+      }
+      if (u.endsWith("/conversations")) return new Response(JSON.stringify({ conversation_id: "c1", conversation_url: "https://tavus.daily.co/c1", status: "active" }), { status: 200 });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch);
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1", sttEngine: "tavus-deepgram-medical" });
+    const session = await tavus.startSession({ sessionId: "s2", systemPrompt: "sp", personaCacheKey: "retry_stt_brand", customLlm: { baseUrl: "https://app.example/api/tavus/llm", model: "nexusrep-compliance" }, agentId: "r1", tools: [], hotwords: ["Milvexian"] });
+    expect(session.transportUrl).toBe("https://tavus.daily.co/c1"); // rep started despite the STT rejection
+    expect(personaPosts).toBe(2); // first with stt_engine (400) → retried without it (200)
+  });
 });
 
 describe("Tavus custom-LLM endpoint preserves the compliance gate", () => {

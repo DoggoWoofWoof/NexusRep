@@ -60,6 +60,13 @@ interface CreateConversationResponse {
   meeting_token?: string;
 }
 
+// Valid Tavus STT engines (from the live persona API + docs). Anything else — most commonly a
+// mis-pasted env-var NAME as the value — is ignored so it can't 400 persona creation and kill the
+// video rep. Extend if Tavus adds engines.
+const KNOWN_STT_ENGINES = new Set([
+  "tavus-auto", "tavus-whisper", "tavus-turbo", "tavus-advanced", "tavus-parakeet", "tavus-soniox", "tavus-deepgram-medical",
+]);
+
 // Process-wide cache of ONE persona PER BRAND (keyed by personaCacheKey), so every session
 // reuses its brand's persona instead of spawning a new "pal" each time — and a second brand
 // in the same process can never reuse/PATCH the first brand's persona. `prompts` tracks the
@@ -158,13 +165,33 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
     };
     const inFlight = personaCreations.get(cacheKey);
     if (inFlight) return inFlight;
-    const creation = this.api<CreatePersonaResponse>("/personas", { method: "POST", body: JSON.stringify(body) })
-      .then((r) => {
-        if (!r.persona_id) throw new Error("tavus: no persona_id returned");
-        createdPersonas.set(cacheKey, r.persona_id);
+    const createPersona = async (createBody: Record<string, unknown>): Promise<string> => {
+      const r = await this.api<CreatePersonaResponse>("/personas", { method: "POST", body: JSON.stringify(createBody) });
+      if (!r.persona_id) throw new Error("tavus: no persona_id returned");
+      return r.persona_id;
+    };
+    const creation = createPersona(body)
+      .catch((e: unknown) => {
+        // A rejected STT engine (invalid, or valid but not on this Tavus plan) must NOT sink the
+        // whole video rep. Retry once dropping stt_engine (keep hotwords) → starts on default STT.
+        const msg = e instanceof Error ? e.message : String(e);
+        const stt = (body.layers as { stt?: Record<string, unknown> } | undefined)?.stt;
+        if (stt && "stt_engine" in stt && /stt_engine|\bstt\b/i.test(msg)) {
+          console.warn("[tavus] persona create rejected the STT engine; retrying with Tavus default:", msg.slice(0, 200));
+          const sttRest = { ...stt };
+          delete sttRest.stt_engine;
+          const retryLayers = { ...(body.layers as Record<string, unknown>) };
+          if (Object.keys(sttRest).length) retryLayers.stt = sttRest;
+          else delete (retryLayers as { stt?: unknown }).stt;
+          return createPersona({ ...body, layers: retryLayers });
+        }
+        throw e;
+      })
+      .then((persona_id) => {
+        createdPersonas.set(cacheKey, persona_id);
         personaPrompts.set(cacheKey, config.systemPrompt);
         personaLayerSignatures.set(cacheKey, layerSignature);
-        return r.persona_id;
+        return persona_id;
       })
       .finally(() => {
         personaCreations.delete(cacheKey);
@@ -209,8 +236,15 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
     const layers: Record<string, unknown> = {};
     if (Object.keys(llm).length) layers.llm = llm;
     // STT layer: pick the transcription engine (e.g. tavus-deepgram-medical so clinical/proper-noun
-    // terms transcribe correctly) and prioritize the product/program names as hotwords.
-    const sttEngine = this.cfg.sttEngine && this.cfg.sttEngine !== "tavus-auto" ? this.cfg.sttEngine : undefined;
+    // terms transcribe correctly) and prioritize the product/program names as hotwords. A value
+    // that isn't a real Tavus engine (e.g. a mis-pasted env var name) is IGNORED, not sent — an
+    // invalid stt_engine 400s persona creation and takes down the whole video rep.
+    const configuredStt = this.cfg.sttEngine?.trim();
+    let sttEngine: string | undefined;
+    if (configuredStt && configuredStt !== "tavus-auto") {
+      if (KNOWN_STT_ENGINES.has(configuredStt)) sttEngine = configuredStt;
+      else console.warn(`[tavus] ignoring invalid stt_engine "${configuredStt}" (set NEXUSREP_TAVUS_STT to one of ${[...KNOWN_STT_ENGINES].join(", ")}) — using tavus-auto`);
+    }
     if (sttEngine || config.hotwords?.length) {
       layers.stt = {
         ...(sttEngine ? { stt_engine: sttEngine } : {}),
