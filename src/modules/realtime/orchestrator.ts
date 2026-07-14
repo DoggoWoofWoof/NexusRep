@@ -333,10 +333,7 @@ export class TurnOrchestrator {
       // Deterministic fallback (no LLM) speaks approved text + one brief slide cue; it cannot weave,
       // so the ISI is appended verbatim below.
       const responseSeed = `${ctx.sessionId}:${ctx.text}:${priorEvents.length}:${top.id}`;
-      // Drop the spoken slide-cue on the ISI turn (usually the first answer): that reply already
-      // carries the long verbatim ISI, so the extra "look at the … slide" sentence just adds seconds
-      // of speech. The slide still shows via detailAidSlideId. Later, ISI-free turns keep the cue.
-      const deterministic = () => buildApprovedResponse(result.answers, { includeIsi: false, slideTitle, seed: responseSeed, slideCue: !isi })?.text ?? top.text;
+      const deterministic = () => buildApprovedResponse(result.answers, { includeIsi: false, slideTitle, seed: responseSeed })?.text ?? top.text;
       let body: string;
       if (composeFn) {
         try {

@@ -478,12 +478,14 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             if (/hcp|user|human|participant|remote/i.test(e.role)) {
               if (/start(?:ed)?[_\s.-]*speak/i.test(e.type)) {
                 recordTiming({ type: "hcp_started_speaking", reason: e.type });
-                // Barge-in is handled NATIVELY by Tavus (the persona sets pal_interruptibility:
-                // "high") — the replica stops on its own when the doctor speaks. We deliberately do
-                // NOT send conversation.interrupt from here: it raced Tavus's own turn-taking and,
-                // when it fired before/around the first answer, cancelled that answer AND wedged the
-                // pipeline so the doctor's NEXT question wasn't even detected (the "frozen, question
-                // ignored" bug). Let Tavus own turn-taking; we only record the timing marker.
+                // Speech-triggered barge-in: the doctor ACTUALLY started talking. If the rep is
+                // mid-utterance (including the long greeting), stop it so they don't wait it out.
+                // GATED on repSpeakingRef — the crux of not re-freezing: it fires ONLY while the rep
+                // is genuinely speaking, never before the first answer or on an idle VAD blip (that
+                // pre-speech interrupt cancelled the pending answer and wedged the turn). It's the
+                // doctor's real speech that triggers this, not turning the mic on. One-shot per
+                // speech-start (we don't also interrupt on every utterance).
+                if (repSpeakingRef.current) transportRef.current?.interrupt();
               } else if (/stop(?:ped)?[_\s.-]*speak|done[_\s.-]*speak/i.test(e.type)) {
                 recordTiming({ type: "hcp_stopped_speaking", reason: e.type });
               }

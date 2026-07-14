@@ -55,14 +55,15 @@
   fields it filled; progress questions ("what's filled / what's left") get a real answer;
   coaching, "Ask DocNexus to revise", and section confirm are untouched (separate render
   branches).
-- **Barge-in is Tavus-native — no client interrupt (fixes the freeze).** Attempting a
-  client-side `conversation.interrupt` on the doctor's speech (to drop a superseded answer)
-  raced Tavus's own turn-taking: fired before/around the first answer it cancelled that answer
-  AND wedged the pipeline so the doctor's NEXT question wasn't even detected — a hard freeze.
-  The persona already sets `pal_interruptibility: "high"`, so Tavus stops the replica natively
-  when the doctor speaks. We now send NO client interrupt on the voice path and let Tavus own
-  turn-taking; the dead `interrupt()` transport method was removed (typed `speak`/`respond` still
-  send their own interrupt app-message, unaffected). `src/app/_components/VideoAgentStage.tsx`,
+- **Barge-in on the greeting (and any answer) — speech-triggered and freeze-safe.** When the
+  doctor ACTUALLY starts speaking while the rep is mid-utterance (including the long greeting), a
+  single `conversation.interrupt` stops the rep so they don't have to wait it out. The crux of
+  not re-freezing: it's GATED on `repSpeakingRef` (fires only while the rep is genuinely speaking)
+  and only on speech-start — never before the first answer, never on an idle VAD blip, and NOT on
+  turning the mic on (turning the mic on means "getting ready", not "talking"). The earlier freeze
+  came from an ungated interrupt firing before the rep spoke + on every utterance, which cancelled
+  the pending answer and wedged ASR. The doctor's mic must be live for their speech to be detected
+  (mic-on = ready; speaking = the trigger). `src/app/_components/VideoAgentStage.tsx`,
   `src/app/_components/video-transport.ts`.
 - **Speech reads naturally (no spoken em dashes) + the Claude classifier always returns JSON.**
   Dashes-as-pauses in a spoken answer become comma pauses (`stripSpeechMarkdown`), and the
@@ -71,10 +72,6 @@
   "And", which isn't JSON and dropped the turn to the keyword classifier. Prompt hardened for
   one-word/gibberish inputs, and the anti-repeat guidance is firmer (no verbatim/same-opening
   repeats). `tests/speech-punctuation.test.ts`, `tests/classifier-parse.test.ts`.
-- **First-answer trim.** The first answer usually carries the full verbatim ISI, so it's the
-  longest/slowest to speak. `buildApprovedResponse` now drops the spoken "look at the … slide"
-  cue on the ISI turn (the slide still shows on screen; the ISI is untouched), shaving a few
-  seconds off that heaviest turn. Later ISI-free turns keep the cue. `tests/content.test.ts`.
 - **Verified:** `tsc` clean; unit suite green (setup-agent 12, transcript 6); Playwright
   E2E green incl. the scripted essentials/optional/skip flow, a mid-script free-form
   instruction, and rebrand-by-chat (now via a confirm chip); `studio-build` visual baseline

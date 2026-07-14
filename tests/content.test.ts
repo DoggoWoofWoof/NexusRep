@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { asId, type ApprovedAnswerId } from "@lib/ids";
-import { ContentService, buildApprovedResponse, type ApprovedAnswer, type MlrMetadata } from "@modules/content";
+import { ContentService, type ApprovedAnswer, type MlrMetadata } from "@modules/content";
 import { isErr, isOk } from "@lib/result";
 
 function mlr(over: Partial<MlrMetadata> = {}): MlrMetadata {
@@ -63,19 +63,5 @@ describe("source validation", () => {
     const svc = new ContentService();
     const r = await svc.validateAnswer(asId("missing"));
     expect(isErr(r) && r.error).toBe("not_found");
-  });
-});
-
-describe("buildApprovedResponse — slide-cue toggle (first-answer trim)", () => {
-  it("includes the spoken slide cue by default", () => {
-    const r = buildApprovedResponse([answer("a1")], { includeIsi: false, slideTitle: "Mechanism of action", seed: "s" });
-    expect(r?.text).toMatch(/slide/i);
-    expect(r?.text).toContain("Approved dosing text.");
-  });
-
-  it("omits the slide cue when slideCue is false (the ISI turn) but keeps the answer body", () => {
-    const r = buildApprovedResponse([answer("a1")], { includeIsi: false, slideTitle: "Mechanism of action", seed: "s", slideCue: false });
-    expect(r?.text).not.toMatch(/slide/i);
-    expect(r?.text).toContain("Approved dosing text.");
   });
 });
