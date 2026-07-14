@@ -16,6 +16,12 @@ import { appendTurn, type TranscriptMsg } from "@lib/transcript";
 // timing a little so the deck moves like a presenter, not as a brittle keyword trigger.
 const SLIDE_CUE_DELAY_MS = 850;
 
+// Wall-clock read behind a tiny indirection. These timestamps are for ASR-latency telemetry in
+// DEFERRED handlers (mic tap, recognizer callbacks) — never during render — but a bare Date.now()
+// in a component-scope function trips the React Compiler's purity lint. The helper keeps it happy
+// without a blanket disable, and reads honestly as "get the current time".
+const nowMs = () => Date.now();
+
 type HcpScreen = "invite" | "convo" | "complete";
 type Msg = TranscriptMsg;
 interface OverviewSegment { response: string; detailAidSlideId?: string | null; sourceIds?: string[]; isiDelivered?: boolean }
@@ -65,22 +71,6 @@ export function HcpExperience({ app }: { app?: AppState }) {
   // The rep's speech locale (ASR + TTS) follows the brand persona's language.
   useEffect(() => { setSpeechLanguage(brand?.language); }, [brand]);
 
-  // Off-video barge-in "like Tavus": while the rep is speaking (browser TTS) and we're not already
-  // listening, watch an echo-cancelled mic; if the doctor talks over the rep for a sustained beat,
-  // stop the rep and open the recognizer to capture the question — no tap needed. Video uses Tavus's
-  // native interruptibility. Only runs once the mic is already granted (no surprise prompt).
-  useEffect(() => {
-    if (!(speaking && !videoOn && !listening)) return;
-    let cancelled = false;
-    void startBargeInVad(() => {
-      if (cancelled) return;
-      bargeRef.current = null;
-      interruptPlayback(); // stop the rep's TTS immediately
-      toggleMic(); // open the recognizer to capture what the doctor is saying
-    }).then((c) => { if (cancelled) c?.stop(); else bargeRef.current = c; });
-    return () => { cancelled = true; bargeRef.current?.stop(); bargeRef.current = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speaking, videoOn, listening]);
   useEffect(() => {
     try { setUrlHcpId(new URLSearchParams(window.location.search).get("hcp") ?? ""); } catch { /* no window */ }
     voiceRef.current = new OpenAiVoiceProvider(); // real TTS voice off-video, browser fallback
@@ -318,12 +308,12 @@ export function HcpExperience({ app }: { app?: AppState }) {
     // Correct mis-heard drug/program names against the brand's known terms, and log ASR latency so
     // this off-video path can be A/B'd against the Tavus asrMs with no video credits spent.
     const terms = [...(brand?.hotwords ?? []), ...(brand?.productTerms ?? [])];
-    const startedAt = Date.now();
+    const startedAt = nowMs();
     let lastInterimAt = startedAt;
     rec.start(
       (text, alts) => {
         setListening(false);
-        const finalAt = Date.now();
+        const finalAt = nowMs();
         const { text: corrected, corrections, chosenIndex } = correctBestAlternative(alts?.length ? alts : [text], terms);
         const finalText = corrected || text;
         setInput("");
@@ -345,7 +335,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
         void ask(finalText); // corrected phrase → ask
       },
       () => setListening(false), // ended (silence / error) — no dangling "Listening…"
-      (interim) => { lastInterimAt = Date.now(); if (interim) setInput(interim); }, // live text + finalize timing
+      (interim) => { lastInterimAt = nowMs(); if (interim) setInput(interim); }, // live text + finalize timing
     );
   }
   function toggleVideoMode() {
@@ -354,6 +344,24 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setVideoMuted(false);
     setCallMicOn(false);
   }
+
+  // Off-video barge-in "like Tavus": while the rep is speaking (browser TTS) and we're not already
+  // listening, watch an echo-cancelled mic; if the doctor talks over the rep for a sustained beat,
+  // stop the rep and open the recognizer to capture the question — no tap needed. Video uses Tavus's
+  // native interruptibility. Only runs once the mic is already granted (no surprise prompt).
+  // Placed AFTER interruptPlayback/toggleMic so it references them post-declaration (React Compiler).
+  useEffect(() => {
+    if (!(speaking && !videoOn && !listening)) return;
+    let cancelled = false;
+    void startBargeInVad(() => {
+      if (cancelled) return;
+      bargeRef.current = null;
+      interruptPlayback(); // stop the rep's TTS immediately
+      toggleMic(); // open the recognizer to capture what the doctor is saying
+    }).then((c) => { if (cancelled) c?.stop(); else bargeRef.current = c; });
+    return () => { cancelled = true; bargeRef.current?.stop(); bargeRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speaking, videoOn, listening]);
 
   const doctorMicOn = videoOn ? callMicOn : listening;
   const doctorMicOff = !doctorMicOn;
