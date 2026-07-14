@@ -30,7 +30,7 @@ export interface BuiltResponse {
  * rep shares publicly-available information.
  */
 const OPENERS = [
-  "Sure — let me walk you through this.",
+  "Sure, let me walk you through this.",
   "Happy to walk you through this.",
   "Good question.",
   "Of course.",
@@ -98,13 +98,17 @@ export function slideReference(opts: { seed: string; slideTitle?: string; relate
 
 export function buildApprovedResponse(
   answers: ApprovedAnswer[],
-  opts: { isi?: SafetyStatement; includeIsi: boolean; slideTitle?: string; relatedTitle?: string; seed?: string },
+  opts: { isi?: SafetyStatement; includeIsi: boolean; slideTitle?: string; relatedTitle?: string; seed?: string; slideCue?: boolean },
 ): BuiltResponse | null {
   const top = answers[0];
   if (!top) return null; // caller fails safe to a fallback
 
   const seed = opts.seed ?? String(top.id);
-  const ref = slideReference({ seed, slideTitle: opts.slideTitle, relatedTitle: opts.relatedTitle });
+  // Skip the spoken "look at the … slide" cue when the caller asks (slideCue: false) — e.g. on the
+  // turn that carries the verbatim ISI, where the reply is already long and the slide is shown on
+  // screen regardless. Trims seconds of speech off that first, heaviest answer without dropping the
+  // slide or touching the ISI.
+  const ref = opts.slideCue === false ? "" : slideReference({ seed, slideTitle: opts.slideTitle, relatedTitle: opts.relatedTitle });
   let text = `${openerFor(seed)} ${top.text}${ref}`;
   let isiAppended = false;
   if (opts.includeIsi && opts.isi) {

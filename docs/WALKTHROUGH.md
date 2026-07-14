@@ -71,6 +71,10 @@
   "And", which isn't JSON and dropped the turn to the keyword classifier. Prompt hardened for
   one-word/gibberish inputs, and the anti-repeat guidance is firmer (no verbatim/same-opening
   repeats). `tests/speech-punctuation.test.ts`, `tests/classifier-parse.test.ts`.
+- **First-answer trim.** The first answer usually carries the full verbatim ISI, so it's the
+  longest/slowest to speak. `buildApprovedResponse` now drops the spoken "look at the … slide"
+  cue on the ISI turn (the slide still shows on screen; the ISI is untouched), shaving a few
+  seconds off that heaviest turn. Later ISI-free turns keep the cue. `tests/content.test.ts`.
 - **Verified:** `tsc` clean; unit suite green (setup-agent 12, transcript 6); Playwright
   E2E green incl. the scripted essentials/optional/skip flow, a mid-script free-form
   instruction, and rebrand-by-chat (now via a confirm chip); `studio-build` visual baseline
