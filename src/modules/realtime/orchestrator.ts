@@ -109,12 +109,19 @@ function sanitizeApprovedBody(body: string, opts: { isiText?: string; disclosure
   return trimmed || stripSpeechMarkdown(body);
 }
 
-function stripSpeechMarkdown(text: string): string {
+export function stripSpeechMarkdown(text: string): string {
   return text
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/\*([^*\n]+)\*/g, "$1")
     .replace(/__([^_]+)__/g, "$1")
-    .replace(/_([^_\n]+)_/g, "$1");
+    .replace(/_([^_\n]+)_/g, "$1")
+    // Dashes used as a pause read badly aloud (the TTS makes a hard stop on "Sure — let me…").
+    // Turn em/en dashes, " -- ", and spaced hyphens into a comma pause. In-word hyphens
+    // ("Fast-Track", "on-label", "decile 2-4") have no surrounding spaces, so they're left intact.
+    .replace(/\s*[—–]\s*/g, ", ")
+    .replace(/\s+--+\s+/g, ", ")
+    .replace(/\s+-\s+/g, ", ")
+    .replace(/\s+([,.;:!?])/g, "$1"); // tidy any stray space before punctuation
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -430,7 +437,7 @@ For anything beyond this, I can connect you with our medical information team.`;
       }
       followUpType = "medical_information";
     } else if (r === "human_handoff") {
-      responseText = "Of course — I can arrange for a representative to contact you.";
+      responseText = "Of course, I can arrange for a representative to contact you.";
       followUpType = "human_rep";
     } else {
       responseText = SAFE_FALLBACK;

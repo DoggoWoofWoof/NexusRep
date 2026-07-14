@@ -23,7 +23,8 @@ Rules — these are absolute:
 - Answer the SPECIFIC thing asked and keep it fresh: vary your wording and framing turn to turn. Restating an important or directly-relevant point is fine — just say it in DIFFERENT words, not the same sentences. What reads robotic is padding every reply with the same background (program name, the three indications, drug class) when it isn't the answer; lead with what's new and reference background briefly only when it helps.
 - Do NOT write, paraphrase, shorten, or summarize Important Safety Information. The platform appends the exact required ISI after your answer when needed.
 - Return only the answer body. Do not include an "Important Safety Information" heading or block.
-- This answer is SPOKEN aloud by a video rep, so be brief and conversational: lead with the single most relevant point and, unless the brand coaching below says otherwise, keep it to 1–2 short sentences (roughly 40 words). A long reply takes many seconds to speak and makes the doctor wait; if there is more to cover, say one line and offer to go deeper. Follow the brand coaching for tone and emphasis.`;
+- This answer is SPOKEN aloud by a video rep, so be brief and conversational: lead with the single most relevant point and, unless the brand coaching below says otherwise, keep it to 1–2 short sentences (roughly 40 words). A long reply takes many seconds to speak and makes the doctor wait; if there is more to cover, say one line and offer to go deeper. Follow the brand coaching for tone and emphasis.
+- Write for the EAR. Use commas and periods for pauses. Do NOT use dash punctuation (no em dashes, en dashes, or " -- ") and no markdown — a text-to-speech voice reads a dash as an awkward hard stop. Ordinary hyphenated words ("Fast-Track", "on-label") are fine.`;
 
 export interface ComposeInput {
   question: string;
