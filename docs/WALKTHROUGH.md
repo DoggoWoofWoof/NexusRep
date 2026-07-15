@@ -10,7 +10,27 @@
 
 ## 1. Current build status
 
-### Latest: Audit — slide ownership, audio-start anchoring, ASR correction everywhere (2026-07-15)
+### Latest: Ask about a trial → that trial's slide + context; scope the deck to the skeleton (2026-07-15)
+
+- **Trial specificity.** "What is the LIBREXIA stroke?" talked stroke but showed the PROGRAM slide
+  (stroke only "offered"), and "Yeah, sure." dropped stroke for a generic program answer. Two roots:
+  (1) `canonicalizeProductNames` was mangling the query — the trial names in the classifier lexicon
+  made the fuzzy spelling-fixer snap "the LIBREXIA" → "LIBREXIA AF" (inventing a trial), skewing
+  retrieval. Fixed: canonicalization targets exclude a multi-word term whose first word is itself a
+  standalone term, and it never EXPANDS a window's word count (fix spelling / contract, never invent).
+  (2) the slide followed `result.answers[0]`, but retrieval ranked the general program answer first.
+  Added a trial-specificity re-rank: name exactly one trial (stroke / AF / ACS) and its already-
+  retrieved answer leads — so the stroke question shows the stroke slide, and its sourceId anchors the
+  next follow-up (context carries stroke). `classifier.ts`, `orchestrator.ts`,
+  `tests/routing-robustness.test.ts`.
+- **Deck scoped to the skeleton.** The deck viewer pooled every approved ppt slide, so two uploaded
+  decks would mix. The skeleton asset now persists on the plan (`PresentationPlan.deckAssetId`);
+  `PresentationSkill.deck()` takes an assetId, the plan route sets/reads it on reset, and `/api/brand`
+  scopes the doctor-facing deck to the same asset. Unset (single-deck default) → the whole deck, so
+  the Milvexian demo is unchanged. `presentation.ts`, `plan/route.ts`, `brand/route.ts`,
+  `tests/presentation.test.ts`. Full suite **401 pass**; build clean.
+
+### Audit — slide ownership, audio-start anchoring, ASR correction everywhere (2026-07-15)
 
 Audit prompted by "who moves the slides — did we give it to Tavus?": **our own React** renders the
 deck (`SlideView` + `deckFocus`/`followSlideId`); Tavus only supplies video/voice/STT and emits
