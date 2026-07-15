@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import { getContainer } from "@lib/container";
 import { resolveSessionAndHcp } from "@lib/resolve-session";
 import { complianceGate, isiAlreadyDelivered, type PolicyRoute, type RiskClassification, classify, route as policyRouteFor } from "@modules/compliance";
-import { mergePlan, PresentationSkill } from "@modules/content";
+import { mergePlan, PresentationSkill, defaultComposer } from "@modules/content";
 import { presentationGuidance } from "@modules/rules";
 
 export const dynamic = "force-dynamic";
@@ -82,7 +82,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   const snap = await c.studio.get(c.demo.aiRepId);
   const rules = snap?.rules ?? [];
   const guidance = presentationGuidance(rules, { hcpId });
-  const presentation = new PresentationSkill(c.content);
+  const presentation = new PresentationSkill(c.content, defaultComposer());
   const ctx = { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market };
   // Doctor delivery follows the SAME effective plan the Brand-pitch card shows — never a
   // silently reordered walk (what the brand user rehearsed is what the doctor hears).

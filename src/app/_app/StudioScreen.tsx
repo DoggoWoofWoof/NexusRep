@@ -1485,6 +1485,10 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
     const a = await runPreview({ kind, q, current: "" }, []);
     setExchanges((xs) => [...xs, { q, kind, answers: [a], coachings: [], scope: "persona", accepted: false }]);
     setFollowSlideId((a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId) ?? null);
+    // Speak the answer, don't just print it — same as a coached re-answer (reAnswer). The trainer
+    // needs to HEAR cadence/tone on the first pass too, not only after coaching. Skip the error
+    // fallback so we never read the "service unreachable" line aloud.
+    if (a.text && a.route !== "error") void speakCoached(a.text, voiceStyle);
     setAsking(false);
   };
 

@@ -139,3 +139,24 @@ export function getEmbeddingMode(): "neural" | "lexical" | "unknown" {
   if (mode === "neural") return "neural";
   return autoMode;
 }
+
+/**
+ * Pre-load the neural embedding model at server startup so a live call's FIRST turn never pays
+ * the cold-load cost — the dynamic import of transformers.js, the ONNX pipeline init, and (on a
+ * fresh host with no disk cache) the one-time model download. That whole cost otherwise lands on
+ * the first doctor question, when Tavus is waiting on our reply. Called from src/instrumentation.ts
+ * (Next's `register()` server-boot hook). Idempotent: getPipe() caches the load promise, so this and
+ * a concurrent first request share ONE load. Best-effort — never throws; on failure the auto
+ * provider simply falls back to lexical on first use, exactly as before.
+ */
+export async function warmupEmbeddings(): Promise<void> {
+  if (process.env.VITEST || process.env.NODE_ENV === "test") return;
+  if (process.env.NEXUSREP_EMBEDDINGS === "lexical") return; // lexical needs no model
+  const started = Date.now();
+  try {
+    await getEmbeddingProvider().embed(["warmup"]);
+    console.info(`[embeddings] warmup complete in ${Date.now() - started}ms (mode: ${getEmbeddingMode()})`);
+  } catch (e) {
+    console.warn("[embeddings] warmup failed (first use will lazy-load / fall back):", e instanceof Error ? e.message : e);
+  }
+}

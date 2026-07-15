@@ -8,7 +8,7 @@ export { ingestSource, parseBlocks, extractSourceText, type RawSource, type Inge
 export { parsePptx, isPptx } from "./parsers/pptx";
 export { parsePdf, isPdf } from "./parsers/pdf";
 export { buildApprovedResponse, slideReference, type BuiltResponse } from "./responseBuilder";
-export { getComposer, resolveComposer, firstAvailableComposer, composeGreeting, compactCoaching, llmComplete, type GroundedComposer, type ComposeInput } from "./composer";
+export { getComposer, resolveComposer, firstAvailableComposer, defaultComposer, composeGreeting, compactCoaching, llmComplete, type GroundedComposer, type ComposeInput } from "./composer";
 export {
   mergePlan,
   PresentationSkill,

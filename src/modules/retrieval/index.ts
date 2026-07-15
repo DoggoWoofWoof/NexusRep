@@ -12,6 +12,7 @@
 import type { ApprovedAnswerId } from "@lib/ids";
 import { asId } from "@lib/ids";
 import { isOk } from "@lib/result";
+import { getEmbeddingMode } from "@lib/embeddings";
 import {
   ContentService,
   type ApprovedAnswer,
@@ -59,7 +60,13 @@ export class RetrievalService {
       else rejected.push({ refId: candidate.refId, reason: validated.error });
     }
 
-    return { answers: rerankApprovedAnswers(req.text, answers), rejected };
+    // Ordering: with NEURAL embeddings active, the vector cosine IS the relevance signal — trust it
+    // and DON'T let the keyword re-rank override it (that was hijacking specific questions, e.g.
+    // "the atrial fibrillation trial" → the generic program block, because a keyword topic-bonus
+    // outweighed the semantically-correct AF block). The keyword re-rank stays only for the
+    // deterministic lexical fallback (offline / CI / no model), where there's no semantic score.
+    const ordered = getEmbeddingMode() === "neural" ? answers : rerankApprovedAnswers(req.text, answers);
+    return { answers: ordered, rejected };
   }
 }
 

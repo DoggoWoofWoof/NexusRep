@@ -211,7 +211,10 @@ describe("build → converse → review → coach (end to end)", () => {
       const { output } = await c.conversation.turn(turnCtx(c, question, sid));
       expect(output.route, question).toBe("approved_answer");
       expect(output.detailAidSlideId, question).toBe("slide_program");
-      expect(output.sourceIds[0], question).toBe("ans_program");
+      // The KB now has several program-slide blocks (overview, scale, the three trials); any of
+      // them is a correct anchor for a LIBREXIA question — the intent is "program slide, not
+      // mechanism", which the slide assertion above already pins. Just confirm it's program-family.
+      expect(output.sourceIds[0], question).toMatch(/^ans_(program|librexia|indications)/);
       expect(output.responseText.toLowerCase(), question).toContain("phase 3");
     }
   });

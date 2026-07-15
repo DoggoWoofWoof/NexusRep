@@ -7,9 +7,11 @@
  */
 
 import { isOk } from "@lib/result";
+import { validateGrounding } from "@modules/compliance";
 import type { ApprovedAnswerId, DetailAidSlideId } from "@lib/ids";
 import type { ApprovedAnswer, DetailAidSlide } from "./types";
 import type { ContentService, SourceValidationContext } from "./service";
+import type { GroundedComposer } from "./composer";
 
 export type PresentationAction = "start" | "next" | "previous" | "jump";
 
@@ -93,6 +95,9 @@ export interface PresentationDeckSlide {
 interface DeckItem {
   answer: ApprovedAnswer;
   slide: DetailAidSlide | null;
+  /** Other approved answers mapped to the SAME slide — woven in by the composer to EXPAND the slide
+   *  beyond its one primary block (dynamic PPT). Empty when only one answer maps to the slide. */
+  related: ApprovedAnswer[];
 }
 type PlannedDeckItem = { item: DeckItem; step?: PresentationPlanStep };
 
@@ -237,7 +242,31 @@ function resolvePlannedItems(items: DeckItem[], plan: PresentationPlan | undefin
 }
 
 export class PresentationSkill {
-  constructor(private readonly content: ContentService) {}
+  constructor(private readonly content: ContentService, private readonly composer: GroundedComposer | null = null) {}
+
+  /** Turn a slide into spoken copy. With a composer available AND more than one approved block on
+   *  the slide, the LLM weaves those blocks into a brief, grounded segment — this is what makes the
+   *  PPT walkthrough DYNAMIC (expanded from the KB) rather than a verbatim recital. A single-block
+   *  slide (e.g. the verbatim ISI, the contact slide) is always spoken as-is. Grounding-validated:
+   *  any drift falls back to the verbatim primary block, so composition can never invent content. */
+  private async composeStep(item: DeckItem, guidance: string[], index: number): Promise<{ text: string; sourceIds: ApprovedAnswerId[] }> {
+    const blocks = [item.answer, ...item.related];
+    const fallback = { text: item.answer.text, sourceIds: [item.answer.id] };
+    if (!this.composer?.available() || blocks.length < 2) return fallback;
+    const slideName = item.slide?.title ?? item.answer.topic;
+    const question = `Give a brief, natural spoken segment for the "${slideName}" part of a slide-by-slide overview. Weave the approved points below into 2 to 4 sentences that cover the key facts — don't just repeat one point, and don't list them mechanically.`;
+    const g = [...guidance, "This is one section of a slide walkthrough: keep it concise and conversational, and do not restate the investigational disclosure."];
+    try {
+      const composed = await this.composer.compose({ question, blocks, guidance: g, alreadyDisclosed: index > 0 });
+      const text = composed.text.trim();
+      if (text && validateGrounding({ answer: text, blocks: blocks.map((b) => b.text) }).grounded) {
+        return { text, sourceIds: blocks.map((b) => b.id) };
+      }
+    } catch {
+      /* fall back to the verbatim primary block below */
+    }
+    return fallback;
+  }
 
   async deck(ctx: SourceValidationContext = {}): Promise<PresentationDeckSlide[]> {
     return (await this.deckItems(ctx)).map((item, index) => ({
@@ -281,14 +310,15 @@ export class PresentationSkill {
         .sort((a, b) => b.s - a.s || a.i - b.i)[0]?.i ?? 0;
     }
 
-    return this.buildStep(items, index, req.action);
+    return this.buildStep(items, index, req.action, req.guidance ?? []);
   }
 
   async overview(req: PresentationOverviewRequest = {}): Promise<PresentationStep[]> {
     const deck = await this.deckItems(req.context ?? {});
     const planned: PlannedDeckItem[] = req.plan?.steps?.length ? resolvePlannedItems(deck, req.plan) : guidedItems(deck, req.guidance).map((item) => ({ item }));
     const total = Math.max(0, Math.min(req.maxSlides ?? planned.length, planned.length));
-    return planned.slice(0, total).map(({ item, step }, index) => this.buildPlannedStep(planned, item, index, index === 0 ? "start" : "next", step));
+    const slice = planned.slice(0, total);
+    return Promise.all(slice.map(({ item, step }, index) => this.buildPlannedStep(slice, item, index, index === 0 ? "start" : "next", step, req.guidance ?? [])));
   }
 
   private async deckItems(ctx: SourceValidationContext, assetId?: string): Promise<DeckItem[]> {
@@ -296,47 +326,54 @@ export class PresentationSkill {
     const answers = assetId ? all.filter((a) => String(a.contentAssetId) === assetId) : all;
     const slides = await this.content.listSlides();
     const byId = new Map(slides.map((s) => [s.id, s]));
-    const valid: DeckItem[] = [];
 
+    // ONE deck item per SLIDE. The first validated answer for a slide anchors it (primary); any
+    // further answers mapped to that same slide become `related` blocks the composer weaves in to
+    // expand the slide. Insertion order = seed order, so the original seeded block is the primary
+    // and the added detail blocks enrich it — the deck stays the real N slides, not one-per-answer.
+    const bySlide = new Map<string, DeckItem>();
     for (const answer of answers) {
+      if (!answer.detailAidSlideId) continue;
       const checked = await this.content.validateAnswer(answer.id, ctx);
-      if (isOk(checked) && answer.detailAidSlideId) {
-        valid.push({ answer: checked.value, slide: byId.get(answer.detailAidSlideId) ?? null });
-      }
+      if (!isOk(checked)) continue;
+      const key = String(answer.detailAidSlideId);
+      const existing = bySlide.get(key);
+      if (existing) existing.related.push(checked.value);
+      else bySlide.set(key, { answer: checked.value, slide: byId.get(answer.detailAidSlideId) ?? null, related: [] });
     }
 
-    return valid.sort((a, b) => order(a) - order(b) || String(a.answer.id).localeCompare(String(b.answer.id)));
+    return [...bySlide.values()].sort((a, b) => order(a) - order(b) || String(a.answer.id).localeCompare(String(b.answer.id)));
   }
 
-  private buildStep(items: DeckItem[], index: number, action: PresentationAction, overview = false): PresentationStep {
+  private async buildStep(items: DeckItem[], index: number, action: PresentationAction, guidance: string[] = [], overview = false): Promise<PresentationStep> {
     const item = items[index]!;
     const title = item.slide?.title ?? item.slide?.label;
     const intro = overview ? overviewLead(index, items.length, title, String(item.answer.id)) : lead(action, title);
-    // The presentation intro is already the human slide cue ("Let's move to ...").
-    // Do not add the generic response-builder slide sentence here, or a walkthrough
-    // repeats itself on every slide.
-    const text = `${intro} ${item.answer.text}`;
+    // The intro is already the human slide cue ("Let's move to ..."). The body is composed from the
+    // slide's approved blocks (or verbatim primary when there's nothing to weave / no composer).
+    const { text: body, sourceIds } = await this.composeStep(item, guidance, index);
     return {
       action,
       index,
       total: items.length,
-      text,
-      sourceIds: [item.answer.id],
+      text: `${intro} ${body}`,
+      sourceIds,
       detailAidSlideId: item.answer.detailAidSlideId,
       slideTitle: title,
     };
   }
 
-  private buildPlannedStep(planned: PlannedDeckItem[], item: DeckItem, index: number, action: PresentationAction, step?: PresentationPlanStep): PresentationStep {
+  private async buildPlannedStep(planned: PlannedDeckItem[], item: DeckItem, index: number, action: PresentationAction, step?: PresentationPlanStep, guidance: string[] = []): Promise<PresentationStep> {
     const title = item.slide?.title ?? item.slide?.label;
     const intro = step ? planLead(index, planned.length, title, step) : overviewLead(index, planned.length, title, String(item.answer.id));
-    const text = `${intro} ${item.answer.text}`;
+    const stepGuidance = step?.instruction ? [...guidance, step.instruction] : guidance;
+    const { text: body, sourceIds } = await this.composeStep(item, stepGuidance, index);
     return {
       action,
       index,
       total: planned.length,
-      text,
-      sourceIds: [item.answer.id],
+      text: `${intro} ${body}`,
+      sourceIds,
       detailAidSlideId: item.answer.detailAidSlideId,
       slideTitle: title,
       ...(step ? { stepId: step.id, stepTitle: step.title } : {}),

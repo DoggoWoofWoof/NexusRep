@@ -257,3 +257,15 @@ export function firstAvailableComposer(): GroundedComposer | null {
   for (const c of COMPOSERS) if (c.available()) return c;
   return null;
 }
+
+/**
+ * The composer the runtime should use by default: the classifier provider's own composer when it
+ * has one, else the first with a key — UNLESS compose mode is forced to "deterministic". This is
+ * the single source of truth so the live turn path AND the presentation walkthrough make the same
+ * choice (both LLM-compose from the KB when a key is present, both verbatim when not). Returns null
+ * → deterministic verbatim. env.composeMode already auto-selects "llm" when a provider key exists.
+ */
+export function defaultComposer(): GroundedComposer | null {
+  if (env.composeMode === "deterministic") return null;
+  return resolveComposer(env.classifierProvider) ?? firstAvailableComposer();
+}

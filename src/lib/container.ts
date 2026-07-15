@@ -13,7 +13,7 @@ import { InMemoryVectorIndex } from "@lib/vector-index";
 import { getRepositoryFactory, PgRepositoryFactory } from "@lib/db";
 import { MemoryRepositoryFactory, type RepositoryFactory } from "@lib/repository";
 import { appAuthEnabled, usernameFromCookie, userData, SESSION_COOKIE } from "@lib/auth-session";
-import { ContentService, PresentationSkill, firstAvailableComposer, resolveComposer, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
+import { ContentService, PresentationSkill, defaultComposer, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
 import { configureClassifierLexicon, resolveClassifier } from "@modules/compliance";
 import { env } from "@lib/env";
 import { configureRetrievalLexicon, RetrievalService } from "@modules/retrieval";
@@ -115,7 +115,11 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
   const seedHistory = opts?.seedHistory ?? env.seedHistory;
   const index = new InMemoryVectorIndex();
   const content = new ContentService(repos);
-  const presentation = new PresentationSkill(content);
+  // One composer choice shared by the live turn path AND the slide walkthrough, so both
+  // LLM-compose from the KB when a provider key is present (env.composeMode auto-selects "llm"),
+  // and both speak verbatim when not. null → deterministic.
+  const composer = defaultComposer();
+  const presentation = new PresentationSkill(content, composer);
   const retrieval = new RetrievalService(getRetrievalProvider(index), content);
   const audit = new AuditService(repos);
   const studio = new StudioService(repos);
@@ -131,14 +135,9 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
     return undefined;
   });
   const crm = new CrmOutbox(getCrmAdapter(), repos);
-  // Default answer composition is deterministic (verbatim approved blocks) — the
-  // compliance-safe default. Set NEXUSREP_COMPOSE=llm to let a grounded composer
-  // rephrase (still grounding-validated + gated).
-  // "llm" compose mode: use the classifier provider's composer when it has one, else the
-  // first composer with a key. (Previously classifier=keyword silently stayed deterministic
-  // even with ANTHROPIC/OPENAI keys configured.)
-  const defaultComposer = env.composeMode === "llm" ? resolveComposer(env.classifierProvider) ?? firstAvailableComposer() : null;
-  const orchestrator = new TurnOrchestrator(content, retrieval, audit, followups, resolveClassifier(), defaultComposer);
+  // Answer composition: `composer` (resolved above) is the grounded LLM composer when a provider
+  // key is present, else null → the deterministic verbatim builder. Same choice as the slide deck.
+  const orchestrator = new TurnOrchestrator(content, retrieval, audit, followups, resolveClassifier(), composer);
   const sessions = new SessionService(repos);
   // Load the targeting cohort from the DocNexus claims backend when configured;
   // otherwise the modeled cardiology cohort. Never throws — falls back safely.
@@ -249,7 +248,10 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
 
   for (const [i, s] of brand.deck.entries()) {
     const slideId = asId<"detail_aid_slide_id">(s.id) as DetailAidSlideId;
-    if (await content.getSlide(slideId)) continue;
+    const existingSlide = await content.getSlide(slideId);
+    // Add if absent; also keep code-authored slide fields in sync on a persistent store (a new
+    // slide, a retitled/re-ordered one) so a richer deck actually shows instead of a stale one.
+    if (existingSlide && existingSlide.title === s.title && existingSlide.label === s.label && existingSlide.position === i + 1) continue;
     await content.addSlide({
       id: slideId,
       contentAssetId: assetId,
@@ -265,19 +267,22 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
   // clinical specifics route to Medical Information via the investigational guardrail.
   for (const a of brand.approvedAnswers) {
     const answerId = asId<"approved_answer_id">(a.id) as ApprovedAnswer["id"];
+    const slideId = asId<"detail_aid_slide_id">(a.detailAidSlideId) as DetailAidSlideId;
     const existing = await content.getAnswer(answerId);
     if (!existing) {
-      const slideId = asId<"detail_aid_slide_id">(a.detailAidSlideId) as DetailAidSlideId;
       await content.addAnswer({
-        id: answerId,
-        tenantId,
-        brandId,
-        campaignId,
-        contentAssetId: assetId,
-        topic: a.topic,
-        text: a.text,
-        detailAidSlideId: slideId,
-        mlr: activeMlr(a.id),
+        id: answerId, tenantId, brandId, campaignId, contentAssetId: assetId,
+        topic: a.topic, text: a.text, detailAidSlideId: slideId, mlr: activeMlr(a.id),
+      });
+    } else if (existing.detailAidSlideId !== slideId || existing.text !== a.text || existing.topic !== a.topic) {
+      // Seed content is CODE-authored, so the code is its source of truth: keep the durable store in
+      // sync when the code changes (a remapped slide, edited wording) even on a persistent DB where
+      // the record already exists — otherwise seed edits silently never take effect. PRESERVE the
+      // existing MLR record so this can never REACTIVATE content a reviewer retired; it only syncs
+      // the authored fields of an answer that is already present.
+      await content.addAnswer({
+        id: answerId, tenantId, brandId, campaignId, contentAssetId: assetId,
+        topic: a.topic, text: a.text, detailAidSlideId: slideId, mlr: existing.mlr,
       });
     }
   }

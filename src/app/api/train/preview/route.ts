@@ -99,7 +99,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   if (body.kind === "overview" || isOverviewPrompt(text, c.brand.lexicon)) {
     const savedDeckGuidance = presentationGuidance(rules, { hcpId: c.demo.hcpId, rehearsal: true });
     const guidance = Array.from(new Set([...savedDeckGuidance, ...coaching, ...(tone ? [tone] : [])].map((g) => g.trim()).filter(Boolean)));
-    const presentation = new PresentationSkill(c.content);
+    const presentation = new PresentationSkill(c.content, firstAvailableComposer());
     const ctx = { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market };
     // ALWAYS speak from the effective plan (saved ?? DocNexus default) — the same plan the
     // Brand-pitch card displays. Rehearsal must never follow a different order than the card.

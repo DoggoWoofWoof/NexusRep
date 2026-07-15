@@ -51,6 +51,9 @@ describe("NexusRep first-party presentation skill", () => {
       "slide_title",
       "slide_moa",
       "slide_program",
+      "slide_af",
+      "slide_acs",
+      "slide_stroke",
       "slide_status",
       "slide_isi",
       "slide_contact",
@@ -59,6 +62,9 @@ describe("NexusRep first-party presentation skill", () => {
       "ans_title",
       "ans_moa",
       "ans_program",
+      "ans_librexia_af",
+      "ans_librexia_acs",
+      "ans_librexia_stroke",
       "ans_status",
       "ans_isi",
       "ans_contact",
@@ -66,9 +72,9 @@ describe("NexusRep first-party presentation skill", () => {
     expect(steps[0]?.text).toMatch(/high-level|stage|story/i);
     expect(steps.map((s) => s.text).join("\n")).not.toContain("the The");
     expect(steps[2]?.text).toContain("LIBREXIA");
-    expect(steps[3]?.text).toContain("not FDA approved");
-    expect(steps[4]?.text).toContain("Important Safety Information");
-    expect(steps[5]?.text).toContain("human representative");
+    expect(steps[6]?.text).toContain("not FDA approved");
+    expect(steps[7]?.text).toContain("Important Safety Information");
+    expect(steps[8]?.text).toContain("human representative");
   });
 
   it("uses presentation coaching to lead with a requested approved slide", async () => {
