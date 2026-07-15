@@ -95,7 +95,9 @@ describe("ISI cadence in a doctor chat", () => {
       name: "bad-test-composer",
       available: () => true,
       compose: async ({ blocks }) => ({
-        text: `I'm an AI representative, and I want to note that ${blocks[0]!.text}`,
+        // Keeps the "AI representative" lead-in (what this test strips) AND cues the slide, like a
+        // real composed answer — so the deck switch still applies (switch is gated on a spoken cue).
+        text: `I'm an AI representative, and I want to note that ${blocks[0]!.text} Take a look at the slide on your screen.`,
         latencyMs: 1,
       }),
     };

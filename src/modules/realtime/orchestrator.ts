@@ -79,6 +79,18 @@ function isStatusQuestion(question: string): boolean {
   return /\b(fda|approved|approval|regulatory|status|investigational|development|fast\s+track)\b/i.test(question);
 }
 
+/**
+ * Did the composed answer actually CUE the detail-aid slide — name it or point at the screen? Only
+ * then do we switch the deck. A silent switch draws no attention (you don't look at a slide nobody
+ * mentioned), so if the rep didn't reference it we stay put. Mentioning the slide IS the rep's
+ * "switch slides" tool call; the client (slideCueDelay) then times the switch to WHEN the cue is
+ * spoken. Both the deterministic builder (slideReference) and the LLM composer (told to name the
+ * slide when one is shown) include this cue, so a real slide answer passes; a cue-less reply doesn't.
+ */
+export function cuesASlide(text: string): boolean {
+  return /\bslides?\b|\bon (your|the) screen\b|take a look|you can (see|look)|pulled up|i'?m showing|shown on\b|laid out on\b|let'?s (move|go|turn) to\b|we'?ll start with\b/i.test(text);
+}
+
 /** Periods inside abbreviations ("U.S.", "e.g.", "Dr.") are NOT sentence boundaries. The
  *  sentence splitter below requires whitespace/end after the terminal punctuation, so a mid-word
  *  dot like the one in "U.S. FDA" would otherwise be skipped as unmatched text — dropping the "U."
@@ -409,7 +421,9 @@ export class TurnOrchestrator {
       }
       responseText = body;
       sourceIds = result.answers.map((a) => a.id);
-      detailAidSlideId = top.detailAidSlideId;
+      // Only switch the deck when the answer actually CUES the slide — otherwise a silent switch
+      // draws no attention. The client times the switch to when the cue is spoken (slideCueDelay).
+      detailAidSlideId = cuesASlide(body) ? top.detailAidSlideId : undefined;
       if (detailAidSlideId) await this.audit.record(ctx.sessionId, "response_output", { detailAid: detailAidSlideId });
     } else if (r === "off_label_refusal") {
       responseText =

@@ -12,6 +12,7 @@
 import { describe, it, expect } from "vitest";
 import { createContainer } from "@lib/container";
 import { isOverviewPrompt } from "@modules/content/overviewPrompt";
+import { cuesASlide } from "@modules/realtime/orchestrator";
 
 type Ctr = Awaited<ReturnType<typeof createContainer>>;
 const ctxFor = (c: Ctr, text: string) => ({
@@ -91,4 +92,31 @@ describe("overview-prompt detection", () => {
   ])("treats %j as a normal question, not an overview", (q) => {
     expect(isOverviewPrompt(q, lex)).toBe(false);
   });
+});
+
+describe("slide switch is gated on a spoken cue (no cue → no switch)", () => {
+  it.each([
+    "You can see this on the mechanism slide I've put up on your screen.",
+    "Take a look at the LIBREXIA program slide.",
+    "I've pulled up the development status slide.",
+    "Let's move to the atrial fibrillation slide.",
+  ])("detects a slide cue in %j", (t) => expect(cuesASlide(t)).toBe(true));
+
+  it.each([
+    "Milvexian is an investigational oral Factor XIa inhibitor being studied as an anticoagulant.",
+    "It is being developed by Johnson & Johnson in collaboration with Bristol Myers Squibb.",
+    "That's a detailed medical question. I can connect you with our medical information team.",
+  ])("finds NO cue (so no switch) in %j", (t) => expect(cuesASlide(t)).toBe(false));
+
+  it("a real approved answer both cues a slide AND carries a detailAidSlideId to switch to", async () => {
+    const c = await createContainer();
+    const { output } = await c.conversation.turn({
+      sessionId: c.demo.sessionId, hcpId: c.demo.hcpId, audience: c.demo.audience,
+      indication: c.demo.indication, market: c.demo.market, investigational: c.demo.investigational,
+      text: "how does milvexian work",
+    });
+    expect(output.route).toBe("approved_answer");
+    expect(cuesASlide(output.responseText)).toBe(true);
+    expect(output.detailAidSlideId).toBeTruthy();
+  }, 60_000);
 });
