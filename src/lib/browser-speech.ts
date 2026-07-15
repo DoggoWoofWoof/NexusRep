@@ -223,10 +223,15 @@ export class OpenAiVoiceProvider implements ClientVoiceProvider {
     const ctrl = new AbortController();
     this.ctrl = ctrl;
     let timedOut = false;
+    // OpenAI TTS generates the whole clip server-side (~1-3s for a real answer, more on a cold
+    // start), and the server route itself waits up to 20s. A tight 1.2s ceiling here aborted almost
+    // every non-cached line and dumped us onto the robotic BROWSER voice — the exact "why is it
+    // using browser audio" bug. Give TTS room to finish; barge-in still cancels instantly via
+    // cancel() (this timer is only the "give up and use the browser voice" backstop).
     const timeout = window.setTimeout(() => {
       timedOut = true;
       try { ctrl.abort(); } catch { /* noop */ }
-    }, 1200);
+    }, 15000);
     try {
       const res = await fetch("/api/voice/speak", {
         method: "POST",

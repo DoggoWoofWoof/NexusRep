@@ -7,7 +7,7 @@ import { streamArena } from "@lib/arena-client";
 import { DEFAULT_RULES, KNOWLEDGE_ASSETS, TRAIN_SEED_KEY, setupTopicsFor, firstSetupGapIndex } from "./data";
 import { isOverviewPrompt } from "./overviewPrompt";
 import { SlideView } from "../_components/SlideView";
-import { VideoAgentStage } from "../_components/VideoAgentStage";
+import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { StudioAgentMode } from "./StudioAgentMode";
 import { OpenAiVoiceProvider, createRecognizer, setSpeechLanguage, toneSpeechOpts, type ClientRecognizer } from "@lib/browser-speech";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
@@ -1029,7 +1029,7 @@ function loadTrainState(brandName?: string): TrainStore {
 // The trainer HEARS a recoached line immediately — same browser voice the doctor
 // view uses, so coaching judges cadence and tone, not just the words on screen.
 let trainerVoice: OpenAiVoiceProvider | null = null;
-async function speakCoached(text: string, style?: string): Promise<void> {
+async function speakCoached(text: string, style?: string, voice?: string): Promise<void> {
   const [body] = splitIsi(text);
   if (!body.trim()) return;
   if (!trainerVoice) {
@@ -1037,7 +1037,9 @@ async function speakCoached(text: string, style?: string): Promise<void> {
     await trainerVoice.warmup();
   }
   trainerVoice.cancel();
-  void trainerVoice.speak(body, { tone: style, ...toneSpeechOpts(style) }); // real TTS voice + tone (browser fallback)
+  // OpenAI TTS with the brand's SELECTED voice (Agent tab) + tone. Passing `voice` explicitly is
+  // what makes the chosen voice actually propagate instead of silently using the server default.
+  void trainerVoice.speak(body, { tone: style, voice, ...toneSpeechOpts(style) });
 }
 
 function splitIsi(text: string): [string, string | null] {
@@ -1396,6 +1398,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
   const [coachDraft, setCoachDraft] = useState<Record<number, string>>(() => loadTrainState().coachDraft ?? {});
   const [busyIdx, setBusyIdx] = useState<number | null>(null);
   const [showVideo, setShowVideo] = useState(false);
+  const videoRef = useRef<VideoAgentStageHandle | null>(null);
   // Talk to the rep to rehearse, exactly like a doctor would — same browser ASR the HCP view uses.
   const [listening, setListening] = useState(false);
   const [micSupported, setMicSupported] = useState(false);
@@ -1476,6 +1479,15 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
     return { text: "The rehearsal service is unreachable right now — check the server and try again.", route: "error", isi: false, detailAidSlideId: null, usedLlm: false };
   };
 
+  // Speak an answer through the Tavus REP when the video is on (every answer, asked or coached, is
+  // spoken by the replica) — otherwise OpenAI TTS. Never the browser voice as the intended path; it
+  // only falls back to TTS if the video rep isn't connected yet.
+  const speakAnswer = (text: string) => {
+    if (!text) return;
+    if (showVideo && videoRef.current?.speak(text)) return;
+    void speakCoached(text, voiceStyle, brand?.voiceId || undefined);
+  };
+
   const ask = async (forced?: string) => {
     if (asking) return;
     const q = forced?.trim() || input.trim() || brand?.tryQuestions[0] || "Tell me about this therapy.";
@@ -1485,10 +1497,9 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
     const a = await runPreview({ kind, q, current: "" }, []);
     setExchanges((xs) => [...xs, { q, kind, answers: [a], coachings: [], scope: "persona", accepted: false }]);
     setFollowSlideId((a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId) ?? null);
-    // Speak the answer, don't just print it — same as a coached re-answer (reAnswer). The trainer
-    // needs to HEAR cadence/tone on the first pass too, not only after coaching. Skip the error
-    // fallback so we never read the "service unreachable" line aloud.
-    if (a.text && a.route !== "error") void speakCoached(a.text, voiceStyle);
+    // Speak the answer, don't just print it (through the rep on video, else OpenAI TTS). Skip the
+    // error fallback so we never read the "service unreachable" line aloud.
+    if (a.route !== "error") speakAnswer(a.text);
     setAsking(false);
   };
 
@@ -1533,7 +1544,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
     setFollowSlideId((a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId) ?? null);
     setCoachDraft((d) => ({ ...d, [idx]: "" }));
     setBusyIdx(null);
-    void speakCoached(a.text, voiceStyle); // hear the retake, don't just read it
+    speakAnswer(a.text); // hear the retake — through the rep on video, else OpenAI TTS
   };
 
   // Accept the current answer. Greeting → persist the new opening line. Otherwise → compact the
@@ -1560,7 +1571,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
       {/* Rep preview + drive */}
       <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
         {showVideo ? (
-          <VideoAgentStage onClose={() => setShowVideo(false)} />
+          <VideoAgentStage ref={videoRef} onClose={() => setShowVideo(false)} />
         ) : (
           <div style={{ position: "relative", borderRadius: 15, overflow: "hidden", aspectRatio: "4/3", background: "radial-gradient(120% 120% at 50% 0%, #15315f 0%, #0a1a33 60%, #060f1f 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "var(--dn-shadow-dark)" }}>
             <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "center", gap: 7, background: "rgba(0,0,0,.4)", padding: "6px 11px", borderRadius: 8, border: "1px solid rgba(255,255,255,.12)" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fbbf24" }} /><span style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "#fff" }}>AI rep · {repName}</span></div>
