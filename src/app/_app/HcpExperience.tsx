@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AppState } from "./NexusRepApp";
 import { createRecognizer, setSpeechLanguage, speechVoiceHint, toneSpeechOpts, OpenAiVoiceProvider, type ClientRecognizer, type ClientVoiceProvider } from "@lib/browser-speech";
-import { correctBestAlternative } from "@lib/asr-correct";
+import { correctBestAlternative, correctionTerms } from "@lib/asr-correct";
 import { startBargeInVad, type BargeController } from "@lib/barge-vad";
 import { LiveAvatar, type LiveAvatarHandle } from "../_components/LiveAvatar";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
@@ -62,9 +62,10 @@ export function HcpExperience({ app }: { app?: AppState }) {
   const rootRef = useRef<HTMLDivElement>(null);
   // This text/voice chat's own reviewable session (video uses the Tavus session).
   const chatSessionRef = useRef<string | null>(null);
-  // Detail-aid slide switching timed to WHEN the rep speaks the cue: on video, exactly when the
-  // replica's streaming transcript reaches it (onSlideCue → VideoAgentStage); off-video, by estimate.
-  const { cueSlide, onSlideCue, cancel: cancelSlideCue } = useCuedSlide(setDeckFocus);
+  // Detail-aid slide switching timed to WHEN the rep speaks the cue. On video the timer is anchored
+  // to the replica's audio-start (onRepAudioStart → VideoAgentStage), then counts the cue offset;
+  // off-video it anchors to when we start the TTS. Backend decides WHETHER (only a cued answer).
+  const { cueSlide, onRepAudioStart, cancel: cancelSlideCue } = useCuedSlide(setDeckFocus);
 
   // The rep's speech locale (ASR + TTS) follows the brand persona's language.
   useEffect(() => { setSpeechLanguage(brand?.language); }, [brand]);
@@ -142,7 +143,11 @@ export function HcpExperience({ app }: { app?: AppState }) {
   }
 
   function addSpokenHcpTurn(text: string) {
-    setMsgs((current) => appendTurn(current, "hcp", text));
+    // Snap the video rep's STT (Tavus) mis-hearings of the drug/program names to their canonical
+    // spelling before they hit the transcript — same corrector the off-video mic uses.
+    const terms = correctionTerms([...(brand?.hotwords ?? []), ...(brand?.productTerms ?? [])]);
+    const { text: corrected } = correctBestAlternative([text], terms);
+    setMsgs((current) => appendTurn(current, "hcp", corrected || text));
   }
 
   // Monotonic playback generation: each new ask bumps it, so an in-flight multi-segment
@@ -269,7 +274,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setListening(true);
     // Correct mis-heard drug/program names against the brand's known terms, and log ASR latency so
     // this off-video path can be A/B'd against the Tavus asrMs with no video credits spent.
-    const terms = [...(brand?.hotwords ?? []), ...(brand?.productTerms ?? [])];
+    const terms = correctionTerms([...(brand?.hotwords ?? []), ...(brand?.productTerms ?? [])]);
     const startedAt = nowMs();
     let lastInterimAt = startedAt;
     rec.start(
@@ -414,7 +419,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
               {/* LEFT — the rep (live Tavus video OR the 3D/2D avatar) + one ask bar */}
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {videoOn
-                  ? <VideoAgentStage onMutedChange={setVideoMuted} onHcpUtterance={addSpokenHcpTurn} ref={videoAgentRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} onSlideCue={onSlideCue} hcpId={inviteHcpId || undefined} />
+                  ? <VideoAgentStage onMutedChange={setVideoMuted} onHcpUtterance={addSpokenHcpTurn} ref={videoAgentRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} onRepAudioStart={onRepAudioStart} hcpId={inviteHcpId || undefined} />
                   : <LiveAvatar ref={liveRef} enabled={threeD} speaking={speaking} fallbackStream={null} fallbackStatus={listening ? "Listening…" : speaking ? "Speaking…" : "Ready"} height={300} />}
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{hintsCard}{askBar("Ask")}{tryChips}</div>
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>

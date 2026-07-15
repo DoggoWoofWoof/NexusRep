@@ -10,7 +10,6 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { createVideoTransport, type VideoCallTransport } from "./video-transport";
-import { hasSlideCue } from "@lib/slide-cue";
 
 type ConvResp = { provider: string; configured: boolean; conversationUrl: string | null; token: string | null; note: string; reachableLlm?: boolean; sessionId?: string; greeting?: string | null };
 type Stage = "loading" | "unconfigured" | "joining" | "live" | "ended" | "error";
@@ -40,7 +39,7 @@ export interface VideoAgentStageHandle {
 type RepTurnNotice = { text: string; detailAidSlideId?: string | null; sourceIds?: string[] };
 type PendingRepEcho = { text: string; detailAidSlideId?: string | null; timer?: number; notified: boolean; queuedAt: number };
 
-export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; onHcpUtterance?: (text: string) => void; hcpId?: string; onMutedChange?: (muted: boolean) => void; onSlideCue?: () => void }>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, hcpId, onMutedChange, onSlideCue }, ref) {
+export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; onHcpUtterance?: (text: string) => void; hcpId?: string; onMutedChange?: (muted: boolean) => void; onRepAudioStart?: () => void }>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, hcpId, onMutedChange, onRepAudioStart }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const transportRef = useRef<VideoCallTransport | null>(null);
@@ -49,10 +48,11 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   const convIdRef = useRef<string>("");
   const lastUtterRef = useRef<string>("");
   const onRepTurnRef = useRef<typeof onRepTurn>(onRepTurn);
-  // Fires the instant the replica's STREAMING transcript reaches the slide cue, so the parent
-  // switches the deck exactly when the rep says it. Reset per rep turn so it fires once.
-  const onSlideCueRef = useRef<typeof onSlideCue>(onSlideCue);
-  const slideCuedThisTurnRef = useRef(false);
+  // Fires when the replica's AUDIO starts (vendor_started_speaking), so the parent anchors the
+  // detail-aid slide switch to when the rep actually begins speaking — then times the cue offset
+  // from there. (The streaming TEXT is NOT used to switch: with a custom LLM it arrives well before
+  // it's spoken, which switched the deck far too early.)
+  const onRepAudioStartRef = useRef<typeof onRepAudioStart>(onRepAudioStart);
   // The opening line we speak as a normal (interruptible) echo once the replica is live — instead
   // of Tavus's custom_greeting, which is always non-interruptible. Echoed exactly once.
   const greetingRef = useRef<string | null>(null);
@@ -111,8 +111,8 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
 
   useEffect(() => {
     onRepTurnRef.current = onRepTurn;
-    onSlideCueRef.current = onSlideCue;
-  }, [onRepTurn, onSlideCue]);
+    onRepAudioStartRef.current = onRepAudioStart;
+  }, [onRepTurn, onRepAudioStart]);
 
   // Arm a rep caption and HOLD it until the replica's audio actually starts, so the caption lands
   // with the voice instead of ahead of it (the greeting used to caption before it was spoken).
@@ -497,26 +497,21 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             if (/replica|assistant|agent|ai|pal|face/i.test(e.role)) {
               if (/conversation\.utterance\.streaming/i.test(e.type)) {
                 recordTiming({ type: "vendor_streaming_utterance", reason: e.type, text: e.text.slice(0, 160) });
-                // Switch the deck the INSTANT the replica's streaming transcript reaches the slide
-                // cue — exact timing, not the word-position estimate. Fires once per turn, and ONLY
-                // once the replica's audio has actually started (repSpeakingRef) so a pre-audio
-                // generation burst can't switch the deck before the doctor hears anything.
-                if (repSpeakingRef.current && !slideCuedThisTurnRef.current && hasSlideCue(e.text)) {
-                  slideCuedThisTurnRef.current = true;
-                  onSlideCueRef.current?.();
-                }
               } else if (/conversation\.utterance$/i.test(e.type)) {
-                recordTiming({ type: "vendor_final_utterance", reason: e.type, text: e.text });
+                recordTiming({ type: "vendor_final_utterance", reason: e.type, text: e.text.slice(0, 160) });
               }
             }
-            // The replica's audio started → release the held caption so it lands WITH the voice.
+            // The replica's audio started → release the held caption so it lands WITH the voice, AND
+            // anchor the detail-aid slide switch here: the parent counts the cue offset from NOW, so
+            // the deck changes as the rep reaches the cue — never seconds before it (the old
+            // streaming-text trigger fired well ahead of the spoken word with a custom LLM).
             if (
               /start(?:ed)?[_\s.-]*speak|speech[_\s.-]*start|speaking[_\s.-]*start/i.test(e.type) &&
               (!e.role || /replica|assistant|agent|ai/i.test(e.role))
             ) {
               repSpeakingRef.current = true;
-              slideCuedThisTurnRef.current = false; // new turn → allow its slide cue to fire once
               recordTiming({ type: "vendor_started_speaking", reason: e.type });
+              onRepAudioStartRef.current?.();
               reportTurnLatency();
               void notifyPendingRepEcho("vendor_started");
               void recordAgentAudioActivity(e.type);

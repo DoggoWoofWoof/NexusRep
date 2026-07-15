@@ -140,15 +140,39 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
         patches.push({ op: "add", path: "/layers", value: layers });
       }
       if (patches.length) {
+        // Tavus persona update is JSON Patch (RFC 6902).
+        const applyPatch = (ps: Record<string, unknown>[]) => this.api(`/personas/${existing}`, { method: "PATCH", body: JSON.stringify(ps) });
         try {
-          // Tavus persona update is JSON Patch (RFC 6902).
-          await this.api(`/personas/${existing}`, { method: "PATCH", body: JSON.stringify(patches) });
+          await applyPatch(patches);
           personaPrompts.set(cacheKey, config.systemPrompt);
           personaLayerSignatures.set(cacheKey, layerSignature);
         } catch (e) {
-          // Reuse the persona as-is, but SAY so — a silently-stale system prompt is
-          // exactly the kind of failure an operator needs to see.
-          console.error("[tavus] persona update failed; reusing existing persona:", e instanceof Error ? e.message : e);
+          const msg = e instanceof Error ? e.message : String(e);
+          // A rejected STT engine (invalid, or valid but not on this plan) must NOT sink the WHOLE
+          // update — that's how an STT-engine change silently took the hotwords/TTS/prompt down with
+          // it ("our config never gets into effect"). Retry once with stt_engine dropped so the rest
+          // still reaches the persona (STT falls back to Tavus's default; hotwords still bias it).
+          const sttLayer = (layers as { stt?: Record<string, unknown> }).stt;
+          if (sttLayer && "stt_engine" in sttLayer && /stt_engine|\bstt\b/i.test(msg)) {
+            const sttRest = { ...sttLayer };
+            delete sttRest.stt_engine;
+            const retryLayers = { ...layers };
+            if (Object.keys(sttRest).length) (retryLayers as { stt?: unknown }).stt = sttRest;
+            else delete (retryLayers as { stt?: unknown }).stt;
+            const retryPatches = patches.map((p) => (p.path === "/layers" ? { ...p, value: retryLayers } : p));
+            try {
+              await applyPatch(retryPatches);
+              console.warn("[tavus] persona STT engine rejected on update; applied the rest without stt_engine:", msg.slice(0, 160));
+              personaPrompts.set(cacheKey, config.systemPrompt);
+              personaLayerSignatures.set(cacheKey, layerSignature); // stop re-hammering the failing PATCH each session
+            } catch (e2) {
+              console.error("[tavus] persona update failed; reusing existing persona:", e2 instanceof Error ? e2.message : e2);
+            }
+          } else {
+            // Reuse the persona as-is, but SAY so — a silently-stale system prompt is
+            // exactly the kind of failure an operator needs to see.
+            console.error("[tavus] persona update failed; reusing existing persona:", msg.slice(0, 160));
+          }
         }
       }
       return existing;

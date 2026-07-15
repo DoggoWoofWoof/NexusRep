@@ -79,6 +79,22 @@ export interface TranscriptCorrection {
 }
 
 /**
+ * The subset of hotwords SAFE to snap TEXT to. Drops any multi-word term that merely EXTENDS a
+ * standalone term — e.g. "LIBREXIA AF", "LIBREXIA ACS", "LIBREXIA STROKE" all extend "LIBREXIA".
+ * Post-hoc fuzzy text can't tell those siblings apart (the shared "LIBREXIA" prefix dominates the
+ * similarity), so it snaps to the wrong trial. As STT *hotwords* they're fine — the raw audio
+ * distinguishes them; here the single "LIBREXIA" still fixes the prefix and the distinct suffix word
+ * ("AF"/"stroke") is left exactly as heard.
+ */
+export function correctionTerms(terms: string[]): string[] {
+  const singles = new Set(terms.filter((t) => t.trim().split(/\s+/).length === 1).map(norm).filter(Boolean));
+  return terms.filter((t) => {
+    const words = t.trim().split(/\s+/);
+    return words.length === 1 || !singles.has(norm(words[0]!));
+  });
+}
+
+/**
  * Snap near-miss token windows in `text` to the canonical `terms`. Multi-word terms are matched
  * first (longest token-length wins), and a single-word term is also tried against a 2-token window
  * (e.g. "mil vexian" → "Milvexian").
@@ -96,8 +112,11 @@ export function correctTranscript(text: string, terms: string[]): TranscriptCorr
     let hit: { term: string; len: number } | null = null;
     for (const term of canon) {
       const span = term.split(/\s+/).length;
-      const win = tokens.slice(i, i + span).join(" ");
-      if (win && windowMatches(win, term)) { hit = { term, len: span }; break; }
+      const winTokens = tokens.slice(i, i + span);
+      // Only match a multi-word term against a window of the SAME token count — otherwise a bare
+      // "lebrixia" (1 token) fuzzy-matches "LIBREXIA AF" (2 tokens) and wrongly appends "AF",
+      // silently narrowing "tell me about LIBREXIA" into a specific trial.
+      if (winTokens.length === span && windowMatches(winTokens.join(" "), term)) { hit = { term, len: span }; break; }
       if (span === 1 && i + 2 <= tokens.length) {
         const win2 = tokens.slice(i, i + 2).join(" ");
         if (windowMatches(win2, term)) { hit = { term, len: 2 }; break; }

@@ -10,6 +10,7 @@ import { SlideView } from "../_components/SlideView";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { StudioAgentMode } from "./StudioAgentMode";
 import { OpenAiVoiceProvider, createRecognizer, setSpeechLanguage, toneSpeechOpts, estimateSpeechMs, type ClientRecognizer } from "@lib/browser-speech";
+import { correctBestAlternative, correctionTerms } from "@lib/asr-correct";
 import { useCuedSlide } from "../_components/useCuedSlide";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 import type { SetupProposedAction } from "@modules/setupAssistant";
@@ -1409,9 +1410,9 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
   const { activePlanStepId, setActivePlanStepId, activePlanSlideId, applyPlanNote } = useOverviewPlan();
   const [followSlideId, setFollowSlideId] = useState<string | null>(null);
   // Detail-aid slide switching timed to WHEN the rep speaks the cue — the SAME hook the doctor
-  // preview uses. On video it switches the instant the replica's streaming transcript reaches the
-  // cue (onSlideCue → VideoAgentStage); off-video, by word-position estimate. Backend gates WHETHER.
-  const { cueSlide, onSlideCue } = useCuedSlide(setFollowSlideId);
+  // preview uses. On video the timer anchors to the replica's audio-start (onRepAudioStart →
+  // VideoAgentStage), then counts the cue offset; off-video it anchors to the TTS start.
+  const { cueSlide, onRepAudioStart } = useCuedSlide(setFollowSlideId);
   const [deckOpen, setDeckOpen] = useState(true);
   // Inline per-section coaching on a rehearsed pitch segment ({exchange, segment} being coached).
   const [segCoach, setSegCoach] = useState<{ exIdx: number; segIdx: number } | null>(null);
@@ -1531,8 +1532,16 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
     if (listening) { rec.stop(); setListening(false); return; }
     trainerVoice?.cancel(); // barge-in: stop the rep speaking before we listen
     setListening(true);
+    // Snap mis-heard drug/program names to their canonical spelling — the SAME correction the doctor
+    // view applies. Without it the browser ASR sent "Lebrixia stock" straight to the rep (wrong
+    // transcript AND, sometimes, the wrong answer).
+    const terms = correctionTerms([...(brand?.hotwords ?? []), ...(brand?.productTerms ?? [])]);
     rec.start(
-      (text) => { setListening(false); setInput(""); void ask(text); },
+      (text, alts) => {
+        setListening(false); setInput("");
+        const { text: corrected } = correctBestAlternative(alts?.length ? alts : [text], terms);
+        void ask(corrected || text);
+      },
       () => setListening(false),
     );
   };
@@ -1592,7 +1601,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
       {/* Rep preview + drive */}
       <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
         {showVideo ? (
-          <VideoAgentStage ref={videoRef} onClose={() => setShowVideo(false)} onSlideCue={onSlideCue} />
+          <VideoAgentStage ref={videoRef} onClose={() => setShowVideo(false)} onRepAudioStart={onRepAudioStart} />
         ) : (
           <div style={{ position: "relative", borderRadius: 15, overflow: "hidden", aspectRatio: "4/3", background: "radial-gradient(120% 120% at 50% 0%, #15315f 0%, #0a1a33 60%, #060f1f 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "var(--dn-shadow-dark)" }}>
             <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "center", gap: 7, background: "rgba(0,0,0,.4)", padding: "6px 11px", borderRadius: 8, border: "1px solid rgba(255,255,255,.12)" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fbbf24" }} /><span style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "#fff" }}>AI rep · {repName}</span></div>

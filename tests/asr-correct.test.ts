@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { correctTranscript, correctBestAlternative } from "@lib/asr-correct";
+import { correctTranscript, correctBestAlternative, correctionTerms } from "@lib/asr-correct";
 
 const TERMS = ["Milvexian", "LIBREXIA", "Factor XIa", "apixaban"];
 
@@ -58,6 +58,34 @@ describe("correctTranscript — phonetic (vowel-swap) mis-hearings", () => {
     for (const q of ["what medication schedule", "any adverse effects", "how is it administered"]) {
       expect(correctTranscript(q, TERMS2).text).toBe(q);
     }
+  });
+});
+
+describe("correctionTerms — trial-name siblings are STT-only, never text-correction terms", () => {
+  // The full hotword set the Milvexian brand ships (trial names included, for Tavus STT bias).
+  const HOTWORDS = ["Milvexian", "LIBREXIA", "LIBREXIA AF", "LIBREXIA ACS", "LIBREXIA STROKE", "Factor XIa", "TIA", "apixaban"];
+  const TERMS = correctionTerms(HOTWORDS);
+
+  it("drops the ambiguous LIBREXIA-<trial> combos but keeps distinct multi-word terms", () => {
+    expect(TERMS).not.toContain("LIBREXIA AF");
+    expect(TERMS).not.toContain("LIBREXIA STROKE");
+    expect(TERMS).toContain("LIBREXIA");
+    expect(TERMS).toContain("Factor XIa"); // "Factor" is not itself a standalone term → kept
+  });
+
+  it.each([
+    // The prefix is fixed via the single "LIBREXIA"; the distinct trial word is left exactly as heard,
+    // so the corrector NEVER snaps "AF" onto the wrong trial ("ACS"/"STROKE").
+    ["what is libraxia AF", "what is LIBREXIA AF"],
+    ["what is the libraxia stroke", "what is the LIBREXIA stroke"],
+    ["tell me about lebrixia", "tell me about LIBREXIA"],
+    ["how does milvaxian work", "how does Milvexian work"],
+  ])("snaps %j → %j (no wrong-trial disambiguation)", (input, expected) => {
+    expect(correctTranscript(input, TERMS).text).toBe(expected);
+  });
+
+  it("does not invent a drug name from an unrelated 'l' word", () => {
+    expect(correctTranscript("what is the label", TERMS).text).toBe("what is the label");
   });
 });
 

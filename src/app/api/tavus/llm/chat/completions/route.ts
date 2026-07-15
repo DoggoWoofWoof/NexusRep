@@ -14,6 +14,7 @@ import { asId } from "@lib/ids";
 import { getContainer, getContainerForUser } from "@lib/container";
 import { env } from "@lib/env";
 import { getActiveCall } from "@lib/active-call";
+import { correctTranscript, correctionTerms } from "@lib/asr-correct";
 
 export const dynamic = "force-dynamic";
 
@@ -91,6 +92,12 @@ export async function POST(req: Request): Promise<Response> {
     const activeCall = getActiveCall();
     const c = activeCall ? await getContainerForUser(activeCall.userId) : await getContainer();
     mark("container");
+    // Snap Tavus STT mis-hearings of the drug/program names to their canonical spelling BEFORE the
+    // orchestrator classifies/retrieves — so "Lebrixia stock" is understood as "LIBREXIA STROKE"
+    // and the doctor gets the right answer, not a mishandled one. Conservative (near-misses only).
+    const asrTerms = correctionTerms([...c.brand.persona.hotwords, ...c.brand.lexicon.productTerms]);
+    const correctedText = correctTranscript(text, asrTerms).text || text;
+    if (correctedText !== text) mark("asr_correct");
     // Tavus supplies ASR + avatar transport only. The actual turn goes through the same
     // ConversationService used by typed chat, so mic and chat share one NexusRep path:
     // log HCP turn -> orchestrate -> gate -> log rep turn/source/slide -> CRM/follow-up.
@@ -112,7 +119,7 @@ export async function POST(req: Request): Promise<Response> {
       indication: c.demo.indication,
       market: c.demo.market,
       investigational: c.demo.investigational,
-      text,
+      text: correctedText,
     });
     reply = output.responseText;
     mark(`turn_${output.route}`);
