@@ -10,7 +10,30 @@
 
 ## 1. Current build status
 
-### Latest: Fix product-question bounce + phonetic ASR correction + off-video barge-in (2026-07-14)
+### Latest: Switch slides on the streaming transcript reaching the cue (2026-07-15)
+
+- **The deck now switches the instant the rep *says* the cue, not on an estimate.** The backend
+  already gates *whether* a turn switches slides (`orchestrator.cuesASlide` — only when the answer
+  actually cues one, e.g. "…on the mechanism slide"). Timing was a word-position estimate
+  (`slideCueDelayMs`). On the video path we can be exact: the Tavus replica emits
+  `conversation.utterance.streaming` partials, so we switch the moment the streaming transcript
+  reaches the cue phrase — and keep the estimate as the off-video path and a safety net if the cue
+  never streams.
+- **`src/app/_components/useCuedSlide.ts` (new)** — shared hook `{ cueSlide, onSlideCue, cancel }`.
+  `cueSlide(id, text, live)` arms the backend-sent slide + a safety timer (live path: generous,
+  fires only if the streaming cue never arrives; off-video: the word-position estimate).
+  `onSlideCue()` switches the armed slide immediately. Nothing arms unless the backend sent a slide
+  id, so a cue-less answer never switches.
+- **`VideoAgentStage`** — new `onSlideCue` prop; in the replica streaming branch it fires once per
+  turn when `hasSlideCue(text)` matches (reset on each `vendor_started_speaking`).
+- **`slide-cue.ts`** — added `hasSlideCue(text)` (the `\bslides?\b` / cue-marker detector) used by
+  the streaming branch.
+- **Doctor preview (`HcpExperience`) AND training rehearsal (`StudioScreen`) both adopt the hook**,
+  replacing their local timers — so preview and training switch identically, for both an *asked*
+  answer and a *coached* re-answer (the multi-segment overview walk cues each segment's slide as the
+  rep reaches it). Typecheck clean; 382 tests pass; production build clean.
+
+### Fix product-question bounce + phonetic ASR correction + off-video barge-in (2026-07-14)
 
 - **"What is the program studying?" no longer bounces to Medical Info.** A product/program question
   was routed to `medical_information` when the classifier over-flagged `medicalInfoRisk` (it read
