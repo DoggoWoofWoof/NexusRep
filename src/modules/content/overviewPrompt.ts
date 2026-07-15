@@ -18,7 +18,7 @@ export function isOverviewPrompt(text: string, lexicon?: { productTerms?: string
   // asked a QUESTION, not for the walkthrough — unless they explicitly asked deck-level.
   const topicSpecific = /\b(mechanism|dose|dosing|compare|comparison|safety|off[-\s]?label)\b|\bprogram\b.*\?/i.test(t);
   const aboutProduct =
-    mentionsProductName || /\b(product|therapy|slides?|deck|story|overview|pipeline|approved\s+information)\b/i.test(t);
+    mentionsProductName || /\b(product|therapy|slides?|deck|presentation|pitch|story|overview|pipeline|approved\s+information)\b/i.test(t);
 
   if (topicSpecific && !explicitlyDeckLevel) return false;
   return asksForOverview && aboutProduct;

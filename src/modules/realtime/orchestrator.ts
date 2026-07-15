@@ -31,8 +31,15 @@ export interface TurnContext {
   investigational?: boolean;
 }
 
-/** Intents that are clinical specifics — off-limits for an investigational product. */
-const CLINICAL_SPECIFICS = new Set(["dosing", "safety", "administration", "trial_data"]);
+/** Intents that are clinical specifics — off-limits for an investigational product, so they route
+ *  to Medical Information rather than being answered directly. NOTE: "trial_data" is deliberately
+ *  NOT here. Trial/program/"what is X studying" questions are PUBLIC program facts we hold approved
+ *  content for; hard-bouncing the whole trial_data intent made a single word flip the route (e.g.
+ *  "what is the clinical PROGRAM studying" → answered, but "…clinical VIEW studying" → bounced).
+ *  Instead we ATTEMPT an approved answer and let retrieval + the grounding gate decide: a public
+ *  program fact is answered; a deep efficacy/endpoint ask finds no approved content and falls back
+ *  safely. Dosing/safety/administration stay bounced — those are genuine clinical specifics. */
+const CLINICAL_SPECIFICS = new Set(["dosing", "safety", "administration"]);
 
 export interface TurnOutput {
   route: PolicyRoute;
@@ -53,7 +60,7 @@ const COMPOSER_TIMEOUT_MS = 2500;
 // A short message that references the slides/deck or asks to continue but names NO topic of its
 // own — its meaning depends on what was just discussed ("show me the slides", "tell me more",
 // "walk me through it", "keep going"). Retrieval biases these toward the prior turn's topic.
-const FOLLOWUP_RE = /\b(show me|show us|pull up|walk me through|the slides?|the deck|the presentation|the detail aid|tell me more|more on (that|this|it)|what about (that|this|it)|continue|keep going|go on|next)\b/i;
+const FOLLOWUP_RE = /\b(show me|show us|pull up|walk me through|the slides?|the deck|the presentation|the detail aid|tell me more|more on (that|this|it)|what about (that|this|it)|continue|keep going|go on|next|yes|yeah|yep|sure|okay|ok|please|go ahead|sounds good|absolutely|definitely)\b/i;
 
 /**
  * When the exact ISI block is appended, do not also repeat standalone safety/disclosure
@@ -303,7 +310,7 @@ export class TurnOrchestrator {
       // that read repetitively. Rehearsal + active persona_style coaching also flow in as guidance.
       // None of this can override grounding or the gate.
       const slideHint = slideTitle
-        ? [`A detail-aid slide titled "${slideTitle}" is on the doctor's screen${relatedTitle ? ` (a "${relatedTitle}" slide is also available)` : ""}. You may refer to what's on screen briefly and naturally when it helps, but keep it crisp, vary the wording, and omit it when asked to be brief.`]
+        ? [`A detail-aid slide titled "${slideTitle}" is being shown on the doctor's screen${relatedTitle ? ` (a "${relatedTitle}" slide is also available)` : ""}. Briefly NAME the slide you're showing in one short, natural clause (e.g. "you can see this on the ${slideTitle} slide") so the doctor knows what's on screen — vary the wording and keep it to a short clause, but don't omit it unless you were explicitly asked to be terse.`]
         : [];
       const steeringGuidance = (opts?.steering?.styleGuidance ?? []).filter(
         (g) => !disclosureGiven || !/disclos|investigational|not fda/i.test(g),
@@ -504,18 +511,26 @@ For anything beyond this, I can connect you with our medical information team.`;
   private async contextualRetrievalText(ctx: TurnContext): Promise<string> {
     try {
       const prior = await this.audit.forSession(ctx.sessionId);
-      const lastAnswered = [...prior]
+      const answered = [...prior]
         .reverse()
-        .find((e) => e.type === "response_output" && Array.isArray(e.payload.sourceIds) && (e.payload.sourceIds as string[]).length > 0);
-      let id = lastAnswered ? (lastAnswered.payload.sourceIds as string[])[0] : undefined;
-      if (!id) {
-        // No prior topic yet (e.g. "show me the slides" as the first thing said) → seed with the
-        // deck's lead approved answer so it opens with a real overview instead of bouncing.
-        const active = (await this.content.listAnswers()).find((a) => a.mlr.status === "active");
-        id = active ? String(active.id) : undefined;
+        .filter((e) => e.type === "response_output" && Array.isArray(e.payload.sourceIds) && (e.payload.sourceIds as string[]).length > 0);
+      // Bias to the last SUBSTANTIVE topic, skipping the contact/handoff answer. Otherwise, once the
+      // rep answered "connect with a person" once, every short follow-up ("yeah sure", "show me the
+      // slides") re-biased to contact and it never recovered — a self-reinforcing loop.
+      const isRouting = (topic: string) => /contact|medical information|connect with|handoff/i.test(topic);
+      let topic: string | undefined;
+      for (const e of answered) {
+        const id = (e.payload.sourceIds as string[])[0];
+        const answer = id ? await this.content.getAnswer(asId<"approved_answer_id">(id) as ApprovedAnswerId) : null;
+        if (answer && !isRouting(answer.topic)) { topic = answer.topic; break; }
       }
-      const answer = id ? await this.content.getAnswer(asId<"approved_answer_id">(id) as ApprovedAnswerId) : null;
-      return answer ? `${answer.topic} ${ctx.text}` : ctx.text;
+      if (!topic) {
+        // No prior real topic yet (e.g. "show me the slides" as the first thing said) → seed with the
+        // deck's lead approved answer so it opens with a real overview instead of bouncing to contact.
+        const active = (await this.content.listAnswers()).find((a) => a.mlr.status === "active" && !isRouting(a.topic));
+        topic = active?.topic;
+      }
+      return topic ? `${topic} ${ctx.text}` : ctx.text;
     } catch {
       return ctx.text;
     }
