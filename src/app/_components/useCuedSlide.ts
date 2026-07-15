@@ -27,8 +27,11 @@ export function useCuedSlide(setSlide: (id: string) => void) {
     clearTimer();
     armedRef.current = id;
     const estimate = slideCueDelayMs(spokenText);
-    // Live: the exact switch comes from onSlideCue; this timer only fires if the cue never streamed.
-    const delay = live ? Math.max(estimate + 1500, 3000) : estimate;
+    // Live (video): the EXACT switch comes from onSlideCue when the replica's streaming transcript
+    // reaches the cue. This timer is only a fallback for when that never streams — so give it a
+    // ~2s head start past the estimated cue time (the streaming signal should win), but no fixed
+    // floor: the old Math.max(…, 3000) is what jumped the deck at 3s regardless of the real cue.
+    const delay = live ? estimate + 2000 : estimate;
     timerRef.current = window.setTimeout(() => {
       if (armedRef.current === id) { armedRef.current = null; setSlide(id); }
     }, delay);

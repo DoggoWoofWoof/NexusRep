@@ -249,7 +249,7 @@ export const MILVEXIAN_PROFILE: BrandProfile = {
     context: "Product: Milvexian (investigational Factor XIa inhibitor). Audience: cardiology. No patient-level data.",
     // Product/program/mechanism/indication proper nouns that voice ASR mangles — used to bias
     // Tavus's STT AND to correct the off-video recognizer's transcript back to the right spelling.
-    hotwords: ["Milvexian", "LIBREXIA", "Factor XIa", "FXIa", "anticoagulant", "ischemic stroke", "acute coronary syndrome", "atrial fibrillation", "apixaban"],
+    hotwords: ["Milvexian", "LIBREXIA", "LIBREXIA AF", "LIBREXIA ACS", "LIBREXIA STROKE", "Factor XIa", "FXIa", "anticoagulant", "ischemic stroke", "transient ischemic attack", "TIA", "acute coronary syndrome", "atrial fibrillation", "apixaban"],
     language: "english",
   },
   deck: MILVEXIAN_DECK,

@@ -342,7 +342,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
           style={{ padding: "11px 13px", background: doctorMicOff ? "var(--dn-danger)" : "var(--dn-brand-base)", color: "#fff", border: "1px solid var(--dn-border)", borderRadius: 9, fontSize: 15, cursor: "pointer" }}
         >🎤</button>
       )}
-      <button onClick={() => void ask(input)} disabled={pending} style={{ padding: "11px 18px", background: "var(--dn-brand-base)", color: "#fff", border: "none", borderRadius: 9, font: "600 13px/1 var(--dn-font-sans)", cursor: "pointer" }}>{pending ? "…" : label}</button>
+      <button onClick={() => void ask(input)} disabled={pending} style={{ padding: "11px 18px", minWidth: 74, textAlign: "center", background: "var(--dn-brand-base)", color: "#fff", border: "none", borderRadius: 9, font: "600 13px/1 var(--dn-font-sans)", cursor: "pointer" }}>{pending ? "…" : label}</button>
     </div>
   );
   // First-visit help for the doctor — plain language, dismissible, remembered.
@@ -437,7 +437,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
                     title={(videoOn ? !videoMuted : voiceOn) ? "The rep reads answers aloud — click to turn its voice off" : "The rep's voice is off — answers aren't read aloud. Click to turn it on."}
                     // Off must LOOK off (red) — and say WHOSE audio this is: the REP's voice
                     // (speaker), never the doctor's mic. "Muted" alone reads as mic-muted.
-                    style={{ ...ghostMd, ...((videoOn ? !videoMuted : voiceOn) ? {} : { background: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca" }) }}
+                    style={{ ...ghostMd, minWidth: 126, textAlign: "center", ...((videoOn ? !videoMuted : voiceOn) ? {} : { background: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca" }) }}
                   >{(videoOn ? !videoMuted : voiceOn) ? "🔊 Rep voice on" : "🔇 Rep voice off"}</button>
                   <button onClick={() => setScr("complete")} style={{ marginLeft: "auto", padding: "10px 16px", background: "var(--dn-brand-dark)", color: "#fff", border: "none", borderRadius: 9, font: "600 12px/1 var(--dn-font-sans)", cursor: "pointer" }}>End session →</button>
                 </div>

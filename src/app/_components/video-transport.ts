@@ -85,7 +85,12 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
         events.onRawEvent?.({
           type: String(p?.event_type ?? ""),
           role: String(props.role ?? ""),
-          text: String(props.speech ?? props.text ?? "").slice(0, 80),
+          // FULL text — the replica's streaming transcript is how the deck knows the rep has
+          // reached the slide cue, and that cue usually sits near the END of the answer. Truncating
+          // here (was 80 chars) hid every late cue, so the deck only ever switched on the early
+          // safety timer — the "switched long before the cue / never switched" bug. The consumer
+          // bounds what it STORES for QA; detection needs the whole utterance.
+          text: String(props.speech ?? props.text ?? ""),
         });
         if (p?.event_type !== "conversation.utterance") return;
         const text = String(props.speech ?? props.text ?? "").trim();

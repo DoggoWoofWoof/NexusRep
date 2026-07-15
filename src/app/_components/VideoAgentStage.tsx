@@ -493,13 +493,15 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // QA aid: record ALL conversation events so tests can see what the agent
             // does after an echo (started/stopped speaking, utterances). Harmless.
             const w = window as unknown as { __nexusrepEvents?: { type: string; role: string; text: string }[] };
-            w.__nexusrepEvents = [...(w.__nexusrepEvents ?? []).slice(-40), e];
+            w.__nexusrepEvents = [...(w.__nexusrepEvents ?? []).slice(-40), { ...e, text: e.text.slice(0, 160) }];
             if (/replica|assistant|agent|ai|pal|face/i.test(e.role)) {
               if (/conversation\.utterance\.streaming/i.test(e.type)) {
-                recordTiming({ type: "vendor_streaming_utterance", reason: e.type, text: e.text });
+                recordTiming({ type: "vendor_streaming_utterance", reason: e.type, text: e.text.slice(0, 160) });
                 // Switch the deck the INSTANT the replica's streaming transcript reaches the slide
-                // cue — exact timing, not the word-position estimate. Fires once per turn.
-                if (!slideCuedThisTurnRef.current && hasSlideCue(e.text)) {
+                // cue — exact timing, not the word-position estimate. Fires once per turn, and ONLY
+                // once the replica's audio has actually started (repSpeakingRef) so a pre-audio
+                // generation burst can't switch the deck before the doctor hears anything.
+                if (repSpeakingRef.current && !slideCuedThisTurnRef.current && hasSlideCue(e.text)) {
                   slideCuedThisTurnRef.current = true;
                   onSlideCueRef.current?.();
                 }

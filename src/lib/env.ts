@@ -136,11 +136,12 @@ export const env = {
   // Emotion control OFF by default: it drives expressive/dynamic pacing that rushes the START of a
   // sentence ("speeds up a lot at the start"). Off gives steady, even delivery. Set =1 to re-enable.
   tavusTtsEmotionControl: process.env.NEXUSREP_TAVUS_TTS_EMOTION === "1",
-  /** Tavus STT engine (layers.stt.stt_engine). Default "tavus-auto" (safe, no plan requirement).
-   *  For a pharma rep, set NEXUSREP_TAVUS_STT="tavus-deepgram-medical" — Deepgram with clinical
-   *  vocabulary, so drug/program names ("Milvexian", "LIBREXIA") stop transcribing as gibberish.
-   *  Other options: tavus-parakeet, tavus-soniox, tavus-whisper, tavus-advanced. */
-  tavusSttEngine: process.env.NEXUSREP_TAVUS_STT || "tavus-auto",
+  /** Tavus STT engine (layers.stt.stt_engine). Defaults to "tavus-deepgram-medical" — Deepgram with
+   *  clinical vocabulary — because this is a PHARMA rep: drug/program/indication names ("Milvexian",
+   *  "LIBREXIA", "atrial fibrillation") transcribe as gibberish on the generic engine. If a Tavus
+   *  plan rejects it, persona creation retries on the default engine (see tavus.ts), so this is safe
+   *  out of the box. Override with NEXUSREP_TAVUS_STT (tavus-auto, tavus-parakeet, tavus-soniox, …). */
+  tavusSttEngine: process.env.NEXUSREP_TAVUS_STT || "tavus-deepgram-medical",
   /** OFF by default: gallery hover plays the agent's STOCK Tavus clip only (real voice, no cost).
    *  Set NEXUSREP_AGENT_PREVIEW_RENDER=1 to also render + cache a clip of the agent speaking our
    *  script (spends Tavus credits, once per agent — cached globally). */

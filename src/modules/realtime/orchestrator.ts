@@ -13,7 +13,7 @@
 import { asId, type ApprovedAnswerId, type HcpId, type SessionId } from "@lib/ids";
 import { classify, complianceGate, route, validateGrounding, type PolicyRoute, type RiskClassification, isiAlreadyDelivered, stripEmbeddedIsi } from "@modules/compliance";
 import type { RetrievalService } from "@modules/retrieval";
-import { buildApprovedResponse, type ApprovedAnswer, type ContentService, type GroundedComposer, type SafetyStatement } from "@modules/content";
+import { buildApprovedResponse, slideReference, type ApprovedAnswer, type ContentService, type GroundedComposer, type SafetyStatement } from "@modules/content";
 import type { AuditService } from "@modules/audit";
 import { type FollowUpService, type FollowUpType } from "@modules/followups";
 import type { RuleSteering } from "@modules/rules";
@@ -408,6 +408,13 @@ export class TurnOrchestrator {
         body = deterministic();
       }
       body = sanitizeApprovedBody(body, { isiText: isi?.text, disclosureGiven, question: ctx.text });
+      // A detail-aid slide is on screen for this answer, but neither the composer nor the
+      // deterministic builder referenced it — weave in a brief, varied cue so the rep ALWAYS points
+      // the doctor at the slide when one exists (and the deck then reliably switches on that cue).
+      // The gate below still holds for the no-slide case: no slide → no cue → no switch.
+      if (slideTitle && !cuesASlide(body)) {
+        body = `${body}${slideReference({ seed: responseSeed, slideTitle, relatedTitle })}`;
+      }
       if (isi) {
         requiredSafetyText = isi.text;
         body = `${body}\n\nImportant Safety Information: ${isi.text}`;

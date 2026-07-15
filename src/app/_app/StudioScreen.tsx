@@ -1416,6 +1416,9 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
   // Inline per-section coaching on a rehearsed pitch segment ({exchange, segment} being coached).
   const [segCoach, setSegCoach] = useState<{ exIdx: number; segIdx: number } | null>(null);
   const [segNote, setSegNote] = useState("");
+  // Coach menu is COLLAPSED per exchange by default — the thread stays a clean read of answers, and
+  // the full coach controls (notes + scope + accept) open only when you click to coach that line.
+  const [coachOpen, setCoachOpen] = useState<Record<number, boolean>>({});
   // Keep the coaching thread pinned to the newest message (new questions, re-answers,
   // seeded "Coach this exchange" handoffs) — no manual scrolling to find the latest.
   const threadRef = useRef<HTMLDivElement | null>(null);
@@ -1604,9 +1607,9 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
             <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void ask(); }} placeholder={listening ? "Listening…" : micSupported ? "Ask the rep — type or tap the mic to talk…" : "Ask the rep a question…"} style={{ flex: 1, minWidth: 0, padding: "10px 12px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 12.5px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
             {micSupported && (
-              <button onClick={toggleMic} title={listening ? "Stop listening" : "Talk to the rep"} aria-label={listening ? "Stop listening" : "Talk to the rep"} style={{ ...btnGhost, padding: "10px 12px", border: listening ? "1px solid var(--dn-danger)" : undefined, color: listening ? "var(--dn-danger)" : "var(--dn-fg-muted)" }}>{listening ? "● Stop" : "🎤"}</button>
+              <button onClick={toggleMic} title={listening ? "Stop listening" : "Talk to the rep"} aria-label={listening ? "Stop listening" : "Talk to the rep"} style={{ ...btnGhost, padding: "10px 12px", minWidth: 68, textAlign: "center", border: listening ? "1px solid var(--dn-danger)" : undefined, color: listening ? "var(--dn-danger)" : "var(--dn-fg-muted)" }}>{listening ? "● Stop" : "🎤"}</button>
             )}
-            <button onClick={() => void ask()} disabled={asking} style={{ ...btnPrimary, padding: "10px 14px" }}>{asking ? "…" : "Ask"}</button>
+            <button onClick={() => void ask()} disabled={asking} style={{ ...btnPrimary, padding: "10px 14px", minWidth: 58, textAlign: "center" }}>{asking ? "…" : "Ask"}</button>
           </div>
           <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
             <button onClick={() => void ask("Can you walk me through the approved information?")} disabled={asking} style={{ ...btnGhost, padding: "7px 10px", font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>▶ Rehearse the pitch</button>
@@ -1752,8 +1755,19 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
                         : ex.coachings.length ? "your coaching saved as rule(s) → review in Rules" : "no changes needed"}
                     </span>
                   </div>
+                ) : !coachOpen[idx] ? (
+                  // Collapsed: the thread reads as answers. One click opens the full coach menu; a
+                  // quick Accept stays available without expanding.
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => setCoachOpen((o) => ({ ...o, [idx]: true }))} style={{ ...btnGhost, flex: 1, padding: 9, font: "600 11.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>✎ {ex.kind === "greeting" ? "Coach the opening line" : "Coach this answer"}</button>
+                    <button onClick={() => void accept(idx)} disabled={busy} style={{ ...btnPrimary, flex: 1, padding: 9, font: "600 11.5px/1 var(--dn-font-sans)" }}>{ex.kind === "greeting" ? (ex.coachings.length ? "Save opening line" : "Keep as is") : ex.coachings.length ? "Accept & save rules" : "Accept answer"}</button>
+                  </div>
                 ) : (
                   <div style={{ border: "1px solid var(--dn-brand-light)", borderRadius: 9, padding: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <span style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase", color: "var(--dn-fg-subtle)" }}>Coach this line</span>
+                      <span onClick={() => setCoachOpen((o) => ({ ...o, [idx]: false }))} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", cursor: "pointer" }} title="Collapse the coach menu">▲ Collapse</span>
+                    </div>
                     <textarea value={coachDraft[idx] ?? ""} onChange={(e) => setCoachDraft((d) => ({ ...d, [idx]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void reAnswer(idx); }} placeholder={ex.kind === "greeting" ? "Coach the opening line — warmer, shorter, mention the brand… (disclosures are kept)" : ex.kind === "overview" ? `Coach the selected pitch section — or click ✎ on any part above. e.g. "keep it under 2 sentences", "use slide 3 here"…` : "Coach this answer — e.g. be more concise, lead with the approval status, warmer tone…"} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 12px/1.45 var(--dn-font-sans)", resize: "vertical", minHeight: 42, background: "var(--dn-surface-2)" }} />
                     {ex.kind !== "greeting" && (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "9px 0", flexWrap: "wrap" }}>
