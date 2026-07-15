@@ -102,11 +102,14 @@ export function SlideView({ focusId, compact = false, fill = false }: { focusId?
   return (
     <div style={fill ? { display: "flex", flexDirection: "column", gap: 8, height: "100%", minHeight: 0 } : { display: "grid", gap: 8 }}>
       <Slide s={slide} pal={pal} eyebrow={eyebrow} badge={badge} fill={fill} />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minWidth: 0 }}>
+        {/* Arrows flank only the fixed-width counter, so they NEVER shift when the slide title changes
+            length. The title sits AFTER the › and truncates instead of pushing the arrows around. */}
+        <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0 }}>
           <button onClick={() => setI((v) => Math.max(0, v - 1))} disabled={i === 0} style={navBtn(i === 0)}>‹</button>
-          <span style={{ font: "500 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>{i + 1} / {deck.length} · {slide.label}</span>
+          <span style={{ font: "500 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)", minWidth: 38, textAlign: "center", flex: "none" }}>{i + 1} / {deck.length}</span>
           <button onClick={() => setI((v) => Math.min(deck.length - 1, v + 1))} disabled={i === deck.length - 1} style={navBtn(i === deck.length - 1)}>›</button>
+          <span style={{ font: "500 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>· {slide.label}</span>
         </div>
         {!compact && (
           <a href={brand.deckPptxUrl} download style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", textDecoration: "none" }}>

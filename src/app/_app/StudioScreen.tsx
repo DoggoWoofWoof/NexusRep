@@ -1666,7 +1666,15 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
                   return (
                     <div key={v} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       <div>
-                        <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-brand-base)", marginBottom: 4 }}>{ex.kind === "greeting" ? "Rep opening" : ex.kind === "overview" ? "Brand pitch" : "AI rep"}{ex.answers.length > 1 ? ` · v${v + 1}` : ""}{isLatest ? "" : " · revised ↓"}</div>
+                        {/* The greeting already carries the "★ Rep's opening line" badge above, so its
+                            single version needs no second "Rep opening" label (that read as a duplicate).
+                            Show a label only for non-greeting answers, or a greeting REVISION (v2+). */}
+                        {(() => {
+                          const label = ex.kind === "greeting"
+                            ? (ex.answers.length > 1 ? `Revision v${v + 1}${isLatest ? "" : " · superseded ↓"}` : "")
+                            : `${ex.kind === "overview" ? "Brand pitch" : "AI rep"}${ex.answers.length > 1 ? ` · v${v + 1}` : ""}${isLatest ? "" : " · revised ↓"}`;
+                          return label ? <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-brand-base)", marginBottom: 4 }}>{label}</div> : null;
+                        })()}
                         {(() => {
                           const bubbleStyle: React.CSSProperties = { padding: "10px 12px", background: offLabel ? "#fffbeb" : isLatest ? "var(--dn-surface-2)" : "#fafbfc", border: `1px solid ${offLabel ? "#fcd34d" : "var(--dn-border)"}`, borderRadius: 9, font: "400 12px/1.55 var(--dn-font-sans)", color: isLatest ? "var(--dn-fg)" : "var(--dn-fg-subtle)", opacity: isLatest ? 1 : 0.7 };
                           const isiBlock = (isiText: string | null) => isiText && (
@@ -1765,11 +1773,11 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
                     </span>
                   </div>
                 ) : !coachOpen[idx] ? (
-                  // Collapsed: the thread reads as answers. One click opens the full coach menu; a
-                  // quick Accept stays available without expanding.
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => setCoachOpen((o) => ({ ...o, [idx]: true }))} style={{ ...btnGhost, flex: 1, padding: 9, font: "600 11.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>✎ {ex.kind === "greeting" ? "Coach the opening line" : "Coach this answer"}</button>
-                    <button onClick={() => void accept(idx)} disabled={busy} style={{ ...btnPrimary, flex: 1, padding: 9, font: "600 11.5px/1 var(--dn-font-sans)" }}>{ex.kind === "greeting" ? (ex.coachings.length ? "Save opening line" : "Keep as is") : ex.coachings.length ? "Accept & save rules" : "Accept answer"}</button>
+                  // Collapsed: the thread reads as clean answers — just a small "coach this line" link
+                  // at the right of the text (no big controls, no confusing "keep as is" when you're
+                  // not coaching). Clicking it opens the full coach menu; Accept lives in there.
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <span onClick={() => setCoachOpen((o) => ({ ...o, [idx]: true }))} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>{ex.kind === "greeting" ? "Coach the opening line ✎" : "Coach this line ✎"}</span>
                   </div>
                 ) : (
                   <div style={{ border: "1px solid var(--dn-brand-light)", borderRadius: 9, padding: 10 }}>
