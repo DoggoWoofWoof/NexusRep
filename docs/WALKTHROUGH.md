@@ -10,7 +10,18 @@
 
 ## 1. Current build status
 
-### Latest: Ask about a trial → that trial's slide + context; scope the deck to the skeleton (2026-07-15)
+### Latest: Coaching drives the deck + why the rehearsal felt inert (2026-07-15)
+
+- Coaching a specific slide now works: the trial-specificity re-rank reads the query AND the coaching
+  notes, so "actually use the LIBREXIA stroke slide" promotes the stroke answer + slide (when it's a
+  retrieved candidate). The transcript's "nothing changed" was mostly the retrieval-ranking drift
+  (v2 fell to a generic program reply) — fixed by trial specificity below; slide selection was the
+  remaining coaching gap. Tone notes ("warmer") already reach the LLM composer as brand coaching
+  (needs an AI key — usedLlm:false surfaces when there's none); accepting a coached exchange already
+  compacts style notes into one rule and gates sensitive ones (`acceptCoaching`). `orchestrator.ts`,
+  `tests/routing-robustness.test.ts`. Full suite 402 pass.
+
+### Ask about a trial → that trial's slide + context; scope the deck to the skeleton (2026-07-15)
 
 - **Trial specificity.** "What is the LIBREXIA stroke?" talked stroke but showed the PROGRAM slide
   (stroke only "offered"), and "Yeah, sure." dropped stroke for a generic program answer. Two roots:
