@@ -311,7 +311,12 @@ export class TurnOrchestrator {
       // the next bare follow-up ("Yeah, sure." → more stroke). Uses the text actually retrieved on
       // (context-biased for follow-ups). Only reorders when exactly one trial is named and its answer
       // is already a candidate — it never adds content, just promotes an already-retrieved block.
-      const specificityText = ("retrievalText" in retrievalSettled && retrievalSettled.retrievalText) || ctx.text;
+      // The named-trial signal comes from the query AND the coaching — so "actually use the LIBREXIA
+      // stroke slide" (a coaching note) promotes the stroke answer + slide, not just the raw question.
+      const specificityText = [
+        ("retrievalText" in retrievalSettled && retrievalSettled.retrievalText) || ctx.text,
+        ...(opts?.coaching ?? []),
+      ].join(" ");
       const namedTrials = TRIAL_TOPICS.filter((t) => t.query.test(specificityText));
       if (namedTrials.length === 1 && result.answers.length > 1) {
         const idx = result.answers.findIndex((a) => namedTrials[0]!.topic.test(a.topic));

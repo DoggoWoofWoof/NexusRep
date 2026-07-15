@@ -152,4 +152,18 @@ describe("trial specificity — name a trial, get THAT trial's slide (not the pr
     expect(output.route).toBe("approved_answer");
     expect(output.detailAidSlideId).toBe("slide_af");
   }, 60_000);
+
+  it("re-answering a stroke question WITH coaching keeps the STROKE slide (coaching reinforces, never drifts)", async () => {
+    // The training-transcript bug: coaching "warmer and actually use the librexia stroke slide"
+    // drifted the answer to a generic program/indications reply on the program slide. The coaching
+    // now feeds the trial-specificity signal, so it holds the stroke slide (and can't drift topic).
+    const c = await createContainer();
+    const out = await c.orchestrator.handleTurn(ctxFor(c, "what is the LIBREXIA stroke trial"), {
+      preview: true,
+      coaching: ["be warmer", "actually use the LIBREXIA stroke slide to answer"],
+    });
+    expect(out.route).toBe("approved_answer");
+    expect(out.detailAidSlideId).toBe("slide_stroke");
+    expect(out.responseText.toLowerCase()).toMatch(/stroke/);
+  }, 60_000);
 });
