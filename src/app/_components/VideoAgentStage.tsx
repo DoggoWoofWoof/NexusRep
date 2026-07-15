@@ -10,6 +10,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { createVideoTransport, type VideoCallTransport } from "./video-transport";
+import { hasSlideCue } from "@lib/slide-cue";
 
 type ConvResp = { provider: string; configured: boolean; conversationUrl: string | null; token: string | null; note: string; reachableLlm?: boolean; sessionId?: string; greeting?: string | null };
 type Stage = "loading" | "unconfigured" | "joining" | "live" | "ended" | "error";
@@ -39,7 +40,7 @@ export interface VideoAgentStageHandle {
 type RepTurnNotice = { text: string; detailAidSlideId?: string | null; sourceIds?: string[] };
 type PendingRepEcho = { text: string; detailAidSlideId?: string | null; timer?: number; notified: boolean; queuedAt: number };
 
-export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; onHcpUtterance?: (text: string) => void; hcpId?: string; onMutedChange?: (muted: boolean) => void }>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, hcpId, onMutedChange }, ref) {
+export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; onHcpUtterance?: (text: string) => void; hcpId?: string; onMutedChange?: (muted: boolean) => void; onSlideCue?: () => void }>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, hcpId, onMutedChange, onSlideCue }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const transportRef = useRef<VideoCallTransport | null>(null);
@@ -48,6 +49,10 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   const convIdRef = useRef<string>("");
   const lastUtterRef = useRef<string>("");
   const onRepTurnRef = useRef<typeof onRepTurn>(onRepTurn);
+  // Fires the instant the replica's STREAMING transcript reaches the slide cue, so the parent
+  // switches the deck exactly when the rep says it. Reset per rep turn so it fires once.
+  const onSlideCueRef = useRef<typeof onSlideCue>(onSlideCue);
+  const slideCuedThisTurnRef = useRef(false);
   // The opening line we speak as a normal (interruptible) echo once the replica is live — instead
   // of Tavus's custom_greeting, which is always non-interruptible. Echoed exactly once.
   const greetingRef = useRef<string | null>(null);
@@ -106,7 +111,8 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
 
   useEffect(() => {
     onRepTurnRef.current = onRepTurn;
-  }, [onRepTurn]);
+    onSlideCueRef.current = onSlideCue;
+  }, [onRepTurn, onSlideCue]);
 
   // Arm a rep caption and HOLD it until the replica's audio actually starts, so the caption lands
   // with the voice instead of ahead of it (the greeting used to caption before it was spoken).
@@ -491,6 +497,12 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             if (/replica|assistant|agent|ai|pal|face/i.test(e.role)) {
               if (/conversation\.utterance\.streaming/i.test(e.type)) {
                 recordTiming({ type: "vendor_streaming_utterance", reason: e.type, text: e.text });
+                // Switch the deck the INSTANT the replica's streaming transcript reaches the slide
+                // cue — exact timing, not the word-position estimate. Fires once per turn.
+                if (!slideCuedThisTurnRef.current && hasSlideCue(e.text)) {
+                  slideCuedThisTurnRef.current = true;
+                  onSlideCueRef.current?.();
+                }
               } else if (/conversation\.utterance$/i.test(e.type)) {
                 recordTiming({ type: "vendor_final_utterance", reason: e.type, text: e.text });
               }
@@ -501,6 +513,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
               (!e.role || /replica|assistant|agent|ai/i.test(e.role))
             ) {
               repSpeakingRef.current = true;
+              slideCuedThisTurnRef.current = false; // new turn → allow its slide cue to fire once
               recordTiming({ type: "vendor_started_speaking", reason: e.type });
               reportTurnLatency();
               void notifyPendingRepEcho("vendor_started");

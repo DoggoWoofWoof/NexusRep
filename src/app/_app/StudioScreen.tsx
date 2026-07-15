@@ -10,7 +10,7 @@ import { SlideView } from "../_components/SlideView";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { StudioAgentMode } from "./StudioAgentMode";
 import { OpenAiVoiceProvider, createRecognizer, setSpeechLanguage, toneSpeechOpts, estimateSpeechMs, type ClientRecognizer } from "@lib/browser-speech";
-import { slideCueDelayMs } from "@lib/slide-cue";
+import { useCuedSlide } from "../_components/useCuedSlide";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 import type { SetupProposedAction } from "@modules/setupAssistant";
 
@@ -1408,7 +1408,10 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
   // Shared script plan (per-line coaching writes to it; the deck panel follows the convo).
   const { activePlanStepId, setActivePlanStepId, activePlanSlideId, applyPlanNote } = useOverviewPlan();
   const [followSlideId, setFollowSlideId] = useState<string | null>(null);
-  const slideTimerRef = useRef<number | null>(null);
+  // Detail-aid slide switching timed to WHEN the rep speaks the cue — the SAME hook the doctor
+  // preview uses. On video it switches the instant the replica's streaming transcript reaches the
+  // cue (onSlideCue → VideoAgentStage); off-video, by word-position estimate. Backend gates WHETHER.
+  const { cueSlide, onSlideCue } = useCuedSlide(setFollowSlideId);
   const [deckOpen, setDeckOpen] = useState(true);
   // Inline per-section coaching on a rehearsed pitch segment ({exchange, segment} being coached).
   const [segCoach, setSegCoach] = useState<{ exIdx: number; segIdx: number } | null>(null);
@@ -1491,13 +1494,6 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
   };
 
   const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
-  // Switch the deck to the cued slide, TIMED to when the rep speaks the cue — the SAME helper the
-  // doctor preview uses. No id → no switch (the backend only sends a slide when the answer cues one).
-  const cueSlide = (id?: string | null, spokenText?: string) => {
-    if (!id) return;
-    if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current);
-    slideTimerRef.current = window.setTimeout(() => setFollowSlideId(id), slideCueDelayMs(spokenText));
-  };
 
   const ask = async (forced?: string) => {
     if (asking) return;
@@ -1513,12 +1509,12 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
     if (a.route !== "error") {
       if (a.segments?.length) {
         for (const seg of a.segments) {
-          cueSlide(seg.detailAidSlideId, seg.response);
+          cueSlide(seg.detailAidSlideId, seg.response, showVideo);
           speakAnswer(seg.response);
           await wait(estimateSpeechMs(seg.response));
         }
       } else {
-        cueSlide(a.detailAidSlideId, a.text);
+        cueSlide(a.detailAidSlideId, a.text, showVideo);
         speakAnswer(a.text);
       }
     }
@@ -1563,7 +1559,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
     if (ex.kind === "overview") await applyPlanNote(note, opts?.stepId ?? activePlanStepId);
     const a = await runPreview({ kind: ex.kind, q: ex.q, current: ex.answers[ex.answers.length - 1]!.text }, coachings);
     setExchanges((xs) => xs.map((x, i) => (i === idx ? { ...x, coachings, answers: [...x.answers, a] } : x)));
-    cueSlide(a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId, a.text);
+    cueSlide(a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId, a.text, showVideo);
     setCoachDraft((d) => ({ ...d, [idx]: "" }));
     setBusyIdx(null);
     speakAnswer(a.text); // hear the retake — through the rep on video, else OpenAI TTS
@@ -1593,7 +1589,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
       {/* Rep preview + drive */}
       <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
         {showVideo ? (
-          <VideoAgentStage ref={videoRef} onClose={() => setShowVideo(false)} />
+          <VideoAgentStage ref={videoRef} onClose={() => setShowVideo(false)} onSlideCue={onSlideCue} />
         ) : (
           <div style={{ position: "relative", borderRadius: 15, overflow: "hidden", aspectRatio: "4/3", background: "radial-gradient(120% 120% at 50% 0%, #15315f 0%, #0a1a33 60%, #060f1f 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "var(--dn-shadow-dark)" }}>
             <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "center", gap: 7, background: "rgba(0,0,0,.4)", padding: "6px 11px", borderRadius: 8, border: "1px solid rgba(255,255,255,.12)" }}><span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fbbf24" }} /><span style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "#fff" }}>AI rep · {repName}</span></div>

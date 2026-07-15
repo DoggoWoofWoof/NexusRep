@@ -32,6 +32,14 @@ const CUE_MARKERS = [
   "pulled up",
 ];
 
+/** Does this (possibly partial) transcript contain a slide cue yet? Used on the VIDEO path to switch
+ *  the deck the instant the replica's STREAMING transcript reaches the cue (exact, not estimated). */
+export function hasSlideCue(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return /\bslides?\b/.test(lower) || CUE_MARKERS.some((m) => lower.includes(m));
+}
+
 /** Milliseconds to wait (from when the rep STARTS speaking the answer) before switching the deck to
  *  the cued slide, so the switch lands as the rep says it. */
 export function slideCueDelayMs(text?: string): number {

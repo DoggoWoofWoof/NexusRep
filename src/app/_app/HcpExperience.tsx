@@ -11,7 +11,7 @@ import { SlideView } from "../_components/SlideView";
 import { useBrand } from "../_components/useBrand";
 import { isOverviewPrompt } from "./overviewPrompt";
 import { appendTurn, type TranscriptMsg } from "@lib/transcript";
-import { slideCueDelayMs } from "@lib/slide-cue";
+import { useCuedSlide } from "../_components/useCuedSlide";
 
 // Wall-clock read behind a tiny indirection. These timestamps are for ASR-latency telemetry in
 // DEFERRED handlers (mic tap, recognizer callbacks) — never during render — but a bare Date.now()
@@ -62,8 +62,9 @@ export function HcpExperience({ app }: { app?: AppState }) {
   const rootRef = useRef<HTMLDivElement>(null);
   // This text/voice chat's own reviewable session (video uses the Tavus session).
   const chatSessionRef = useRef<string | null>(null);
-  // Pending mid-answer slide switch (cleared if a new question arrives first).
-  const slideTimerRef = useRef<number | null>(null);
+  // Detail-aid slide switching timed to WHEN the rep speaks the cue: on video, exactly when the
+  // replica's streaming transcript reaches it (onSlideCue → VideoAgentStage); off-video, by estimate.
+  const { cueSlide, onSlideCue, cancel: cancelSlideCue } = useCuedSlide(setDeckFocus);
 
   // The rep's speech locale (ASR + TTS) follows the brand persona's language.
   useEffect(() => { setSpeechLanguage(brand?.language); }, [brand]);
@@ -77,7 +78,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setMicSupported(rec.supported());
     const onFs = () => setFs(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", onFs);
-    return () => { voiceRef.current?.cancel(); document.removeEventListener("fullscreenchange", onFs); if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current); };
+    return () => { voiceRef.current?.cancel(); document.removeEventListener("fullscreenchange", onFs); cancelSlideCue(); };
   }, []);
 
   async function speak(text: string) {
@@ -114,23 +115,17 @@ export function HcpExperience({ app }: { app?: AppState }) {
         // Provider not connected yet: keep the transcript truthful by showing the gated text only
         // when there is no video voice path to carry it.
         showRep(text);
-        cueSlide(slideId, text);
+        cueSlide(slideId, text, true);
       }
       await wait(estimateSpeechMs(text));
       return;
     }
     // Transcript first, immediately — the caption is never delayed to match the voice.
     showRep(text);
-    cueSlide(slideId, text);
+    cueSlide(slideId, text, false);
     // Then speak (kick the audio off the moment the text exists). Awaited so a multi-segment
     // overview still paces one segment after the previous finishes.
     if (voiceOn) await speak(text);
-  }
-
-  function cueSlide(id?: string | null, spokenText?: string) {
-    if (!id) return;
-    if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current);
-    slideTimerRef.current = window.setTimeout(() => setDeckFocus(id), slideCueDelayMs(spokenText));
   }
 
   // The live video rep speaks its own turns (greeting + answers); each spoken utterance the
@@ -143,7 +138,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
     // earlier (a follow-up legitimately re-uses the same approved text). The old all-messages check
     // here is what silently ate repeated turns, leaving the rep bubble missing from the transcript.
     setMsgs((current) => appendTurn(current, "rep", text));
-    cueSlide(turn.detailAidSlideId, text);
+    cueSlide(turn.detailAidSlideId, text, true);
   }
 
   function addSpokenHcpTurn(text: string) {
@@ -419,7 +414,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
               {/* LEFT — the rep (live Tavus video OR the 3D/2D avatar) + one ask bar */}
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {videoOn
-                  ? <VideoAgentStage onMutedChange={setVideoMuted} onHcpUtterance={addSpokenHcpTurn} ref={videoAgentRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} hcpId={inviteHcpId || undefined} />
+                  ? <VideoAgentStage onMutedChange={setVideoMuted} onHcpUtterance={addSpokenHcpTurn} ref={videoAgentRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} onSlideCue={onSlideCue} hcpId={inviteHcpId || undefined} />
                   : <LiveAvatar ref={liveRef} enabled={threeD} speaking={speaking} fallbackStream={null} fallbackStatus={listening ? "Listening…" : speaking ? "Speaking…" : "Ready"} height={300} />}
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{hintsCard}{askBar("Ask")}{tryChips}</div>
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -477,7 +472,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
             <div style={{ width: 56, height: 56, borderRadius: "50%", background: "var(--dn-accent-green-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 26, color: "#166534" }}>✓</div>
             <h1 style={{ font: "600 21px/1.25 var(--dn-font-sans)", margin: 0, color: "var(--dn-fg)" }}>Thanks for your time</h1>
             <p style={{ font: "400 13px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "10px 0 20px" }}>Request a follow-up and we&apos;ll send approved {displayName} information or connect you with our team.</p>
-            <button onClick={() => { if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current); setScr("invite"); setMsgs([]); setNotice(""); setDeckFocus(""); setVideoOn(false); chatSessionRef.current = null; }} style={{ width: "100%", padding: 12, background: "var(--dn-surface-2)", color: "var(--dn-fg-muted)", border: "1px solid var(--dn-border)", borderRadius: 10, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Close session</button>
+            <button onClick={() => { cancelSlideCue(); setScr("invite"); setMsgs([]); setNotice(""); setDeckFocus(""); setVideoOn(false); chatSessionRef.current = null; }} style={{ width: "100%", padding: 12, background: "var(--dn-surface-2)", color: "var(--dn-fg-muted)", border: "1px solid var(--dn-border)", borderRadius: 10, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Close session</button>
           </div>
         </div>
       )}
