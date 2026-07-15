@@ -89,6 +89,18 @@ describe("NexusRep first-party presentation skill", () => {
     expect(steps.map((s) => s.detailAidSlideId)).toContain("slide_moa");
   });
 
+  it("scopes the rendered deck to a chosen skeleton asset (present ONE deck, not all pooled)", async () => {
+    const c = await createContainer();
+    const ctx = { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market };
+    // Default (no skeleton set) → the whole approved deck, as before.
+    const full = await c.presentation.deck(ctx);
+    expect(full.length).toBeGreaterThan(1);
+    // Scoped to an asset that owns none of the slides → empty, proving the deck really filters by
+    // the skeleton asset (so a second uploaded deck can't leak into the one you're presenting).
+    const other = await c.presentation.deck(ctx, { assetId: "asset_does_not_exist" });
+    expect(other).toEqual([]);
+  });
+
   it("uses a saved guided-overview plan to drive section-by-section slide references", async () => {
     const c = await createContainer();
     const steps = await c.presentation.overview({

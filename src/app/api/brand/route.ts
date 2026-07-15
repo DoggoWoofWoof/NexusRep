@@ -36,8 +36,11 @@ export async function GET(): Promise<NextResponse> {
   // slides in the HCP view — the detail aid follows the content module, never a static deck.
   const [answers, slides] = await Promise.all([c.content.listAnswers(), c.content.listSlides()]);
   const slideById = new Map(slides.map((s) => [String(s.id), s]));
+  // Scope the doctor-facing deck to the chosen skeleton (the deck being presented) when one is set,
+  // so it matches the training/pitch deck. Unset (single-deck default) → the whole approved deck.
+  const deckAssetId = snap?.guidedOverview?.deckAssetId;
   const live = answers
-    .filter((a) => isRetrievable(a.mlr) && a.detailAidSlideId)
+    .filter((a) => isRetrievable(a.mlr) && a.detailAidSlideId && (!deckAssetId || String(a.contentAssetId) === deckAssetId))
     .map((a): LiveDeckInput | null => {
       const slide = slideById.get(String(a.detailAidSlideId));
       return slide ? { id: String(slide.id), title: slide.title, label: slide.label, position: slide.position, text: a.text } : null;

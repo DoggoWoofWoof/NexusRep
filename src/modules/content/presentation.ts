@@ -55,6 +55,10 @@ export interface PresentationPlanStep {
 export interface PresentationPlan {
   steps: PresentationPlanStep[];
   updatedAt?: string;
+  /** The ONE deck asset this presentation is built from (the skeleton). When set, the rendered deck
+   *  and the walkthrough scope to THIS asset's slides; other approved content stays retrieval-only
+   *  (RAG) supplement. Unset → the whole approved ppt deck (single-deck default). */
+  deckAssetId?: string;
 }
 
 function cleanStep(step: PresentationPlanStep, fallback: PresentationPlanStep, slides: PresentationDeckSlide[], index: number): PresentationPlanStep {
@@ -78,6 +82,8 @@ export function mergePlan(saved: PresentationPlan | undefined, fallback: Present
   const fallbackByIndex = fallback.steps;
   return {
     updatedAt: base.updatedAt ?? fallback.updatedAt,
+    // The chosen skeleton deck persists with the plan (saved wins; else the fallback's).
+    ...(base.deckAssetId ?? fallback.deckAssetId ? { deckAssetId: base.deckAssetId ?? fallback.deckAssetId } : {}),
     steps: base.steps.map((step, index) => cleanStep(step, fallbackByIndex[index] ?? fallback.steps[0]!, slides, index)),
   };
 }
@@ -277,8 +283,8 @@ export class PresentationSkill {
     return fallback;
   }
 
-  async deck(ctx: SourceValidationContext = {}): Promise<PresentationDeckSlide[]> {
-    return (await this.deckItems(ctx)).map((item, index) => ({
+  async deck(ctx: SourceValidationContext = {}, opts?: { assetId?: string }): Promise<PresentationDeckSlide[]> {
+    return (await this.deckItems(ctx, opts?.assetId)).map((item, index) => ({
       id: item.slide?.id ? String(item.slide.id) : String(item.answer.detailAidSlideId ?? item.answer.id),
       title: item.slide?.title ?? item.answer.topic,
       label: item.slide?.label ?? `Slide ${index + 1}`,

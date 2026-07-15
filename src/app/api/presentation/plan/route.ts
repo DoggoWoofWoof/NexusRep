@@ -88,9 +88,12 @@ async function saveGuidedOverview(c: Awaited<ReturnType<typeof getContainer>>, p
 async function snapshot(): Promise<{ slides: PresentationDeckSlide[]; plan: PresentationPlan }> {
   const c = await getContainer();
   const presentation = new PresentationSkill(c.content);
-  const slides = await presentation.deck(contextOf(c));
-  const fallback = await presentation.defaultPlan(contextOf(c));
   const saved = (await c.studio.get(c.demo.aiRepId))?.guidedOverview;
+  // The rendered deck is scoped to the skeleton the plan was drafted from — so with multiple decks
+  // you present ONE, not all pooled. Unset (single-deck default) → the whole approved ppt deck.
+  const assetId = saved?.deckAssetId;
+  const slides = await presentation.deck(contextOf(c), { assetId });
+  const fallback = await presentation.defaultPlan(contextOf(c), { assetId });
   return { slides, plan: mergePlan(saved, fallback, slides) };
 }
 
@@ -116,23 +119,26 @@ export async function POST(req: Request): Promise<NextResponse> {
     };
     const c = await getContainer();
     const presentation = new PresentationSkill(c.content);
-    const slides = await presentation.deck(contextOf(c));
-    const fallback = await presentation.defaultPlan(contextOf(c));
     const saved = (await c.studio.get(c.demo.aiRepId))?.guidedOverview;
+    // The skeleton deck this presentation is scoped to (reset can change it below). Everything —
+    // rendered deck, fallback plan, walkthrough — scopes to this asset; unset → the whole ppt deck.
+    let deckAssetId = saved?.deckAssetId;
+    let slides = await presentation.deck(contextOf(c), { assetId: deckAssetId });
+    let fallback = await presentation.defaultPlan(contextOf(c), { assetId: deckAssetId });
     let plan = mergePlan(saved, fallback, slides);
     let warning: string | undefined;
 
     if (body.action === "save") {
       const raw = body.plan as Partial<PresentationPlan> | undefined;
       const steps = Array.isArray(raw?.steps) ? raw.steps : [];
-      plan = mergePlan({ steps: steps as PresentationPlanStep[] }, fallback, slides);
+      plan = mergePlan({ steps: steps as PresentationPlanStep[], deckAssetId }, fallback, slides);
     } else if (body.action === "applyFeedback") {
       if (typeof body.feedback !== "string" || !body.feedback.trim()) {
         return NextResponse.json({ error: "feedback required" }, { status: 400 });
       }
       // Bounded like every other coaching input (the note lands in a stored instruction).
       const applied = applyFeedback(plan, slides, body.feedback.slice(0, 500), typeof body.stepId === "string" ? body.stepId : undefined);
-      plan = applied.plan;
+      plan = { ...applied.plan, ...(deckAssetId ? { deckAssetId } : {}) };
       warning = applied.warning;
     } else if (body.action === "reset") {
       const assetId = typeof body.assetId === "string" && body.assetId.trim() ? body.assetId.trim() : undefined;
@@ -142,8 +148,15 @@ export async function POST(req: Request): Promise<NextResponse> {
           // Honest refusal: the picked source has no APPROVED slides yet (still in MLR).
           return NextResponse.json({ error: "that source has no approved slides yet — approve its passages in MLR review first", slides, plan }, { status: 409 });
         }
-        plan = scoped;
+        // Presenting THIS deck: it becomes the skeleton, so the rendered deck scopes to its slides.
+        deckAssetId = assetId;
+        plan = { ...scoped, deckAssetId };
+        slides = await presentation.deck(contextOf(c), { assetId });
       } else {
+        // Reset with no asset → clear the skeleton (present the whole approved deck again).
+        deckAssetId = undefined;
+        fallback = await presentation.defaultPlan(contextOf(c));
+        slides = await presentation.deck(contextOf(c));
         plan = fallback;
       }
     } else {
