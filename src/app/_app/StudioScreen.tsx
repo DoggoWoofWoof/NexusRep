@@ -9,7 +9,8 @@ import { isOverviewPrompt } from "./overviewPrompt";
 import { SlideView } from "../_components/SlideView";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { StudioAgentMode } from "./StudioAgentMode";
-import { OpenAiVoiceProvider, createRecognizer, setSpeechLanguage, toneSpeechOpts, type ClientRecognizer } from "@lib/browser-speech";
+import { OpenAiVoiceProvider, createRecognizer, setSpeechLanguage, toneSpeechOpts, estimateSpeechMs, type ClientRecognizer } from "@lib/browser-speech";
+import { slideCueDelayMs } from "@lib/slide-cue";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 import type { SetupProposedAction } from "@modules/setupAssistant";
 
@@ -1407,6 +1408,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
   // Shared script plan (per-line coaching writes to it; the deck panel follows the convo).
   const { activePlanStepId, setActivePlanStepId, activePlanSlideId, applyPlanNote } = useOverviewPlan();
   const [followSlideId, setFollowSlideId] = useState<string | null>(null);
+  const slideTimerRef = useRef<number | null>(null);
   const [deckOpen, setDeckOpen] = useState(true);
   // Inline per-section coaching on a rehearsed pitch segment ({exchange, segment} being coached).
   const [segCoach, setSegCoach] = useState<{ exIdx: number; segIdx: number } | null>(null);
@@ -1488,6 +1490,15 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
     void speakCoached(text, voiceStyle, brand?.voiceId || undefined);
   };
 
+  const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
+  // Switch the deck to the cued slide, TIMED to when the rep speaks the cue — the SAME helper the
+  // doctor preview uses. No id → no switch (the backend only sends a slide when the answer cues one).
+  const cueSlide = (id?: string | null, spokenText?: string) => {
+    if (!id) return;
+    if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current);
+    slideTimerRef.current = window.setTimeout(() => setFollowSlideId(id), slideCueDelayMs(spokenText));
+  };
+
   const ask = async (forced?: string) => {
     if (asking) return;
     const q = forced?.trim() || input.trim() || brand?.tryQuestions[0] || "Tell me about this therapy.";
@@ -1496,10 +1507,21 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
     setInput("");
     const a = await runPreview({ kind, q, current: "" }, []);
     setExchanges((xs) => [...xs, { q, kind, answers: [a], coachings: [], scope: "persona", accepted: false }]);
-    setFollowSlideId((a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId) ?? null);
-    // Speak the answer, don't just print it (through the rep on video, else OpenAI TTS). Skip the
-    // error fallback so we never read the "service unreachable" line aloud.
-    if (a.route !== "error") speakAnswer(a.text);
+    // Deliver exactly like the doctor preview: WALK an overview segment-by-segment (each segment's
+    // slide is cued as the rep reaches it), else cue the single answer's slide. Backend gates the
+    // slide on a spoken cue, so no cue → no switch. The error fallback is never read aloud.
+    if (a.route !== "error") {
+      if (a.segments?.length) {
+        for (const seg of a.segments) {
+          cueSlide(seg.detailAidSlideId, seg.response);
+          speakAnswer(seg.response);
+          await wait(estimateSpeechMs(seg.response));
+        }
+      } else {
+        cueSlide(a.detailAidSlideId, a.text);
+        speakAnswer(a.text);
+      }
+    }
     setAsking(false);
   };
 
@@ -1541,7 +1563,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
     if (ex.kind === "overview") await applyPlanNote(note, opts?.stepId ?? activePlanStepId);
     const a = await runPreview({ kind: ex.kind, q: ex.q, current: ex.answers[ex.answers.length - 1]!.text }, coachings);
     setExchanges((xs) => xs.map((x, i) => (i === idx ? { ...x, coachings, answers: [...x.answers, a] } : x)));
-    setFollowSlideId((a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId) ?? null);
+    cueSlide(a.segments?.length ? a.segments[a.segments.length - 1]!.detailAidSlideId : a.detailAidSlideId, a.text);
     setCoachDraft((d) => ({ ...d, [idx]: "" }));
     setBusyIdx(null);
     speakAnswer(a.text); // hear the retake — through the rep on video, else OpenAI TTS

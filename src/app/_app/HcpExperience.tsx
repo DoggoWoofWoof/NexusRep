@@ -11,10 +11,7 @@ import { SlideView } from "../_components/SlideView";
 import { useBrand } from "../_components/useBrand";
 import { isOverviewPrompt } from "./overviewPrompt";
 import { appendTurn, type TranscriptMsg } from "@lib/transcript";
-
-// The server's approved-content pipeline chooses the slide. The transcript text only nudges
-// timing a little so the deck moves like a presenter, not as a brittle keyword trigger.
-const SLIDE_CUE_DELAY_MS = 850;
+import { slideCueDelayMs } from "@lib/slide-cue";
 
 // Wall-clock read behind a tiny indirection. These timestamps are for ASR-latency telemetry in
 // DEFERRED handlers (mic tap, recognizer callbacks) — never during render — but a bare Date.now()
@@ -130,40 +127,10 @@ export function HcpExperience({ app }: { app?: AppState }) {
     if (voiceOn) await speak(text);
   }
 
-  function slideCueDelay(text?: string): number {
-    const body = text?.trim();
-    if (!body) return SLIDE_CUE_DELAY_MS;
-    const lower = body.toLowerCase();
-    const markers = [
-      "you can see",
-      "you can look",
-      "i've pulled up",
-      "i have pulled up",
-      "take a look",
-      "on your screen",
-      "on screen",
-      "shown on",
-      "available on screen",
-      "let's move to",
-      "we'll start with",
-      "i'll use",
-      "i’d show",
-      "i'd show",
-      "i'm showing",
-    ];
-    const idx = markers
-      .map((m) => lower.indexOf(m))
-      .filter((i) => i >= 0)
-      .sort((a, b) => a - b)[0];
-    if (idx == null) return SLIDE_CUE_DELAY_MS;
-    const wordsBefore = body.slice(0, idx).split(/\s+/).filter(Boolean).length;
-    return Math.min(1800, Math.max(550, wordsBefore * 125));
-  }
-
   function cueSlide(id?: string | null, spokenText?: string) {
     if (!id) return;
     if (slideTimerRef.current) window.clearTimeout(slideTimerRef.current);
-    slideTimerRef.current = window.setTimeout(() => setDeckFocus(id), slideCueDelay(spokenText));
+    slideTimerRef.current = window.setTimeout(() => setDeckFocus(id), slideCueDelayMs(spokenText));
   }
 
   // The live video rep speaks its own turns (greeting + answers); each spoken utterance the
