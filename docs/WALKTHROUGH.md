@@ -10,7 +10,35 @@
 
 ## 1. Current build status
 
-### Latest: Tavus ASR quality + slide-cue timing + always-name-the-slide (2026-07-15)
+### Latest: Audit — slide ownership, audio-start anchoring, ASR correction everywhere (2026-07-15)
+
+Audit prompted by "who moves the slides — did we give it to Tavus?": **our own React** renders the
+deck (`SlideView` + `deckFocus`/`followSlideId`); Tavus only supplies video/voice/STT and emits
+events. Slide control was never handed to Tavus, so our logic does take effect. The real bugs:
+
+- **Slides changed BEFORE the cue.** The switch was driven by the replica's streaming *text*, which
+  with a custom LLM arrives seconds before it's spoken; training also anchored its timer at
+  echo-queue (before TTS renders). Now the switch is anchored to the **audio-start** event
+  (`vendor_started_speaking`) and the cue offset counts from there — doctor preview AND training
+  (ask + coach). Streaming-text trigger removed; `useCuedSlide` gained an audio-start latch to
+  resolve the arm/start race either order. `VideoAgentStage.tsx`, `useCuedSlide.ts`, both screens.
+- **ASR wrong in TRAINING.** The rehearsal mic sent raw browser-ASR straight to the rep with NO
+  hotword correction (the doctor view had it). Applied `correctBestAlternative` there; corrected the
+  Tavus HCP transcript client-side; and corrected the transcript **server-side** in `/api/tavus/llm`
+  before the orchestrator, so the answer is right even when STT mishears.
+- **Config must reach Tavus.** If a plan rejects the medical STT engine on an EXISTING persona, the
+  whole layers PATCH failed silently — taking hotwords/TTS/prompt down with it. The PATCH now retries
+  without `stt_engine`. `tavus.ts`.
+- **Correction safety.** Adding trial names (LIBREXIA AF/ACS/STROKE) as hotwords made a bare
+  "lebrixia" fuzzy-snap to "LIBREXIA AF", narrowing a general question into a trial. Fixed:
+  `correctTranscript` now requires a same-length window, and `correctionTerms()` keeps the trial
+  names as STT hotwords but excludes the ambiguous prefix-sharing combos from TEXT correction — so we
+  never snap to the wrong trial. `asr-correct.ts`.
+- The **collapsible coach** shipped the prior commit (`coachOpen` defaults collapsed); if the full
+  controls still show, that's the earlier Render deploy.
+- `tests/asr-correct.test.ts` (+ the no-wrong-trial guarantee). Full suite **396 pass**; build clean.
+
+### Tavus ASR quality + slide-cue timing + always-name-the-slide (2026-07-15)
 
 From a live doctor transcript (STT mangling clinical terms, deck switching long before/never at
 the cue, the rep sometimes never naming an on-screen slide) — root-caused and fixed on the Tavus path:
