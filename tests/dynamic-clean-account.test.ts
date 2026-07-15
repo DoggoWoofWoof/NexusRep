@@ -80,9 +80,10 @@ describe("dynamic clean-account flow (upload → overview + KB + slide navigatio
       "Zephyrol is being developed by Helios Therapeutics.",
     ].join("\n\n"));
 
-    // Overview is generated from the uploaded content (not empty, not hard-coded).
+    // Overview is SCOPED to the uploaded DECK (the 5-block PPT), NOT the extra 2-block FAQ doc:
+    // docs are RAG-answerable but must not bloat the walkthrough → 5 slides, not 7.
     const overview = await c.presentation.overview({ context: { audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market } });
-    expect(overview.length).toBeGreaterThan(0);
+    expect(overview.length, "overview scoped to the deck, not the FAQ doc").toBe(5);
     expect(overview.map((s) => s.text).join(" ").toLowerCase()).toContain("zephyrol");
 
     // Q&A is grounded in the UPLOADED KB and navigates to a specific uploaded slide.

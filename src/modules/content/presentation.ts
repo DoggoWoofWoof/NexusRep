@@ -116,6 +116,15 @@ function weightedSlideScore(item: DeckItem, query: string): number {
   return words(query).reduce((n, w) => n + (slideHay.includes(w) ? 3 : 0) + (bodyHay.includes(w) ? 1 : 0), 0);
 }
 
+/** Two topics are related if they share a meaningful content word (>=4 chars) — a light signal for
+ *  "this KB block belongs with that deck slide" without a per-slide retrieval call. */
+function topicsRelated(a: string, b: string): boolean {
+  const words = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9]{4,}/g) ?? []);
+  const wb = words(b);
+  for (const w of words(a)) if (wb.has(w)) return true;
+  return false;
+}
+
 function order(item: DeckItem): number {
   if (item.slide?.position != null) return item.slide.position;
   const fromLabel = item.slide?.label.match(/\b(?:slide|page)\s+(\d+)/i)?.[1];
@@ -323,17 +332,24 @@ export class PresentationSkill {
 
   private async deckItems(ctx: SourceValidationContext, assetId?: string): Promise<DeckItem[]> {
     const all = await this.content.listAnswers();
-    const answers = assetId ? all.filter((a) => String(a.contentAssetId) === assetId) : all;
     const slides = await this.content.listSlides();
     const byId = new Map(slides.map((s) => [s.id, s]));
 
-    // ONE deck item per SLIDE. The first validated answer for a slide anchors it (primary); any
-    // further answers mapped to that same slide become `related` blocks the composer weaves in to
-    // expand the slide. Insertion order = seed order, so the original seeded block is the primary
-    // and the added detail blocks enrich it — the deck stays the real N slides, not one-per-answer.
+    // The DECK we present is GROUNDED IN THE PPT: scope to answers on ppt-kind assets (the deck),
+    // unless an explicit source was picked ("draft from this PPT"). Everything else uploaded
+    // (pdf / faq / script / isi) stays in the RAG for Q&A but does NOT become an overview slide, so
+    // extra documents can't bloat the walkthrough. (Seeded demo has one ppt asset → no-op. If no ppt
+    // asset exists at all, fall back to everything so the overview isn't empty.)
+    const assets = await this.content.listAssets();
+    const deckAssetIds = new Set(assets.filter((a) => a.kind === "ppt").map((a) => String(a.id)));
+    const isDeck = (a: ApprovedAnswer) =>
+      assetId ? String(a.contentAssetId) === assetId : deckAssetIds.size === 0 || deckAssetIds.has(String(a.contentAssetId));
+
+    // ONE deck item per SLIDE. The first validated deck answer for a slide anchors it (primary); any
+    // further deck answers on that slide become `related` blocks the composer weaves in.
     const bySlide = new Map<string, DeckItem>();
-    for (const answer of answers) {
-      if (!answer.detailAidSlideId) continue;
+    for (const answer of all) {
+      if (!answer.detailAidSlideId || !isDeck(answer)) continue;
       const checked = await this.content.validateAnswer(answer.id, ctx);
       if (!isOk(checked)) continue;
       const key = String(answer.detailAidSlideId);
@@ -341,8 +357,23 @@ export class PresentationSkill {
       if (existing) existing.related.push(checked.value);
       else bySlide.set(key, { answer: checked.value, slide: byId.get(answer.detailAidSlideId) ?? null, related: [] });
     }
+    const items = [...bySlide.values()].sort((a, b) => order(a) - order(b) || String(a.answer.id).localeCompare(String(b.answer.id)));
 
-    return [...bySlide.values()].sort((a, b) => order(a) - order(b) || String(a.answer.id).localeCompare(String(b.answer.id)));
+    // SUPPLEMENT each deck slide with related KB from NON-deck sources on the same topic (validated
+    // + active) — the walkthrough stays grounded in the PPT but is enriched by the wider knowledge
+    // base. No-op for the seeded demo (nothing non-deck); light for uploads (a few docs).
+    if (items.length) {
+      const extra: ApprovedAnswer[] = [];
+      for (const a of all) {
+        if (isDeck(a) || !a.detailAidSlideId) continue;
+        const checked = await this.content.validateAnswer(a.id, ctx);
+        if (isOk(checked)) extra.push(checked.value);
+      }
+      for (const item of items) {
+        for (const a of extra) if (topicsRelated(item.answer.topic, a.topic)) item.related.push(a);
+      }
+    }
+    return items;
   }
 
   private async buildStep(items: DeckItem[], index: number, action: PresentationAction, guidance: string[] = [], overview = false): Promise<PresentationStep> {
