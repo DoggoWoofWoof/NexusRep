@@ -1165,31 +1165,28 @@ function PitchMode({ voiceStyle }: { voiceStyle?: string }) {
           <div style={{ padding: "9px 14px 12px", font: "400 10.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>The slide for the selected script line — click any line in the middle to jump.</div>
         </div>
 
-        {/* Deck sources — pick which approved document drafts the script, or upload a new one. */}
+        {/* Presentation deck — the ONE deck whose slides are the script's skeleton. Every other
+            approved doc (and every slide, this deck's included) is retrieval-only supplement — you
+            never "present all sources", so there's a single Draft action per deck, no all-sources one. */}
         <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "13px 14px", boxShadow: "var(--dn-shadow-card)" }}>
-          <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginBottom: 4 }}>Deck sources</div>
-          <div style={{ font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 10 }}>Approved documents whose slides feed this deck.{activeSources.length > 1 ? " Draft the script from one source, or from everything approved." : ""}</div>
+          <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginBottom: 4 }}>Presentation deck</div>
+          <div style={{ font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 10 }}>The deck you present — its slides are the script&apos;s skeleton. Every other approved document (and all slides) supplements each line automatically from the knowledge base.{activeSources.length > 1 ? " With more than one deck, draft from the one you present; the rest stay as supplementary sources." : ""}</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
             {sources === null && <div style={{ font: "400 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Loading sources…</div>}
             {activeSources.map((doc) => (
               <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", border: "1px solid var(--dn-surface-2)", borderRadius: 9 }}>
                 <span style={{ flex: 1, minWidth: 0, font: "600 11px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{doc.title}</span>
                 <span style={{ flexShrink: 0, font: "500 9.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{doc.slides} slide(s)</span>
-                <button onClick={() => void draftFrom(doc.id)} style={{ ...btnGhost, flexShrink: 0, padding: "5px 8px", font: "600 9.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>{activeSources.length > 1 ? "Draft script from this" : "Draft script"}</button>
+                <button onClick={() => void draftFrom(doc.id)} style={{ ...btnGhost, flexShrink: 0, padding: "5px 8px", font: "600 9.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>{activeSources.length > 1 ? "Present this deck" : "Draft script"}</button>
               </div>
             ))}
             {sources !== null && activeSources.length === 0 && <div style={{ font: "400 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>No approved sources with slides yet — upload below and approve in Build.</div>}
           </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--dn-surface-2)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--dn-surface-2)" }}>
             <label style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>
               ↑ Upload another deck / PDF
               <input data-testid="upload-deck" type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => void onUploadDeck(e.target.files?.[0])} style={{ display: "none" }} />
             </label>
-            {/* "Draft from all sources" only means something DIFFERENT from the per-source button when
-                there are 2+ sources — with one source they draft the same thing, so hide it then. */}
-            {activeSources.length > 1 && (
-              <button onClick={() => void draftFrom()} style={{ ...btnGhost, padding: "6px 9px", font: "600 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>↺ Draft from all sources</button>
-            )}
           </div>
           {uploadNote && <div style={{ font: "500 10px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginTop: 8 }}>{uploadNote}</div>}
         </div>
