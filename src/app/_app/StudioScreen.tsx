@@ -1168,14 +1168,14 @@ function PitchMode({ voiceStyle }: { voiceStyle?: string }) {
         {/* Deck sources — pick which approved document drafts the script, or upload a new one. */}
         <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "13px 14px", boxShadow: "var(--dn-shadow-card)" }}>
           <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginBottom: 4 }}>Deck sources</div>
-          <div style={{ font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 10 }}>Approved documents whose slides feed this deck. Draft the script from one source, or from everything approved.</div>
+          <div style={{ font: "400 10.5px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginBottom: 10 }}>Approved documents whose slides feed this deck.{activeSources.length > 1 ? " Draft the script from one source, or from everything approved." : ""}</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
             {sources === null && <div style={{ font: "400 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Loading sources…</div>}
             {activeSources.map((doc) => (
               <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", border: "1px solid var(--dn-surface-2)", borderRadius: 9 }}>
                 <span style={{ flex: 1, minWidth: 0, font: "600 11px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{doc.title}</span>
                 <span style={{ flexShrink: 0, font: "500 9.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{doc.slides} slide(s)</span>
-                <button onClick={() => void draftFrom(doc.id)} style={{ ...btnGhost, flexShrink: 0, padding: "5px 8px", font: "600 9.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>Draft script from this</button>
+                <button onClick={() => void draftFrom(doc.id)} style={{ ...btnGhost, flexShrink: 0, padding: "5px 8px", font: "600 9.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)" }}>{activeSources.length > 1 ? "Draft script from this" : "Draft script"}</button>
               </div>
             ))}
             {sources !== null && activeSources.length === 0 && <div style={{ font: "400 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>No approved sources with slides yet — upload below and approve in Build.</div>}
@@ -1185,7 +1185,11 @@ function PitchMode({ voiceStyle }: { voiceStyle?: string }) {
               ↑ Upload another deck / PDF
               <input data-testid="upload-deck" type="file" accept=".pptx,.ppt,.pdf,.txt,.md" onChange={(e) => void onUploadDeck(e.target.files?.[0])} style={{ display: "none" }} />
             </label>
-            <button onClick={() => void draftFrom()} style={{ ...btnGhost, padding: "6px 9px", font: "600 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>↺ Draft from all sources</button>
+            {/* "Draft from all sources" only means something DIFFERENT from the per-source button when
+                there are 2+ sources — with one source they draft the same thing, so hide it then. */}
+            {activeSources.length > 1 && (
+              <button onClick={() => void draftFrom()} style={{ ...btnGhost, padding: "6px 9px", font: "600 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>↺ Draft from all sources</button>
+            )}
           </div>
           {uploadNote && <div style={{ font: "500 10px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginTop: 8 }}>{uploadNote}</div>}
         </div>
