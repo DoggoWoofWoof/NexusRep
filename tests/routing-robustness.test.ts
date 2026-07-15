@@ -120,3 +120,36 @@ describe("slide switch is gated on a spoken cue (no cue → no switch)", () => {
     expect(output.detailAidSlideId).toBeTruthy();
   }, 60_000);
 });
+
+describe("trial specificity — name a trial, get THAT trial's slide (not the program slide)", () => {
+  it("'what is the LIBREXIA stroke trial' leads with the STROKE answer + STROKE slide", async () => {
+    const c = await createContainer();
+    const { output } = await c.conversation.turn(ctxFor(c, "what is the LIBREXIA stroke trial"));
+    expect(output.route).toBe("approved_answer");
+    expect(output.responseText.toLowerCase()).toMatch(/stroke/);
+    expect(output.detailAidSlideId).toBe("slide_stroke"); // was slide_program (the transcript bug)
+  }, 60_000);
+
+  it("a bare affirmation after a stroke question STAYS on stroke (the trial anchors the follow-up)", async () => {
+    const c = await createContainer();
+    await c.conversation.turn(ctxFor(c, "what is the LIBREXIA stroke trial"));
+    const { output } = await c.conversation.turn(ctxFor(c, "yeah sure"));
+    expect(output.route).toBe("approved_answer");
+    expect(output.detailAidSlideId).toBe("slide_stroke"); // not slide_program / a generic indications slide
+    expect(output.responseText.toLowerCase()).toMatch(/stroke/);
+  }, 60_000);
+
+  it("naming NO trial (the general program) still shows the PROGRAM slide", async () => {
+    const c = await createContainer();
+    const { output } = await c.conversation.turn(ctxFor(c, "what is the LIBREXIA program"));
+    expect(output.route).toBe("approved_answer");
+    expect(output.detailAidSlideId).toBe("slide_program");
+  }, 60_000);
+
+  it("the AF trial promotes the AF slide (stroke matcher doesn't steal it)", async () => {
+    const c = await createContainer();
+    const { output } = await c.conversation.turn(ctxFor(c, "tell me about the atrial fibrillation trial"));
+    expect(output.route).toBe("approved_answer");
+    expect(output.detailAidSlideId).toBe("slide_af");
+  }, 60_000);
+});

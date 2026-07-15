@@ -62,6 +62,16 @@ const COMPOSER_TIMEOUT_MS = 2500;
 // "walk me through it", "keep going"). Retrieval biases these toward the prior turn's topic.
 const FOLLOWUP_RE = /\b(show me|show us|pull up|walk me through|the slides?|the deck|the presentation|the detail aid|tell me more|more on (that|this|it)|what about (that|this|it)|continue|keep going|go on|next|yes|yeah|yep|sure|okay|ok|please|go ahead|sounds good|absolutely|definitely)\b/i;
 
+// The three LIBREXIA trials, each as (how the doctor NAMES it) → (the topic of that trial's answer).
+// When a query names exactly ONE of these, we lead with that trial's approved answer so the RIGHT
+// slide shows ("ask about stroke → show the stroke slide") and its topic anchors the next follow-up.
+// This is exact trial disambiguation over three known trials — not general keyword search.
+const TRIAL_TOPICS: { name: string; query: RegExp; topic: RegExp }[] = [
+  { name: "stroke", query: /\bstrokes?\b|\bTIA\b|transient ischemic/i, topic: /stroke/i },
+  { name: "af", query: /\batrial\b|\bAF\b|fibrillation|flutter/i, topic: /atrial|\bAF\b/i },
+  { name: "acs", query: /\bACS\b|acute coronary|coronary syndrome/i, topic: /acute coronary|\bACS\b/i },
+];
+
 /**
  * When the exact ISI block is appended, do not also repeat standalone safety/disclosure
  * sentences in the conversational body. The body still stays grounded in approved content; this
@@ -218,14 +228,18 @@ export class TurnOrchestrator {
         : Promise.resolve(ctx.text);
     const retrievalPromise = retrievalTextPromise
       .then((text) =>
-        this.retrieval.retrieveApproved({
-          text,
-          context: { audience: ctx.audience, indication: ctx.indication, market: ctx.market },
-        }),
-      )
-      .then(
-        (result) => ({ result, latencyMs: Date.now() - retrievalStarted }),
-        (error: unknown) => ({ error, latencyMs: Date.now() - retrievalStarted }),
+        this.retrieval
+          .retrieveApproved({
+            text,
+            context: { audience: ctx.audience, indication: ctx.indication, market: ctx.market },
+          })
+          .then(
+            // Keep the text actually used for retrieval — for a bare follow-up it's the
+            // context-biased text (prior topic prepended), which the trial-specificity re-rank below
+            // needs so "Yeah, sure." after a stroke answer stays on stroke.
+            (result) => ({ result, retrievalText: text, latencyMs: Date.now() - retrievalStarted }),
+            (error: unknown) => ({ error, latencyMs: Date.now() - retrievalStarted }),
+          ),
       );
     const classificationStarted = Date.now();
     const classification = await (opts?.classify ?? this.classifier)(ctx.text);
@@ -289,6 +303,22 @@ export class TurnOrchestrator {
           const rest = result.answers.filter((a) => !led.includes(a));
           result.answers = [...led, ...rest];
           await this.audit.record(ctx.sessionId, "coaching_rule_applied", { rule: "conversation_ordering", led: led.map((a) => a.id) });
+        }
+      }
+      // Trial specificity: when the doctor names ONE specific trial (stroke / AF / ACS), lead with
+      // THAT trial's answer instead of the general LIBREXIA-program answer — so the stroke question
+      // shows the stroke slide (not the program slide), and the stroke topic (its sourceId) anchors
+      // the next bare follow-up ("Yeah, sure." → more stroke). Uses the text actually retrieved on
+      // (context-biased for follow-ups). Only reorders when exactly one trial is named and its answer
+      // is already a candidate — it never adds content, just promotes an already-retrieved block.
+      const specificityText = ("retrievalText" in retrievalSettled && retrievalSettled.retrievalText) || ctx.text;
+      const namedTrials = TRIAL_TOPICS.filter((t) => t.query.test(specificityText));
+      if (namedTrials.length === 1 && result.answers.length > 1) {
+        const idx = result.answers.findIndex((a) => namedTrials[0]!.topic.test(a.topic));
+        if (idx > 0) {
+          const [specific] = result.answers.splice(idx, 1);
+          result.answers.unshift(specific!);
+          await this.audit.record(ctx.sessionId, "retrieval", { action: "trial_specificity_promoted", answer: specific!.id, trial: namedTrials[0]!.name });
         }
       }
       const top = result.answers[0];

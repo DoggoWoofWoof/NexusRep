@@ -61,10 +61,18 @@ let PRODUCT_TERMS: string[] = [];
 let PRODUCT_CANON: { despaced: string; display: string }[] = [];
 export function configureClassifierLexicon(productTerms: string[]): void {
   PRODUCT_TERMS = productTerms.map((t) => t.toLowerCase().trim()).filter(Boolean);
-  PRODUCT_CANON = PRODUCT_TERMS.map((t) => ({
-    despaced: t.replace(/[^a-z0-9]/g, ""),
-    display: t.replace(/\b\w/g, (c) => c.toUpperCase()),
-  }));
+  // Canonicalization targets EXCLUDE any multi-word term whose FIRST word is itself a standalone
+  // term — e.g. "librexia af" / "librexia stroke" extend "librexia". Otherwise a bare (or near)
+  // "librexia" fuzzy-snaps to a 2-word combo and appends a trial suffix the doctor never said, which
+  // then skews retrieval to that trial. Classification still sees every term (PRODUCT_TERMS) — only
+  // the fuzzy spelling-fixer is restricted, so it corrects spelling without inventing content.
+  const singles = new Set(PRODUCT_TERMS.filter((t) => t.split(/\s+/).length === 1).map((t) => t.replace(/[^a-z0-9]/g, "")));
+  PRODUCT_CANON = PRODUCT_TERMS
+    .filter((t) => { const w = t.split(/\s+/); return w.length === 1 || !singles.has(w[0]!.replace(/[^a-z0-9]/g, "")); })
+    .map((t) => ({
+      despaced: t.replace(/[^a-z0-9]/g, ""),
+      display: t.replace(/\b\w/g, (c) => c.toUpperCase()),
+    }));
 }
 
 /** Longest common CONTIGUOUS substring length — the fuzzy signal for a mistranscribed name. */
@@ -126,6 +134,10 @@ export function canonicalizeProductNames(input: string): string {
       if (cand.length < 4) continue;
       for (const term of PRODUCT_CANON) {
         if (term.despaced.length < 6 || cand === term.despaced) continue; // tiny terms + exact hits: leave alone
+        // Never ADD words: a bare "LIBREXIA" must not snap to the 2-word "LIBREXIA AF" (that inserts a
+        // trial suffix the doctor never said and then skews retrieval to that trial). Canonicalize
+        // spelling within the SAME word count, or CONTRACT ("no vexian" → "Milvexian") — never expand.
+        if (term.display.trim().split(/\s+/).length > win) continue;
         const lcs = longestCommonSubstr(cand, term.despaced);
         const nearEdit =
           term.despaced.length >= 7 &&
