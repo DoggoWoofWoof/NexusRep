@@ -10,7 +10,35 @@
 
 ## 1. Current build status
 
-### Latest: Switch slides on the streaming transcript reaching the cue (2026-07-15)
+### Latest: Tavus ASR quality + slide-cue timing + always-name-the-slide (2026-07-15)
+
+From a live doctor transcript (STT mangling clinical terms, deck switching long before/never at
+the cue, the rep sometimes never naming an on-screen slide) — root-caused and fixed on the Tavus path:
+
+- **STT ran on the generic engine.** Default `tavusSttEngine` → `tavus-deepgram-medical` (clinical
+  vocab, so "Milvexian"/"LIBREXIA"/"atrial fibrillation" stop transcribing as "liberation"/"limbic").
+  `tavus.ts` already retries on the default engine if a plan rejects it, so it's safe out of the box.
+  Hotwords gain the trial names + mis-heard terms (LIBREXIA AF/ACS/STROKE, TIA, …). `env.ts`,
+  `brand/index.ts`.
+- **Deck switched before / never at the cue.** The client truncated the replica's *streaming
+  transcript* to 80 chars before checking for the cue — and the cue sits near the answer's END, so it
+  was never seen; only the early safety timer fired. Now pass the full streaming text (bound only the
+  QA store), and fire the streaming switch only once the replica's audio has started. `video-transport.ts`,
+  `VideoAgentStage.tsx`.
+- **The estimate fallback was itself ~3× too fast** (125 ms/word ≈ 8 wps) and capped at 1.8s → a
+  mid/late cue switched during sentence one. Retimed to ~2.7 wps with a small lead, uncapped; the live
+  safety timer drops its 3s floor (what jumped the deck) for `estimate + 2s`, so the exact streaming
+  cue wins and a miss still lands near the cue. `slide-cue.ts`, `useCuedSlide.ts`.
+- **Rep never named an available slide → no cue → no switch.** When a detail-aid slide exists but
+  neither the composer nor the deterministic builder referenced it, weave a brief varied `slideReference`.
+  The gate still holds for the no-slide case. `orchestrator.ts`.
+- **UI.** Training mic (🎤 ↔ "● Stop") and Ask/Send (↔ "…") got stable min-widths so a toggle no longer
+  reflows the row; the per-answer coach menu is now COLLAPSED by default and opens the full
+  notes + scope + accept controls on one click. `StudioScreen.tsx`, `HcpExperience.tsx`.
+- `tests/slide-cue.test.ts` (uncapped/rate-correct timing, cue detection past 80 chars, always-name-the-slide).
+  Full suite **390 pass**; production build clean.
+
+### Switch slides on the streaming transcript reaching the cue (2026-07-15)
 
 - **The deck now switches the instant the rep *says* the cue, not on an estimate.** The backend
   already gates *whether* a turn switches slides (`orchestrator.cuesASlide` — only when the answer
