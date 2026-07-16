@@ -84,7 +84,10 @@ export async function seedDemoHistory(deps: SeedDeps): Promise<void> {
       questionCount: s.questionCount,
       complianceStatus: s.status,
       turns: [],
-      ...(s.sid === "session_sx4471" ? { vendorConversationId: "seed_call_sx4471", recordingUrl: "/recordings/seeded-session-sx4471.webm" } : {}),
+      // No seeded recordingUrl: the sample .webm was a local demo artifact that never deploys, so it
+      // showed a broken (nothing-loads) video pane in Session review. Seeded sessions are
+      // transcript-only; real recordings come from client capture → /api/recordings/<file>.
+      ...(s.sid === "session_sx4471" ? { vendorConversationId: "seed_call_sx4471" } : {}),
     });
 
     if (s.follow) {

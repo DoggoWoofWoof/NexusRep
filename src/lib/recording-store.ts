@@ -9,7 +9,21 @@
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, basename } from "node:path";
+
+/** The writable directory recordings live in (under public/ so it survives a build, but we SERVE via
+ *  an API route — see /api/recordings/[file] — because a runtime-written public/ file isn't reliably
+ *  served in production/on Render). */
+export const localRecordingsDir = (): string => join(process.cwd(), "public", "recordings");
+
+/** Safe absolute path for a stored recording file, or null if the name is unsafe (traversal, etc.).
+ *  Used by the streaming API route so serving never depends on Next's static public/ handling. */
+export function localRecordingPath(file: string): string | null {
+  const safe = basename(file);
+  if (!safe || safe !== file || /[\\/]/.test(file)) return null;
+  if (!/^[a-zA-Z0-9._-]+\.(webm|mp4)$/i.test(safe)) return null;
+  return join(localRecordingsDir(), safe);
+}
 
 export interface RecordingSaveInput {
   /** Our session id — used to name the object so a session maps 1:1 to its clip. */
@@ -34,18 +48,19 @@ function fileBase(sessionId: string): string {
 const ext = (contentType: string) => (/webm/i.test(contentType) ? "webm" : /mp4/i.test(contentType) ? "mp4" : "bin");
 
 /**
- * Local-disk store: writes under public/recordings so Next serves it at /recordings/<file>. Durable
- * when running locally (the demo); on an ephemeral host (Render) the file is lost on redeploy — that's
- * the known tradeoff, and exactly why this is behind an interface (swap in S3/R2 for durability).
+ * Local-disk store: writes to public/recordings and returns an /api/recordings/<file> URL. We serve
+ * through that API route rather than the static /recordings/ path because a file WRITTEN AT RUNTIME
+ * isn't reliably served by `next start` (notably on Render), which showed the video pane loading
+ * nothing. Durable while the host disk lives (the demo); on an ephemeral host it's lost on redeploy —
+ * the known tradeoff, and why this is behind an interface (swap in S3/R2 for durability).
  */
 class LocalDiskRecordingStore implements RecordingStore {
   readonly name = "local-disk";
-  private readonly dir = join(process.cwd(), "public", "recordings");
   async save({ sessionId, bytes, contentType }: RecordingSaveInput): Promise<{ url: string }> {
-    await mkdir(this.dir, { recursive: true });
+    await mkdir(localRecordingsDir(), { recursive: true });
     const file = `${fileBase(sessionId)}.${ext(contentType)}`;
-    await writeFile(join(this.dir, file), bytes);
-    return { url: `/recordings/${file}` };
+    await writeFile(join(localRecordingsDir(), file), bytes);
+    return { url: `/api/recordings/${file}` };
   }
 }
 

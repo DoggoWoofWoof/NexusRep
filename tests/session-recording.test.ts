@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { createContainer, getContainer } from "@lib/container";
 import { POST as uploadRecording } from "@/app/api/sessions/recording/route";
+import { GET as serveRecording } from "@/app/api/recordings/[file]/route";
 
 describe("client-capture recording upload", () => {
   it("attaches the uploaded clip to the session so Session-review can play it", async () => {
@@ -23,8 +24,30 @@ describe("client-capture recording upload", () => {
     expect(res.status).toBe(200);
     const json = (await res.json()) as { ok: boolean; url: string };
     expect(json.ok).toBe(true);
-    expect(json.url).toMatch(/^\/recordings\//);
+    expect(json.url).toMatch(/^\/api\/recordings\//); // served via the API route, not static public/
     expect((await c.sessions.get(s.id))?.recordingUrl).toBe(json.url);
+  });
+
+  it("serves the uploaded clip back via /api/recordings/<file> (the reliable path on Render)", async () => {
+    const c = await getContainer();
+    const s = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId, preview: true, seed: "serve_ok" });
+    const bytes = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
+    const up = await uploadRecording(new Request("http://localhost/api/sessions/recording", {
+      method: "POST", headers: { "content-type": "video/webm", "x-nexusrep-session-id": String(s.id) }, body: bytes,
+    }));
+    const { url } = (await up.json()) as { url: string };
+    const file = url.split("/").pop()!;
+    const res = await serveRecording(new Request(`http://localhost${url}`), { params: Promise.resolve({ file }) });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/video\/webm/);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("404s a missing recording and 400s a traversal name", async () => {
+    const missing = await serveRecording(new Request("http://localhost/api/recordings/nope.webm"), { params: Promise.resolve({ file: "nope.webm" }) });
+    expect(missing.status).toBe(404);
+    const traversal = await serveRecording(new Request("http://localhost/api/recordings/x"), { params: Promise.resolve({ file: "../../secret.webm" }) });
+    expect(traversal.status).toBe(400);
   });
 
   it("rejects a malformed session id and an empty body", async () => {
