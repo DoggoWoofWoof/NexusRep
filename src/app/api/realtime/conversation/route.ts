@@ -165,11 +165,17 @@ async function startConversation(body: { hcpId?: unknown }, ownerUserId: string 
     "FXIa",
   ].map((term) => term.trim()).filter(Boolean)));
 
+  // Per-conversation callback URL: it carries the shared key (so callbacks are verifiable) AND the
+  // container OWNER, because the recording_ready callback fires LATER (cookie-less, possibly after a
+  // restart) and must reload the SAME per-user container the session lives in — otherwise it looks
+  // in the default container, never finds the session, and the recording is silently dropped (the
+  // "everything recorded except the video" bug). Owner is the internal username, gated by the key.
+  const cbParams = new URLSearchParams();
+  if (env.tavusLlmKey) cbParams.set("k", env.tavusLlmKey);
+  if (ownerUserId) cbParams.set("u", ownerUserId);
   const startArgs = {
       record: true,
-      // The webhook carries the shared key so recording callbacks can be verified —
-      // without it anyone who learns a conversation id could attach an arbitrary URL.
-      callbackUrl: `${env.publicBaseUrl}/api/tavus/webhook${env.tavusLlmKey ? `?k=${encodeURIComponent(env.tavusLlmKey)}` : ""}`,
+      callbackUrl: `${env.publicBaseUrl}/api/tavus/webhook${cbParams.toString() ? `?${cbParams.toString()}` : ""}`,
       sessionId: hist.id,
       // The Tavus adapter intentionally keeps one stable PAL and patches it in place, rather
       // than creating a new PAL for each session or tunnel URL.

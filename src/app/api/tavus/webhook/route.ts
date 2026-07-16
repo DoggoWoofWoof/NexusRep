@@ -7,7 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { env } from "@lib/env";
-import { getContainer } from "@lib/container";
+import { getContainer, getContainerForUser } from "@lib/container";
 
 export const dynamic = "force-dynamic";
 
@@ -43,10 +43,13 @@ export async function POST(req: Request): Promise<NextResponse> {
   // When the shared key is configured, callbacks must carry it (we register the
   // callback URL ourselves with ?k=<key> at conversation start). Without the check,
   // anyone who learned a conversation id could attach an arbitrary recording URL.
+  const params = new URL(req.url).searchParams;
   if (env.tavusLlmKey) {
-    const k = new URL(req.url).searchParams.get("k");
-    if (k !== env.tavusLlmKey) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    if (params.get("k") !== env.tavusLlmKey) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  // The container OWNER the conversation-start encoded on the callback URL. The recording lives in
+  // that user's per-user store; loading the default container here would never find the session.
+  const owner = params.get("u");
   const body = (await req.json().catch(() => ({}))) as TavusCallback;
   const event = String(body.event_type ?? body.message_type ?? "");
   const convId = body.conversation_id ?? (body.properties?.conversation_id as string | undefined);
@@ -56,7 +59,9 @@ export async function POST(req: Request): Promise<NextResponse> {
   if (convId && /recording_ready|recording\.ready/i.test(event)) {
     const url = recordingUrl(body);
     if (url) {
-      const c = await getContainer();
+      // Reload the SAME container that owns the call's session (per-user when auth is on), so the
+      // recording attaches to the session the operator actually sees — not the default store.
+      const c = owner ? await getContainerForUser(owner) : await getContainer();
       const attached = await c.sessions.attachRecording(convId, url);
       if (!attached) {
         // Session lookup failed (e.g. store reset since the call) — say so instead of
