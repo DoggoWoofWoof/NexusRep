@@ -10,7 +10,25 @@
 
 ## 1. Current build status
 
-### Latest: Mic warm-up drop fixed + no force-evicting concurrent Tavus calls (2026-07-16)
+### Latest: Per-user live-video isolation + mic warm-up window (2026-07-16)
+
+- **Concurrent-user isolation (the real one):** two accounts on video at once could cross-write —
+  the cookie-less Tavus custom-LLM path resolved the owner from a single process-global `active-call`,
+  so a 2nd call superseded the 1st and steered its turns into the wrong container. Now: `active-call`
+  is a Map **keyed by owner**; each account's persona points its custom-LLM URL at
+  `/api/tavus/llm/o/<owner>` (persona per brand+owner); a thin owner-scoped route injects the owner
+  and delegates to the shared compliance handler (one-line change there), which loads THAT owner's
+  container + active call. `prune` sweeps only the caller's own container. Public doctor links keep
+  the plain endpoint + default container. Everything else was already per-user isolated (cookie →
+  namespaced store). `active-call.ts`, `realtime/conversation/route.ts`, new
+  `tavus/llm/o/[owner]/…/route.ts`, `sessions/prune/route.ts`, `tests/live-video-isolation.test.ts`.
+- **Mic amber warm-up:** the "turning on" amber flashed ~300ms so the doctor spoke into a mic that
+  wasn't sending yet. The transport now holds "capturing" false for a deliberate ~2.5s window
+  (`MIC_ARM_MS`) — amber shows, then flips green when audio is really going out. `video-transport.ts`.
+- Full suite **444 pass**; typecheck + build clean. (Live two-account concurrency still wants a
+  tunnel + two logins to confirm against Tavus.)
+
+### Mic warm-up drop fixed + no force-evicting concurrent Tavus calls (2026-07-16)
 
 - **Mic dropped the first seconds:** the button went green the instant Daily reported the track
   toggled on, but the silent-gate `AudioContext` starts SUSPENDED (created pre-gesture), so the gated
