@@ -10,7 +10,21 @@
 
 ## 1. Current build status
 
-### Latest: Training push-to-talk ASR/routing hardening (2026-07-16 local)
+### Latest: Session video recording attaches to the owner's container (2026-07-16)
+
+Sessions recorded transcript, follow-ups, CRM, and audit — but not the **video**. The Tavus
+`recording_ready` webhook is cookie-less and fires later, so `getContainer()` resolved to the
+DEFAULT container and `attachRecording` never found the per-user session (the same trap the
+`/api/tavus/llm` turn path was fixed for; the webhook was missed). Now the conversation-start encodes
+the owner on the per-conversation callback URL (`?u=<username>`, gated by the shared key), and the
+webhook loads `getContainerForUser(owner)` — the same store the brand user views. Public doctor links
+(no cookie → no owner) stay on the default container. The Session-review UI already renders
+`<video src=recordingUrl>`, so the recording shows once attached. `realtime/conversation/route.ts`,
+`tavus/webhook/route.ts`, `tests/recording-webhook.test.ts`. Full suite **437 pass**; build clean.
+(Note: recording still requires Tavus recording enabled on the account + a reachable public callback
+URL — the code path is now correct end-to-end.)
+
+### Training push-to-talk ASR/routing hardening (2026-07-16 local)
 
 - **Aligned Training voice correction with the doctor/HCP path.** Training
   push-to-talk now uses the shared HCP ASR helper, so observed voice mistakes such
