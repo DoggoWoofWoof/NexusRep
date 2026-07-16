@@ -14,13 +14,14 @@
 
 Four fixes, all tested:
 
-- **Slide cue now leads the answer instead of trailing it.** Both the deterministic builder and the
-  orchestrator's always-mention fallback wove the "…on the X slide" cue AFTER the whole approved body,
-  so — since the deck switch is timed to the spoken cue — the slide only moved at the very end, once
-  all the info was already said. New `weaveSlideCueEarly()` inserts the cue right after the opener
-  (before the medical body), the LLM composer is told to name the slide in its first sentence, and the
-  client cue-delay is capped (4s) so a stray late cue still switches up front. `responseBuilder.ts`,
-  `orchestrator.ts`, `slide-cue.ts`; `tests/response-builder.test.ts` + `tests/slide-cue.test.ts`.
+- **Slide cue placement + timing.** The cue used to trail the whole approved body, and the deck
+  switch is timed to the spoken cue, so the slide only moved at the very end once everything had been
+  said. Fix is two parts: (1) the client cue-delay is **capped at 4s**, so the deck moves up front no
+  matter where the cue sits; (2) placement now reads naturally — the **LLM composer weaves the mention
+  mid-answer** (a sentence or two in, then names the slide, then keeps going — never leading, never
+  trailing), while the **deterministic builder appends** the cue after the approved block (it never
+  splices verbatim approved text). `responseBuilder.ts`, `orchestrator.ts`, `slide-cue.ts`;
+  `tests/response-builder.test.ts` + `tests/slide-cue.test.ts`.
 - **"Start overview" walks the whole deck on the video preview.** It used to early-return to a single
   Tavus turn on video (one question, one slide). Now the overview branch runs for video too: the
   endpoint's 9 approved segments are spoken by the replica in order via a new `presentOverview()` on

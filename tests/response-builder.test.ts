@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { asId, type ApprovedAnswerId, type DetailAidSlideId, type SafetyStatementId } from "@lib/ids";
-import { buildApprovedResponse, slideReference, weaveSlideCueEarly, type ApprovedAnswer, type SafetyStatement } from "@modules/content";
+import { buildApprovedResponse, slideReference, type ApprovedAnswer, type SafetyStatement } from "@modules/content";
 
 const answer = (id: string, text: string, slideId?: string): ApprovedAnswer => ({
   id: asId<"approved_answer_id">(id) as ApprovedAnswerId,
@@ -37,13 +37,13 @@ describe("response builder (approved blocks only)", () => {
     expect(buildApprovedResponse([], { includeIsi: false })).toBeNull();
   });
 
-  it("weaves the claim-free slide reference EARLY — before the medical body, so the deck switches up front", () => {
+  it("appends the claim-free slide reference AFTER the approved body (deterministic path never splices the block)", () => {
     const r = buildApprovedResponse([answer("a1", "Take one daily.", "slide_1")], { includeIsi: false, slideTitle: "Mechanism of action" })!;
-    // The "look at the … slide" reference now leads the medical body (the fix for "the slide only
-    // moved at the very end"): the rep puts the slide up, then talks to it.
+    // The approved block stays verbatim and intact; the "look at the … slide" framing trails it. The
+    // client caps the switch delay so the deck still moves up front (see tests/slide-cue.test.ts).
     expect(r.text).toContain("Take one daily.");
     expect(r.text.toLowerCase()).toContain("mechanism of action slide");
-    expect(r.text.toLowerCase().indexOf("mechanism of action slide")).toBeLessThan(r.text.indexOf("Take one daily."));
+    expect(r.text.indexOf("Take one daily.")).toBeLessThan(r.text.toLowerCase().indexOf("mechanism of action slide"));
   });
 
   it("points at a SECOND relevant slide when one is retrieved (uses more of the deck)", () => {
@@ -58,16 +58,6 @@ describe("response builder (approved blocks only)", () => {
   it("keeps ISI last — after the woven slide reference", () => {
     const r = buildApprovedResponse([answer("a1", "Take one daily.", "slide_1")], { isi, includeIsi: true, slideTitle: "Mechanism of action" })!;
     expect(r.text.toLowerCase().indexOf("mechanism of action slide")).toBeLessThan(r.text.indexOf("Important Safety Information"));
-  });
-
-  it("weaveSlideCueEarly puts the cue after the opener (before the body), or leads when body is one sentence", () => {
-    expect(weaveSlideCueEarly("Good question. Milvexian is investigational.", "I've pulled up the mechanism slide."))
-      .toBe("Good question. I've pulled up the mechanism slide. Milvexian is investigational.");
-    // Single-sentence body → nothing to sit behind → lead with the cue.
-    expect(weaveSlideCueEarly("Milvexian is investigational", "I've pulled up the mechanism slide."))
-      .toBe("I've pulled up the mechanism slide. Milvexian is investigational");
-    // No cue → unchanged.
-    expect(weaveSlideCueEarly("Good question. Body.", "")).toBe("Good question. Body.");
   });
 
   it("slideReference is empty for routed/refusal turns (no slide) and injects no numbers/claims", () => {

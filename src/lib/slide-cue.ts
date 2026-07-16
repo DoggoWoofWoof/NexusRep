@@ -48,11 +48,11 @@ const WORD_MS = 370;
 // Switch a hair before the rep actually says the cue, so the slide is already up as they gesture at it.
 const CUE_LEAD_MS = 350;
 
-// The answer now weaves the slide cue EARLY (right after the opener — see responseBuilder), so a
-// well-formed answer cues within the first sentence and this delay is small. The upper cap is a
-// backstop for the LLM path if it ever trails the cue anyway: the slide is for the WHOLE answer
-// (the switch is gated on the answer actually being about it), so showing it a few seconds before
-// the rep verbally points at it is exactly right — never make the doctor wait until the very end.
+// The cue can sit anywhere in the answer: the LLM composer weaves it mid-answer (a sentence or two
+// in), while the deterministic builder appends it at the end. Either way the deck switch is capped so
+// it lands up front — the slide is for the WHOLE answer (the switch is gated on the answer actually
+// being about it), so showing it a few seconds before the rep verbally names it is exactly right, and
+// an end-appended cue never makes the doctor wait out the whole answer for the slide to move.
 const MAX_CUE_DELAY_MS = 4000;
 
 /** Milliseconds to wait (from when the rep STARTS speaking the answer) before switching the deck to

@@ -13,7 +13,7 @@
 import { asId, type ApprovedAnswerId, type HcpId, type SessionId } from "@lib/ids";
 import { classify, complianceGate, route, validateGrounding, type PolicyRoute, type RiskClassification, isiAlreadyDelivered, stripEmbeddedIsi } from "@modules/compliance";
 import type { RetrievalService } from "@modules/retrieval";
-import { buildApprovedResponse, slideReference, weaveSlideCueEarly, type ApprovedAnswer, type ContentService, type GroundedComposer, type SafetyStatement } from "@modules/content";
+import { buildApprovedResponse, slideReference, type ApprovedAnswer, type ContentService, type GroundedComposer, type SafetyStatement } from "@modules/content";
 import type { AuditService } from "@modules/audit";
 import { type FollowUpService, type FollowUpType } from "@modules/followups";
 import type { RuleSteering } from "@modules/rules";
@@ -188,7 +188,7 @@ function addNamedTrialAnswerIfMissing(answers: ApprovedAnswer[], specificityText
 
 function slideGuidance(slideTitle?: string, relatedTitle?: string): string[] {
   return slideTitle
-    ? [`A detail-aid slide titled "${slideTitle}" is being shown on the doctor's screen${relatedTitle ? ` (a "${relatedTitle}" slide is also available)` : ""}. NAME the slide you're showing EARLY — in your FIRST sentence — in one short, natural clause (e.g. "I've pulled up the ${slideTitle} slide, so…") so the doctor is looking at the right slide AS you explain it, and the deck switches up front rather than after you've said everything. Vary the wording and keep it to a short clause, but don't put it at the very end, and don't omit it unless you were explicitly asked to be terse.`]
+    ? [`A detail-aid slide titled "${slideTitle}" is being shown on the doctor's screen${relatedTitle ? ` (a "${relatedTitle}" slide is also available)` : ""}. Weave in a mention of the slide the way a real rep would: give a sentence or two of the actual answer FIRST, THEN point at the slide in one short, natural clause (e.g. "— I've pulled up the ${slideTitle} slide so you can follow along —") and keep going. Do NOT open with it (leading with it reads robotic), and do NOT leave it to the very last line. Vary the wording, keep it a short clause, and don't omit it unless you were explicitly asked to be terse.`]
     : [];
 }
 
@@ -697,7 +697,7 @@ export class TurnOrchestrator {
       // the doctor at the slide when one exists (and the deck then reliably switches on that cue).
       // The gate below still holds for the no-slide case: no slide → no cue → no switch.
       if (slideTitle && !cuesASlide(body)) {
-        body = weaveSlideCueEarly(body, slideReference({ seed: responseSeed, slideTitle, relatedTitle }));
+        body = `${body}${slideReference({ seed: responseSeed, slideTitle, relatedTitle })}`;
       }
       if (isi) {
         requiredSafetyText = isi.text;
