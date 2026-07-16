@@ -10,7 +10,21 @@
 
 ## 1. Current build status
 
-### Latest: Client-side session recording + preview labeling + stray-preview prune (2026-07-16)
+### Latest: Mic warm-up drop fixed + no force-evicting concurrent Tavus calls (2026-07-16)
+
+- **Mic dropped the first seconds:** the button went green the instant Daily reported the track
+  toggled on, but the silent-gate `AudioContext` starts SUSPENDED (created pre-gesture), so the gated
+  track was silent for ~1s — Tavus got nothing and the amber "turning on" never showed. The transport
+  now reports "capturing" only when audio is ACTUALLY flowing (track live + a level frame seen since
+  turn-on + the gate `AudioContext` RUNNING); clicking the mic resumes the context and re-emits when
+  it lands. So the button shows amber "starting" then green "on" (with a ~1.1s fallback for browsers
+  without the level observer) — green now means it's really sending. `video-transport.ts`.
+- **No force-eviction (3 concurrent slots):** the conversation-start used to call
+  `endActiveConversations()` (ends EVERY live conversation) to free a slot at the cap, which would
+  kill a colleague's in-progress call. Removed — at the cap we report "all lines busy (up to 3), close
+  a preview or retry" and never touch a running call. `realtime/conversation/route.ts`. Full suite 441 pass.
+
+### Client-side session recording + preview labeling + stray-preview prune (2026-07-16)
 
 Verified live that **Tavus's own recording is off on this account** (`scripts/test-tavus-recording.mjs`
 — a conversation never returns a recording_url after 5 min). So we record the replica clip ourselves
