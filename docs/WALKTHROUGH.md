@@ -10,7 +10,32 @@
 
 ## 1. Current build status
 
-### Latest: Session video recording attaches to the owner's container (2026-07-16)
+### Latest: Client-side session recording + preview labeling + stray-preview prune (2026-07-16)
+
+Verified live that **Tavus's own recording is off on this account** (`scripts/test-tavus-recording.mjs`
+— a conversation never returns a recording_url after 5 min). So we record the replica clip ourselves
+(the browser MediaRecorder the sample scripts already used) and attach it — no dependency on Tavus's
+plan feature or the async webhook.
+
+- **Capture:** `VideoAgentStage` records the replica stream during a real `/hcp` session
+  (`recordSession`) and, on End video / End session / close, stops + uploads it to
+  `/api/sessions/recording`, which attaches it in the caller's own container. Storage is behind a
+  swappable `RecordingStore` (`lib/recording-store.ts`) — local disk now (`public/recordings`), an
+  S3/R2 adapter later is a one-file change. Session-review already plays `<video src=recordingUrl>`.
+  **Verified end-to-end** (`scripts/verify-client-recording.mjs`): a 3.98 MB clip captured → uploaded
+  → attached.
+- **Preview labeling:** a `/hcp` session with no real invited HCP is a brand-user PREVIEW (we use
+  `/hcp` for preview since Launch/invite isn't wired), so it shows as **"Preview (you)"** in the
+  sessions list + detail — never a doctor's name.
+- **Cleanup:** `SessionService.pruneStrayPreviews` removes ONLY empty previews (no recording, no real
+  Q&A). It NEVER deletes the live/active call, a recorded session, one with questions, a real doctor
+  session, or a recent one (may be in use in another tab) — so it can't force-close or hijack a
+  concurrent session. Runs on end via `/api/sessions/prune` (guarded by the active-call id); keeps the
+  confirmed-video session and the seeded demo data intact.
+- Storage note: on Render the local-disk clip is ephemeral across redeploys (the accepted tradeoff —
+  swap in the blob adapter for durability). `tests/session-recording.test.ts`; full suite **441 pass**.
+
+### Session video recording attaches to the owner's container (2026-07-16)
 
 Sessions recorded transcript, follow-ups, CRM, and audit — but not the **video**. The Tavus
 `recording_ready` webhook is cookie-less and fires later, so `getContainer()` resolved to the
