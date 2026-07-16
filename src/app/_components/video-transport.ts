@@ -71,6 +71,12 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
   // track is actually producing/sending audio (not merely toggled on). Reset on each turn-on so we
   // re-confirm capture rather than trusting a stale flag.
   let micLevelSeen = false;
+  // When the mic was last turned on. We hold the UI "arming" (amber) for a fixed window from here
+  // before reporting the mic as capturing — a deliberate warm-up so the WebRTC track + gate are
+  // reliably sending before the doctor speaks, since level detection alone isn't a dependable
+  // "audio is really going out" signal. This is the 2-3s the user asked for.
+  let micOnAt = 0;
+  const MIC_ARM_MS = 2500;
   let desiredMicOn = false;
   let currentEvents: VideoTransportEvents | null = null;
   const conversationId = (() => {
@@ -87,6 +93,7 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
   // the gated track is pure silence even with the gain open).
   const capturing = () => {
     if (!desiredMicOn || !dailyAudioLive() || !micLevelSeen) return false;
+    if (Date.now() - micOnAt < MIC_ARM_MS) return false; // deliberate warm-up window (amber shows until it elapses)
     return usingSilentGate ? micGateCtx?.state === "running" : true;
   };
   const emitMicState = (reason: string, level?: number) => {
@@ -261,7 +268,7 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
 
     setMicEnabled(on: boolean): boolean {
       desiredMicOn = on;
-      if (on) micLevelSeen = false; // re-confirm real capture after each turn-on (don't trust a stale flag)
+      if (on) { micLevelSeen = false; micOnAt = Date.now(); } // re-confirm capture + restart the warm-up window
       const c = call;
       if (!c) {
         emitMicState(on ? "set_before_join" : "off_before_join");
@@ -295,15 +302,17 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
             apply(`set_local_audio_on_retry_${delay}`);
           }, delay);
         }
-        // Fallback so the mic still confirms "on" (green) within ~1.1s on a browser without the
-        // level observer: if the track is live (+ gate running) but no level frame arrived, treat the
-        // warm-up as done. The observer path confirms faster when available.
+        // Fallback so the mic still confirms "on" (green) on a browser without the level observer:
+        // if the track is live (+ gate running) but no level frame arrived, treat it as producing.
         window.setTimeout(() => {
           if (call && desiredMicOn && !micLevelSeen && dailyAudioLive() && (!usingSilentGate || micGateCtx?.state === "running")) {
             micLevelSeen = true;
             emitMicState("capture_warmup_fallback");
           }
         }, 1100);
+        // Re-emit when the deliberate warm-up window elapses, so the UI flips amber → green exactly
+        // then (capturing() gates on MIC_ARM_MS). +80ms so the window has definitely passed.
+        window.setTimeout(() => { if (call && desiredMicOn) emitMicState("mic_arm_window_done"); }, MIC_ARM_MS + 80);
       }
       return capturing();
     },
