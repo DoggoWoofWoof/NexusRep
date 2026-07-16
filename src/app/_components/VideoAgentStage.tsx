@@ -184,6 +184,23 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
       recordingDoneRef.current = false; // let a later end trigger retry
     }
   };
+  // End the Tavus conversation IMMEDIATELY on the deliberate "End video" click — the explicit end
+  // signal, so the slot frees at once rather than after the 750ms deferred-unmount backstop. The
+  // unmount teardown still calls this (keepalive) as a silent backstop for tab-close / nav-away; a
+  // second end on an already-ended conversation is a harmless best-effort no-op.
+  const endConversationNow = () => {
+    const cid = convIdRef.current;
+    if (!cid) return;
+    try {
+      void fetch("/api/realtime/conversation/end", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: cid }),
+        keepalive: true,
+      });
+    } catch { /* best-effort */ }
+    recordTiming({ type: "conversation_end_explicit", reason: cid });
+  };
   useImperativeHandle(ref, () => ({
     speak: (text: string, detailAidSlideId?: string | null) => speakAgent(text, detailAidSlideId),
     finalizeRecording,
@@ -1060,7 +1077,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
           {/* No overlay controls on the pane besides End video: agent audio is the header
               Sound button, and your microphone is the ask-bar mic button (both proxy to
               the stage handle). */}
-          <button onClick={() => { void finalizeRecording().finally(onClose); }} style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>End video</button>
+          <button onClick={() => { void finalizeRecording().finally(() => { endConversationNow(); onClose(); }); }} style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>End video</button>
         </div>
       )}
     </div>
