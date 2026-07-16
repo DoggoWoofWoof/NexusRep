@@ -45,6 +45,7 @@ automatically and then calls hosted Advanced Search with the fresh
 | Script | What it does |
 | --- | --- |
 | `scripts/gen-milvexian-deck.mjs` | Generates the branded, non-promotional **Milvexian deck** → `public/decks/milvexian.pptx` (pptxgenjs). Re-run after editing `src/lib/milvexian-deck.ts`. |
+| `scripts/test-tavus-recording.mjs` | **Tests whether TAVUS'S OWN recording works** (not the client MediaRecorder the other scripts use): runs a short real session, ends it, then polls Tavus's conversation API for a recording URL (key only) and our `/api/sessions/{id}` for the webhook attach (needs a reachable `NEXUSREP_PUBLIC_URL`). Prints a clear verdict — run this before deciding whether to keep the Tavus recording path or switch to client capture. Needs Tavus credits (~1 short call). |
 | `scripts/tavus-bot-record.mjs` | Records a **clean replica-only clip** (headless join of `/hcp?bare=1`, MediaRecorder on the replica stream, boot trimmed) and attaches it to `session_demo`. Needs Tavus credits. |
 | `scripts/record-session-replay.mjs` | Drives a **full multi-turn doctor session** (video rep on, waits for the greeting, asks a scripted sequence), records the replica clip, and attaches it + the timestamped transcript to a fresh session → replays in the preview layout under Sessions. Needs Tavus credits. |
 | `scripts/docnexus-platform-token.mjs` | Logs into `platform.docnexus.ai/insights`, captures the current platform Cognito tokens from browser auth state, writes `.docnexus-id-token.json`, and can smoke hosted Advanced Search with `--test-query`. |
