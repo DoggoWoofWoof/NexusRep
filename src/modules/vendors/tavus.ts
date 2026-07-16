@@ -164,12 +164,15 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
           personaLayerSignatures.set(cacheKey, layerSignature);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          // A rejected STT engine (invalid, or valid but not on this plan) must NOT sink the WHOLE
-          // update — that's how an STT-engine change silently took the hotwords/TTS/prompt down with
-          // it ("our config never gets into effect"). Retry once with stt_engine dropped so the rest
-          // still reaches the persona (STT falls back to Tavus's default; hotwords still bias it).
+          // 304 Not Modified is NOT a failure: the persona already matches exactly what we'd PATCH, so
+          // Tavus changed nothing. Our desired config is already live — cache it (so we stop re-sending
+          // the same PATCH every session) and log it as the benign no-op it is, not an alarming error.
           const sttLayer = (layers as { stt?: Record<string, unknown> }).stt;
-          if (sttLayer && "stt_engine" in sttLayer && /stt_engine|\bstt\b/i.test(msg)) {
+          if (/\b304\b/.test(msg)) {
+            personaPrompts.set(cacheKey, config.systemPrompt);
+            personaLayerSignatures.set(cacheKey, layerSignature);
+            console.info("[tavus] persona already up to date (304 Not Modified); reusing:", existing);
+          } else if (sttLayer && "stt_engine" in sttLayer && /stt_engine|\bstt\b/i.test(msg)) {
             const sttRest = { ...sttLayer };
             delete sttRest.stt_engine;
             const retryLayers = { ...layers };
