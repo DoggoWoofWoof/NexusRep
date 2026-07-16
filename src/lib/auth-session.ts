@@ -30,6 +30,7 @@ export const DEMO_USERS: DemoUser[] = [
   { username: "mahek", password: "mahek123", name: "Mahek", data: "demo" },
   { username: "lorick", password: "lorick123", name: "Lorick", data: "demo" },
   { username: "nimit", password: "nimit123", name: "Nimit", data: "demo" },
+  { username: "ashwin", password: "ashwin123", name: "Ashwin", data: "demo" },
   { username: "swastik", password: "swastik123", name: "Swastik", data: "clean" },
   { username: "clean", password: "clean123", name: "Clean", data: "clean" },
 ];
