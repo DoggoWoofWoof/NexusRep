@@ -32,12 +32,6 @@ type TimingEvent = {
 export interface VideoAgentStageHandle {
   speak: (text: string, detailAidSlideId?: string | null) => boolean;
   respond: (text: string) => boolean;
-  /** Deliver a rep-led guided overview: speak each approved segment in order (switching the deck per
-   *  segment), paced on the replica actually finishing each one. Resolves when the walk completes.
-   *  Slides + captions ride the onRepTurn callback, so wire onRepTurn when using this. */
-  presentOverview: (segments: { text: string; detailAidSlideId?: string | null }[]) => Promise<void>;
-  /** Stop an in-progress guided overview (a new question barged in). Safe to call when none is running. */
-  cancelOverview: () => void;
   /** Echo one gated segment and resolve when the replica finishes it (event-driven pacing, with a
    *  hard cap so it never hangs). For callers that drive their own deck/transcript (the Studio
    *  rehearsal) and just need robust one-after-another pacing. bargeIn interrupts what's in progress. */
@@ -172,10 +166,10 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
     return true;
   };
 
-  // Guided-overview pacing: resolvers waiting for the replica to FINISH the segment it's speaking, so
-  // the walk echoes the next segment only after the current one lands (event-driven, not a guess).
-  // markRepAudioStart flags them "started"; markRepAudioStop (or the estimated-end fallback) resolves
-  // them. A per-call hard cap in speakSegmentAndWait guarantees the walk never hangs if events go missing.
+  // Segment pacing (speakAndWait): resolvers waiting for the replica to FINISH the segment it's
+  // speaking, so a caller can echo the next one only after the current lands (event-driven, not a
+  // guess). markRepAudioStart flags them "started"; markRepAudioStop (or the estimated-end fallback)
+  // resolves them. A per-call hard cap in speakSegmentAndWait guarantees it never hangs if events go missing.
   const repDoneWaitersRef = useRef<{ started: boolean; done: () => void }[]>([]);
   const flushRepDoneWaiters = () => {
     const waiters = repDoneWaitersRef.current;
@@ -198,22 +192,6 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
       const waiter = { started: false, done: finish };
       repDoneWaitersRef.current.push(waiter);
     });
-  // Deliver a rep-led guided overview: interrupt anything in progress, then speak each approved
-  // segment in order, switching the deck per segment. Runs here (not in the parent) because pacing
-  // needs the replica's own speaking-state machine. Cancelable — a new question (or explicit cancel)
-  // bumps the gen so the walk stops between segments instead of talking over the doctor.
-  const overviewGenRef = useRef(0);
-  const cancelOverview = () => { overviewGenRef.current += 1; };
-  const presentOverview = async (segments: { text: string; detailAidSlideId?: string | null }[]): Promise<void> => {
-    const myGen = ++overviewGenRef.current;
-    cancelPendingGreeting("overview_start");
-    if (shouldInterruptDoctorInput()) cancelCurrentRepForBargeIn("overview_start");
-    for (const seg of segments) {
-      if (overviewGenRef.current !== myGen) return; // barged in / superseded
-      if (!seg.text?.trim()) continue;
-      await speakSegmentAndWait(seg.text, seg.detailAidSlideId ?? null);
-    }
-  };
   const applyMuted = (m: boolean) => { setMuted(m); onMutedChange?.(m); };
   // Stop the client-side replica recording and upload it to this session, then attach it. Idempotent
   // (the "End video" button AND the parent's end-session flow may both call it). We record the clip
@@ -258,8 +236,6 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
   };
   useImperativeHandle(ref, () => ({
     speak: (text: string, detailAidSlideId?: string | null) => speakAgent(text, detailAidSlideId),
-    presentOverview,
-    cancelOverview,
     speakAndWait: (text: string, detailAidSlideId?: string | null, bargeIn = false) => speakSegmentAndWait(text, detailAidSlideId, bargeIn),
     finalizeRecording,
     respond: (text: string) => {

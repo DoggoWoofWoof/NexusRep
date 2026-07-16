@@ -22,7 +22,6 @@ const nowMs = () => Date.now();
 
 type HcpScreen = "invite" | "convo" | "complete";
 type Msg = TranscriptMsg;
-interface OverviewSegment { response: string; detailAidSlideId?: string | null; sourceIds?: string[]; isiDelivered?: boolean }
 
 export function HcpExperience({ app }: { app?: AppState }) {
   const brand = useBrand();
@@ -228,11 +227,9 @@ export function HcpExperience({ app }: { app?: AppState }) {
   async function ask(q: string) {
     const text = correctSpokenHcpText(q.trim());
     if (!text) return;
-    // Barge-in: a new question interrupts whatever the rep is still saying — including an in-progress
-    // guided overview walk (so the doctor's question stops the walk instead of talking over it).
+    // Barge-in: a new question interrupts whatever the rep is still saying.
     const gen = ++playGenRef.current;
     voiceRef.current?.cancel();
-    videoAgentRef.current?.cancelOverview();
     cancelSlideCue();
     setSpeaking(false);
     setInput("");
@@ -246,32 +243,12 @@ export function HcpExperience({ app }: { app?: AppState }) {
     const sessionId = videoSessionId ?? chatSessionRef.current ?? undefined;
     setPending(true);
     try {
-      // Guided overview walks the WHOLE deck from the start — several approved segments, one slide
-      // each. This runs for BOTH video and off-video (before the single-turn video path below), so
-      // "Start overview" on the video preview actually walks the deck instead of asking one question.
+      // "Go over the slides" starts the GUIDED DECK at the FIRST slide and STOPS — the doctor then
+      // steps through with Continue / Go back (deckStep). No auto-walk: the rep presents ONE slide at
+      // a time, so the video never breezes through the whole deck. Same on video and off-video
+      // (runDeckStep → deliverRep). Position is tracked via deckFocus, so Continue never restarts.
       if (isOverviewPrompt(text, { productTerms: brand?.productTerms ?? [] })) {
-        setMsgs((m) => [...m, { role: "hcp", text }]);
-        const res = await fetch("/api/presentation/overview", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, sessionId, newSession: openNew, hcpId: inviteHcpId || undefined }),
-        });
-        const data = (await res.json()) as { sessionId?: string; segments?: OverviewSegment[] };
-        if (playGenRef.current !== gen) return;
-        if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
-        finishPending(gen); // input is live again — the walk below is interruptible (cancelOverview)
-        const segments = data.segments ?? [];
-        if (videoOn) {
-          // The live replica speaks each approved segment in order, switching the deck per segment,
-          // paced on it actually finishing each one. Canceled by the next question (barge-in above).
-          await videoAgentRef.current?.presentOverview(
-            segments.map((s) => ({ text: s.response, detailAidSlideId: s.detailAidSlideId ?? null })),
-          );
-        } else {
-          for (const segment of segments) {
-            if (playGenRef.current !== gen) return; // superseded by a newer question
-            await deliverRep(segment.response, segment.detailAidSlideId, gen);
-          }
-        }
+        await runDeckStep("start", undefined, text, gen);
         return;
       }
       // Session routing: video → the live Tavus session (its own greeting + turns come via the
@@ -314,15 +291,11 @@ export function HcpExperience({ app }: { app?: AppState }) {
     } finally { finishPending(gen); }
   }
 
-  async function deckStep(action: "start" | "next" | "previous" | "jump", query?: string, displayText?: string) {
-    if (pending) return;
-    // Same barge-in as ask(): a deck command interrupts whatever is still being spoken (incl. an overview walk).
-    const gen = ++playGenRef.current;
-    voiceRef.current?.cancel();
-    videoAgentRef.current?.cancelOverview();
-    cancelSlideCue();
-    setSpeaking(false);
-    const label = displayText?.trim() || (action === "next" ? "Please keep going." : action === "previous" ? "Can you go back to the prior point?" : action === "jump" && query ? `Can you talk about ${query}?` : "Can you walk me through the approved information?");
+  // The one place that fetches a presentation STEP and delivers it. Shared by the deck buttons
+  // (deckStep, which adds its own barge-in) and the "start the deck" overview intent in ask() (which
+  // reuses ask's gen/pending). Position is tracked via deckFocus → currentSlideId, so next/previous
+  // advance from where the deck IS — Continue never restarts from the top.
+  async function runDeckStep(action: "start" | "next" | "previous" | "jump", query: string | undefined, label: string, gen: number) {
     const activeVideoSession = videoOn ? videoSessionRef.current : null;
     const videoSessionId = activeVideoSession?.sessionId || undefined;
     if (videoOn && !videoSessionId) {
@@ -331,19 +304,30 @@ export function HcpExperience({ app }: { app?: AppState }) {
     }
     const openNew = !videoOn && !chatSessionRef.current;
     const sessionId = videoSessionId ?? chatSessionRef.current ?? undefined;
-    setPending(true);
     setMsgs((m) => [...m, { role: "hcp", text: label }]);
+    const res = await fetch("/api/presentation/step", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, query, displayText: label, currentSlideId: deckFocus || undefined, sessionId, newSession: openNew, hcpId: inviteHcpId || undefined }),
+    });
+    const data = (await res.json()) as { response: string; detailAidSlideId?: string | null; sessionId?: string; step?: { index: number; total: number } | null };
+    if (playGenRef.current !== gen) return;
+    if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
+    finishPending(gen);
+    void deliverRep(data.response, data.detailAidSlideId, gen);
+  }
+
+  async function deckStep(action: "start" | "next" | "previous" | "jump", query?: string, displayText?: string) {
+    if (pending) return;
+    // Same barge-in as ask(): a deck command interrupts whatever is still being spoken.
+    const gen = ++playGenRef.current;
+    voiceRef.current?.cancel();
+    cancelSlideCue();
+    setSpeaking(false);
+    const label = displayText?.trim() || (action === "next" ? "Please keep going." : action === "previous" ? "Can you go back to the prior point?" : action === "jump" && query ? `Can you talk about ${query}?` : "Can you walk me through the approved information?");
+    setPending(true);
     try {
-      const res = await fetch("/api/presentation/step", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, query, displayText: label, currentSlideId: deckFocus || undefined, sessionId, newSession: openNew, hcpId: inviteHcpId || undefined }),
-      });
-      const data = (await res.json()) as { response: string; detailAidSlideId?: string | null; sessionId?: string; step?: { index: number; total: number } | null };
-      if (playGenRef.current !== gen) return;
-      if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
-      finishPending(gen);
-      void deliverRep(data.response, data.detailAidSlideId, gen);
+      await runDeckStep(action, query, label, gen);
     } finally {
       finishPending(gen);
     }
@@ -564,7 +548,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{hintsCard}{askBar("Ask")}{tryChips}</div>
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginRight: 2 }}>Guided overview</span>
-                  <button onClick={() => void ask(`Can you give me a quick overview of ${displayName}?`)} disabled={pending} style={ghostMd}>Start overview</button>
+                  <button onClick={() => void deckStep("start")} disabled={pending} style={ghostMd}>Start overview</button>
                   <button onClick={() => void deckStep("previous")} disabled={pending} style={ghostMd}>Go back</button>
                   <button onClick={() => void deckStep("next")} disabled={pending} style={ghostMd}>Continue</button>
                 </div>

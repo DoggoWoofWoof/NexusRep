@@ -9,6 +9,18 @@ export function isOverviewPrompt(text: string, lexicon?: { productTerms?: string
   const productTerms = (lexicon?.productTerms ?? []).map((x) => x.toLowerCase().trim()).filter(Boolean);
   const mentionsProductName = productTerms.some((term) => t.includes(term));
 
+  // A question ABOUT what the approved information contains ("what does the approved information cover
+  // on sponsor & collaboration?", "does the approved information mention dosing?") is a SPECIFIC
+  // question — answer it through normal retrieval, NOT the deck walkthrough. Without this the bare
+  // words "approved information" (a legitimate deck-level signal in "walk me through the approved
+  // information") swallow it — which is exactly how the auto-generated "What does the approved
+  // information cover on X?" try-chips wrongly launched the whole overview.
+  const questionAboutApprovedInfo =
+    /\bapproved\s+information\b/.test(t) &&
+    /\b(what|what's|whats|which|does|do|is|are)\b/.test(t) &&
+    /\b(cover|covers|covered|say|says|include|includes|mention|mentions|state|states|about|on|regarding)\b/.test(t);
+  if (questionAboutApprovedInfo) return false;
+
   const asksForOverview =
     /\b(overview|high[-\s]?level|big\s+picture|rundown|story|pitch|presentation|introduce|approved\s+information|approved\s+deck|deck|slides?)\b|walk\s+me\s+through|take\s+me\s+through|start\s+with|\bpresent\s+(it|this|the|product|therapy|deck|slides?)/i.test(t) ||
     (mentionsProductName && /\bpresent\b/i.test(t));

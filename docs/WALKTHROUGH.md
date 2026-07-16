@@ -10,7 +10,27 @@
 
 ## 1. Current build status
 
-### Latest: Slide cue lands early, overview walks the deck on video, permanent demo recording (2026-07-16)
+### Latest: Guided deck is button step-through (no auto-walk) (2026-07-17)
+
+The guided deck is now driven ONE slide at a time by the buttons, not an auto-playing walk. On the
+video preview the auto-walk "breezed through" the whole deck, firing segment after segment; it's
+supposed to present a slide and stop. Now:
+
+- **Start overview** → `deckStep("start")` — presents the FIRST slide and stops.
+- **Continue / Go back** → `deckStep("next"/"previous")` — advance/retreat ONE slide, position
+  tracked via `deckFocus` → `currentSlideId` (so Continue never restarts from the top).
+- Typed/spoken "go over the slides" (`isOverviewPrompt`) routes to the same `deckStep("start")`.
+- The auto-walk is gone: removed `presentOverview`/`cancelOverview` from the video stage and the
+  `/api/presentation/overview` fan-out from the doctor `ask()`. Extracted `runDeckStep()` shared by
+  the buttons and the overview intent. Verified live: start→slide 0, next→1, next→2, previous→1.
+- Deferred to its own session (per the user): a **voice-affirmation classifier** ("yes/next/go back"
+  spoken replies driving the deck), especially on the live-video path.
+
+Also folded in: `isOverviewPrompt` no longer treats *"What does the approved information cover on X?"*
+(the auto-generated try-chips) as a deck request — that phrasing is a SPECIFIC question and now gets a
+focused answer. `tests/overview-prompt.test.ts`.
+
+### Slide cue lands early, overview walks the deck on video, permanent demo recording (2026-07-16)
 
 Four fixes, all tested:
 
