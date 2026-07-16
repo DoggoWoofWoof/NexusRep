@@ -961,6 +961,11 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
                 if (shouldInterruptDoctorInput()) {
                   transportRef.current?.stopAgentSpeech();
                   cancelCurrentRepForBargeIn("hcp_speech_start_native");
+                  // Drop any still-pending detail-aid switch at the SAME moment we interrupt the rep,
+                  // not later when the utterance finalizes — otherwise a slide armed for the answer the
+                  // doctor just barged over could still fire (≤4s cap) and flash before their new turn.
+                  // Gated on shouldInterruptDoctorInput() so mic-on/noise never drops a legit cue.
+                  onHcpSpeechStartRef.current?.();
                   recordTiming({ type: "hcp_start_during_rep", reason: "native_speech_start_interrupt" });
                 }
               } else if (/stop(?:ped)?[_\s.-]*speak|done[_\s.-]*speak/i.test(e.type)) {
