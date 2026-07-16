@@ -5,7 +5,14 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { correctTranscript, correctBestAlternative, correctionTerms } from "@lib/asr-correct";
+import {
+  correctBestAlternative,
+  correctHcpAsrBestAlternative,
+  correctHcpAsrText,
+  correctTranscript,
+  correctionTerms,
+  hcpCorrectionTerms,
+} from "@lib/asr-correct";
 
 const TERMS = ["Milvexian", "LIBREXIA", "Factor XIa", "apixaban"];
 
@@ -16,6 +23,16 @@ describe("correctTranscript", () => {
 
   it("fixes casing on an exact-but-lowercase match", () => {
     expect(correctTranscript("tell me about librexia", TERMS).text).toBe("tell me about LIBREXIA");
+  });
+
+  it("recovers Tavus LIBREXIA vowel-order mis-hearings", () => {
+    expect(correctTranscript("how many phases are there in LEIBREXIA", TERMS).text).toBe("how many phases are there in LIBREXIA");
+    expect(correctTranscript("What is the LEBIREXIA program?", TERMS).text).toBe("What is the LIBREXIA program?");
+    expect(correctTranscript("What is the LBILE?", TERMS).text).toBe("What is the LIBREXIA");
+    expect(correctTranscript("What is the liberation, bro?", TERMS).text).toBe("What is the LIBREXIA program?");
+    expect(correctTranscript("What is the liberation,", TERMS).text).toBe("What is the LIBREXIA program,");
+    expect(correctTranscript("WHAT IS THE Bro,", TERMS).text).toBe("What is the LIBREXIA program,");
+    expect(correctTranscript("WHAT IS THE BRUE?", TERMS).text).toBe("What is the LIBREXIA program?");
   });
 
   it("recovers a single name heard as two words", () => {
@@ -31,8 +48,18 @@ describe("correctTranscript", () => {
     expect(r.corrections).toEqual([["malvaxian", "Milvexian"]]);
   });
 
+  it("recovers common Tavus 'Milvexian' → 'my/the vaccine' speech aliases", () => {
+    expect(correctTranscript("how does my vaccine work", TERMS).text).toBe("how does Milvexian work");
+    expect(correctTranscript("how does the vaccine work", TERMS).text).toBe("how does Milvexian work");
+    expect(correctTranscript("How does the new vaccine work?", TERMS).text).toBe("How does Milvexian work?");
+    expect(correctTranscript("Vaccine work.", TERMS).text).toBe("Milvexian work.");
+    expect(correctTranscript("vaccine mechanism", TERMS).text).toBe("Milvexian mechanism");
+    expect(correctTranscript("What is BILL vaccine? I does Milvexian work?", TERMS).text).toBe("What is Milvexian I does Milvexian work?");
+    expect(correctTranscript("How does mylovaxia work?", TERMS).text).toBe("How does Milvexian work?");
+  });
+
   it("does NOT snap ordinary words onto a drug name (no false positives)", () => {
-    for (const q of ["what is the development status", "how is it tolerated", "can I use it off label"]) {
+    for (const q of ["what is the development status", "how is it tolerated", "can I use it off label", "vaccine safety in adults"]) {
       expect(correctTranscript(q, TERMS).text).toBe(q);
     }
   });
@@ -48,6 +75,7 @@ describe("correctTranscript — phonetic (vowel-swap) mis-hearings", () => {
   it.each([
     ["how does milvaxion work", "how does Milvexian work"],
     ["tell me about libraxia", "tell me about LIBREXIA"],
+    ["what is leibrexia program", "what is LIBREXIA program"],
     ["is it a factor exia inhibitor", "is it a Factor XIa inhibitor"],
     ["does it help atrial fibrilation", "does it help atrial fibrillation"], // dropped an 'l'
   ])("snaps %j → %j", (input, expected) => {
@@ -93,7 +121,8 @@ describe("correctBestAlternative", () => {
   it("picks the alternative that recovers the most drug names, then corrects it", () => {
     const r = correctBestAlternative(["how does my vaccine work", "how does milvexian work"], TERMS);
     expect(r.text).toBe("how does Milvexian work");
-    expect(r.chosenIndex).toBe(1);
+    // "my vaccine" is now corrected directly, so the first ASR hypothesis is already usable.
+    expect(r.chosenIndex).toBe(0);
   });
 
   it("falls back to the top alternative when none is clearly better", () => {
@@ -104,5 +133,17 @@ describe("correctBestAlternative", () => {
 
   it("handles no alternatives", () => {
     expect(correctBestAlternative([], TERMS)).toEqual({ text: "", corrections: [], chosenIndex: -1 });
+  });
+});
+
+describe("HCP ASR shared correction helpers", () => {
+  it("uses fallback brand terms so video captions and Tavus routing both recover observed ASR aliases", () => {
+    expect(hcpCorrectionTerms()).toEqual(["Milvexian", "LIBREXIA", "Factor XIa"]);
+    expect(correctHcpAsrText("How does the new vaccine work?").text).toBe("How does Milvexian work?");
+    expect(correctHcpAsrBestAlternative(["How does the new vaccine work?"]).text).toBe("How does Milvexian work?");
+  });
+
+  it("keeps literal vaccine safety questions literal", () => {
+    expect(correctHcpAsrText("vaccine safety in adults").text).toBe("vaccine safety in adults");
   });
 });

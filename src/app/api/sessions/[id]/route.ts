@@ -44,6 +44,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       questionCount: session.questionCount,
       complianceStatus: session.complianceStatus,
       recordingUrl: session.recordingUrl ?? null,
+      timelineSource: session.timelineSource ?? null,
     },
     turns,
     audit: audit.map((a) => ({ seq: a.seq, type: a.type, payload: a.payload })),

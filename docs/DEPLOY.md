@@ -47,10 +47,10 @@ ephemeral/serverless filesystem** — use in-memory for a demo, or point at a ma
    - `NEXUSREP_COMPOSE=llm` if you want the live rep to use the LLM composer (auto-selected when a
      model key is present). Tavus video shares this exact path — it always relays our endpoint's
      answer, there is no separate Tavus compose toggle.
-   - `TAVUS_API_KEY`, `TAVUS_REPLICA_ID` (+ `TAVUS_PERSONA_ID` optional) — the Tavus realtime provider auto-selects when the key is present (`NEXUSREP_REALTIME_PROVIDER=tavus` to force)
+   - `TAVUS_API_KEY`, `TAVUS_REPLICA_ID`, `TAVUS_PERSONA_ID=p7dfc4ad195f` — the Tavus realtime provider auto-selects when the key is present (`NEXUSREP_REALTIME_PROVIDER=tavus` to force). Keep `TAVUS_PERSONA_ID` pinned so every session patches the same NexusRep PAL instead of relying on account lookup.
    - `TAVUS_LLM_KEY` (shared secret Tavus uses to call our `/api/tavus/llm`)
    - Optional Tavus speech tuning: `NEXUSREP_TAVUS_TTS_ENGINE=cartesia`,
-     `NEXUSREP_TAVUS_TTS_MODEL=sonic-3`, `NEXUSREP_TAVUS_TTS_SPEED=1.08`.
+     `NEXUSREP_TAVUS_TTS_MODEL=sonic-3`, `NEXUSREP_TAVUS_TTS_SPEED=1.0`.
    - `NEXUSREP_DATA_DRIVER=memory` (serverless) — data resets on redeploy; fine for a demo.
    - `NEXUSREP_AUDIENCE=modeled` unless you wire the DocNexus cohort backend.
 3. `vercel --prod`. Open `/hcp`.
@@ -68,7 +68,7 @@ filesystem between requests), so the durable store runs as-is. The repo ships a 
    our compliance endpoint; set `NEXUSREP_REALTIME_PROVIDER=tavus` for the video rep).
    Use `ANTHROPIC_MODEL=claude-haiku-4-5` for the realtime demo path unless you intentionally
    choose a slower model.
-   The default Tavus PAL TTS layer is Cartesia `sonic-3` at speed `1.08`; override the
+   The default Tavus PAL TTS layer is Cartesia `sonic-3` at neutral speed `1.0`; override the
    `NEXUSREP_TAVUS_TTS_*` envs only if the actual rendered voice feels too fast/slow.
    **Live DocNexus cohort on a server (no static API key exists — auth is account-based):** run
    `node scripts/docnexus-platform-token.mjs` locally once; it captures a ~30-day Cognito

@@ -6,9 +6,9 @@
  * spelling. Pure + deterministic so it's unit-tested and reused wherever a recognizer produces text
  * (off-video voice today; the video path later, if we route ASR client-side).
  *
- * Deliberately conservative: only close matches are corrected (a wild mis-hearing like "my vaccine"
- * is left for the compliance composer's charitable interpretation downstream) so we never turn an
- * ordinary word into a drug name.
+ * Deliberately conservative: close matches are corrected, plus a tiny allow-list of observed Tavus
+ * speech aliases such as "the new vaccine" only inside product/mechanism-style questions. Ordinary
+ * vaccine discussion stays literal so it can route safely.
  */
 
 const SIM_THRESHOLD = 0.6; // Levenshtein similarity a window must reach to be snapped to a term.
@@ -78,6 +78,8 @@ export interface TranscriptCorrection {
   corrections: [heard: string, snappedTo: string][];
 }
 
+const HCP_ASR_FALLBACK_TERMS = ["Milvexian", "LIBREXIA", "Factor XIa"];
+
 /**
  * The subset of hotwords SAFE to snap TEXT to. Drops any multi-word term that merely EXTENDS a
  * standalone term — e.g. "LIBREXIA AF", "LIBREXIA ACS", "LIBREXIA STROKE" all extend "LIBREXIA".
@@ -94,6 +96,56 @@ export function correctionTerms(terms: string[]): string[] {
   });
 }
 
+function speechAliasCorrection(text: string, terms: string[]): TranscriptCorrection {
+  const milvexian = terms.find((t) => norm(t) === "milvexian");
+  const librexia = terms.find((t) => norm(t) === "librexia");
+  if (!milvexian && !librexia) return { text, corrections: [] };
+  // Tavus/medical ASR can hear "Milvexian" as "my vaccine" / "the vaccine". Only correct inside
+  // a product-style question; a literal vaccine discussion should remain literal and route safely.
+  const productQuestion = /\b(?:how\s+(?:does|do|is)|what(?:'s|\s+is)|tell\s+me|explain|mechanism|work|works|program|about)\b/i.test(text);
+  if (!productQuestion) return { text, corrections: [] };
+  const corrections: [string, string][] = [];
+  let out = text;
+  if (milvexian) {
+    const alias = /\b(?:(?:my|the|new|the\s+new|mil|mill|myl|mal|male|mild|bill)\s+vaccine|mil\s+vax(?:ine|ian|ion)|milvaccine|mylovaxia|milovaxia|mylovexia)\b/gi;
+    out = out.replace(alias, (heard) => {
+      corrections.push([heard, milvexian]);
+      return milvexian;
+    });
+    // Tavus sometimes drops the determiner entirely and returns a clipped first-turn fragment like
+    // "Vaccine work." In this rep context that is a mechanism question about Milvexian, but keep
+    // the correction narrow so ordinary vaccine discussion still routes safely.
+    out = out.replace(/^\s*vaccine\s+(work|works|mechanism)\b/gi, (heard, tail: string) => {
+      corrections.push([heard.trim(), milvexian]);
+      return `${milvexian} ${tail}`;
+    });
+  }
+  if (librexia) {
+    // Short Tavus collapses of LIBREXIA observed in live calls ("LBILE", "Libile") are too short
+    // for edit-distance matching, so handle them only in product/program-style questions.
+    out = out.replace(/\bwhat\s+is\s+the\s+(?:bro|brue|brew|pro|prog(?:ram)?)\b/gi, (heard) => {
+      corrections.push([heard.trim(), `What is the ${librexia} program`]);
+      return `What is the ${librexia} program`;
+    });
+    const programAlias = /\b(?:liberation|libation|liberexia)\s*,?\s*(?:bro|brue|brew|pro|prog(?:ram)?)\b/gi;
+    out = out.replace(programAlias, (heard) => {
+      corrections.push([heard.trim(), `${librexia} program`]);
+      return `${librexia} program`;
+    });
+    out = out.replace(/\bliberation\b/gi, (heard) => {
+      corrections.push([heard, `${librexia} program`]);
+      return `${librexia} program`;
+    });
+    const alias = /\b(?:l\s*bile|lbile|libile|librix|librixa|librex|lebrex|lebriexia|lebirexia|libr?exia)\b/gi;
+    out = out.replace(alias, (heard) => {
+      if (norm(heard) === "librexia") return heard; // exact/casing handled by the fuzzy pass below
+      corrections.push([heard, librexia]);
+      return librexia;
+    });
+  }
+  return { text: out, corrections };
+}
+
 /**
  * Snap near-miss token windows in `text` to the canonical `terms`. Multi-word terms are matched
  * first (longest token-length wins), and a single-word term is also tried against a 2-token window
@@ -102,11 +154,12 @@ export function correctionTerms(terms: string[]): string[] {
 export function correctTranscript(text: string, terms: string[]): TranscriptCorrection {
   const canon = [...new Set(terms.map((t) => t.trim()).filter((t) => norm(t).length >= 3))]
     .sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length || b.length - a.length);
-  const tokens = text.split(/\s+/).filter(Boolean);
+  const alias = speechAliasCorrection(text, canon);
+  const tokens = alias.text.split(/\s+/).filter(Boolean);
   if (!canon.length || !tokens.length) return { text, corrections: [] };
 
   const out: string[] = [];
-  const corrections: [string, string][] = [];
+  const corrections: [string, string][] = [...alias.corrections];
   let i = 0;
   while (i < tokens.length) {
     let hit: { term: string; len: number } | null = null;
@@ -154,4 +207,24 @@ export function correctBestAlternative(
     if (score > bestScore) { best = { ...c, chosenIndex: i }; bestScore = score; }
   }
   return best;
+}
+
+export function hcpCorrectionTerms(hotwords: string[] = [], productTerms: string[] = []): string[] {
+  return correctionTerms([...hotwords, ...productTerms, ...HCP_ASR_FALLBACK_TERMS]);
+}
+
+export function correctHcpAsrText(
+  text: string,
+  hotwords: string[] = [],
+  productTerms: string[] = [],
+): TranscriptCorrection {
+  return correctTranscript(text, hcpCorrectionTerms(hotwords, productTerms));
+}
+
+export function correctHcpAsrBestAlternative(
+  alternatives: string[],
+  hotwords: string[] = [],
+  productTerms: string[] = [],
+): TranscriptCorrection & { chosenIndex: number } {
+  return correctBestAlternative(alternatives, hcpCorrectionTerms(hotwords, productTerms));
 }

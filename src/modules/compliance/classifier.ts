@@ -32,6 +32,14 @@ const COMPARATIVE_TERMS = ["better than", "safer than", "superior to", "more eff
 const INJECTION_TERMS = ["ignore previous", "ignore the above", "system prompt", "developer mode", "jailbreak"];
 const HUMAN_TERMS = ["talk to a person", "human rep", "representative", "call me", "sales rep", "speak to someone"];
 const MSL_TERMS = ["pharmacokinetic", "data on file", "study design", "medical information", "msl"];
+const DEEP_TRIAL_RESULT_TERMS = ["efficacy", "endpoint", "outcome", "results", "published", "latest data", "clinical data"];
+const PATIENT_USE_TERMS = [
+  "should i prescribe", "can i prescribe", "prescribe it", "prescribe this",
+  "should i use", "can i use", "should we use", "can we use",
+  "should i give", "can i give", "start my patient", "start patients",
+  "use it for my patient", "use it for my patients", "for my patient", "for my patients",
+  "recommend it", "recommend this",
+];
 
 // Order matters: clinical-specifics intents are listed FIRST so that on a term
 // tie they win over the general product_info intent — the safe direction, since
@@ -48,6 +56,8 @@ const INTENT_TERMS: Record<Exclude<Intent, "off_label" | "adverse_event" | "comp
   product_info: [
     "what is", "what's", "tell me about", "tell me more", "explain", "mechanism", "how does", "moa",
     "program", "indication", "investigational", "fast track", "development", "class of drug",
+    "why focus", "rationale", "factor xia", "fxia", "clotting", "coagulation", "cascade", "pathway",
+    "thrombin", "hemostasis",
     // Presentation requests — the rep presents its OWN approved deck (agentic), not a human handoff.
     "slide", "slides", "deck", "presentation", "detail aid", "show me", "show your", "show your slides",
     "walk me through", "what do you have", "what can you show", "present",
@@ -59,6 +69,16 @@ const INTENT_TERMS: Record<Exclude<Intent, "off_label" | "adverse_event" | "comp
 // so onboarding a new brand never edits the classifier.
 let PRODUCT_TERMS: string[] = [];
 let PRODUCT_CANON: { despaced: string; display: string }[] = [];
+function canonicalDisplay(term: string): string {
+  const clean = term.trim();
+  const compact = clean.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (compact === "librexia") return "LIBREXIA";
+  if (compact === "fxia") return "FXIa";
+  if (compact === "factorxia" || compact === "factorxi") return "Factor XIa";
+  if (compact === "milvexian") return "Milvexian";
+  if (clean === clean.toUpperCase() && /[A-Z]/.test(clean)) return clean;
+  return clean.replace(/\b\w/g, (c) => c.toUpperCase());
+}
 export function configureClassifierLexicon(productTerms: string[]): void {
   PRODUCT_TERMS = productTerms.map((t) => t.toLowerCase().trim()).filter(Boolean);
   // Canonicalization targets EXCLUDE any multi-word term whose FIRST word is itself a standalone
@@ -71,7 +91,7 @@ export function configureClassifierLexicon(productTerms: string[]): void {
     .filter((t) => { const w = t.split(/\s+/); return w.length === 1 || !singles.has(w[0]!.replace(/[^a-z0-9]/g, "")); })
     .map((t) => ({
       despaced: t.replace(/[^a-z0-9]/g, ""),
-      display: t.replace(/\b\w/g, (c) => c.toUpperCase()),
+      display: canonicalDisplay(t),
     }));
 }
 
@@ -110,6 +130,48 @@ function editDistanceWithin(a: string, b: string, max: number): number {
   return prev[b.length]!;
 }
 
+function commonSpeechAliasReplacements(input: string): { start: number; end: number; display: string }[] {
+  const milvexian = PRODUCT_CANON.find((t) => t.despaced === "milvexian");
+  const librexia = PRODUCT_CANON.find((t) => t.despaced === "librexia");
+  if (!milvexian && !librexia) return [];
+  // "Milvexian" is repeatedly heard as "my vaccine" / "the vaccine" in Tavus ASR. Only correct it
+  // inside a product-style question so ordinary vaccine talk is not silently turned into the brand.
+  const productQuestion = /\b(?:how\s+(?:does|do|is)|what(?:'s|\s+is)|tell\s+me|explain|mechanism|work|works|program|about)\b/i.test(input);
+  if (!productQuestion) return [];
+  const repls: { start: number; end: number; display: string }[] = [];
+  if (milvexian) {
+    const alias = /\b(?:(?:my|the|mil|mill|myl|mal|male|mild|bill)\s+vaccine|mil\s+vax(?:ine|ian|ion)|milvaccine|mylovaxia|milovaxia|mylovexia)\b/gi;
+    for (const m of input.matchAll(alias)) {
+      repls.push({ start: m.index!, end: m.index! + m[0].length, display: milvexian.display });
+    }
+    const bareVaccine = /^\s*vaccine\s+(?:work|works|mechanism)\b/i.exec(input);
+    if (bareVaccine) {
+      const start = input.search(/\bvaccine\b/i);
+      repls.push({ start, end: start + "vaccine".length, display: milvexian.display });
+    }
+  }
+  if (librexia) {
+    const programAlias = /\b(?:liberation|libation|liberexia)\s*,?\s*(?:bro|pro|prog(?:ram)?)\b/gi;
+    for (const m of input.matchAll(programAlias)) {
+      repls.push({ start: m.index!, end: m.index! + m[0].length, display: `${librexia.display} program` });
+    }
+    const clippedProgramAlias = /\bliberation\b/gi;
+    for (const m of input.matchAll(clippedProgramAlias)) {
+      repls.push({ start: m.index!, end: m.index! + m[0].length, display: `${librexia.display} program` });
+    }
+  }
+  return repls;
+}
+
+function nonOverlappingReplacements(repls: { start: number; end: number; display: string }[]): { start: number; end: number; display: string }[] {
+  const chosen: { start: number; end: number; display: string }[] = [];
+  for (const repl of [...repls].sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start))) {
+    if (chosen.some((r) => repl.start < r.end && repl.end > r.start)) continue;
+    chosen.push(repl);
+  }
+  return chosen.sort((a, b) => a.start - b.start);
+}
+
 /**
  * Recover an ASR/typo near-miss of a product name ("no vexian", "novexian", "milvexin" →
  * "Milvexian") so a garbled name still classifies as a product question AND retrieves the
@@ -125,8 +187,11 @@ export function canonicalizeProductNames(input: string): string {
   const tokens = [...input.matchAll(/\S+/g)].map((m) => ({ raw: m[0], start: m.index!, end: m.index! + m[0].length }));
   if (!tokens.length) return input;
   const norm = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const repls: { start: number; end: number; display: string }[] = [];
+  const repls: { start: number; end: number; display: string }[] = nonOverlappingReplacements(commonSpeechAliasReplacements(input));
   const used = new Array<boolean>(tokens.length).fill(false);
+  for (let i = 0; i < tokens.length; i++) {
+    if (repls.some((r) => tokens[i]!.start >= r.start && tokens[i]!.end <= r.end)) used[i] = true;
+  }
   for (const win of [1, 2]) {
     for (let i = 0; i + win <= tokens.length; i++) {
       if (used.slice(i, i + win).some(Boolean)) continue;
@@ -138,6 +203,13 @@ export function canonicalizeProductNames(input: string): string {
         // trial suffix the doctor never said and then skews retrieval to that trial). Canonicalize
         // spelling within the SAME word count, or CONTRACT ("no vexian" → "Milvexian") — never expand.
         if (term.display.trim().split(/\s+/).length > win) continue;
+        // Also never CONTRACT an exact canonical product/program token plus a meaningful suffix into
+        // the base term. "LIBREXIA AF" must stay trial-specific; only true split-name ASR misses such
+        // as "no vexian" should contract to "Milvexian".
+        if (win > 1 && term.display.trim().split(/\s+/).length === 1) {
+          const rawWindow = tokens.slice(i, i + win).map((t) => norm(t.raw));
+          if (rawWindow.includes(term.despaced)) continue;
+        }
         const lcs = longestCommonSubstr(cand, term.despaced);
         const nearEdit =
           term.despaced.length >= 7 &&
@@ -185,7 +257,9 @@ export function classify(input: string): RiskClassification {
   const offLabelRisk = clamp(hits(text, OFF_LABEL_TERMS) * 0.7);
   const comparativeRisk = clamp(hits(text, COMPARATIVE_TERMS) * 0.7);
   const injectionRisk = clamp(hits(text, INJECTION_TERMS) * 0.8);
-  const medicalInfoRisk = clamp(hits(text, MSL_TERMS) * 0.6);
+  const patientUse = hits(text, PATIENT_USE_TERMS) > 0;
+  const deepTrialResults = hits(text, DEEP_TRIAL_RESULT_TERMS) > 0;
+  const medicalInfoRisk = clamp(hits(text, MSL_TERMS) * 0.6 + (patientUse ? 0.8 : 0) + (deepTrialResults ? 0.8 : 0));
 
   // Intent priority: safety-critical routes win over informational intents.
   let intent: Intent = "other";
@@ -199,6 +273,12 @@ export function classify(input: string): RiskClassification {
   } else if (comparativeRisk >= 0.7) {
     intent = "comparative";
     confidence = 0.8;
+  } else if (patientUse) {
+    intent = "administration";
+    confidence = 0.85;
+  } else if (deepTrialResults) {
+    intent = "trial_data";
+    confidence = 0.85;
   } else if (hits(text, HUMAN_TERMS) > 0) {
     intent = "human_request";
     confidence = 0.85;

@@ -31,18 +31,18 @@ HCP speaks OR typed text is sent with conversation.respond
 
 | Tavus feature | NexusRep mapping | Status |
 |---|---|---|
-| **PAL / Persona** `system_prompt`, `context`, `layers` | Built/reused per brand by `TavusRealtimeProvider.ensurePersona` (or reuse `TAVUS_PERSONA_ID`) | ✅ wired |
+| **PAL / Persona** `system_prompt`, `context`, `layers` | One stable NexusRep PAL reused and PATCHED in place by `TavusRealtimeProvider.ensurePersona` (or pin with `TAVUS_PERSONA_ID`) | ✅ wired |
 | **Face / Replica** (video avatar) | `RealtimeSessionConfig.agentId` ← Studio Agent selection or `TAVUS_REPLICA_ID` fallback | ✅ wired |
 | **Create Conversation** → `conversation_url` | `startSession()` → `RealtimeSession.transportUrl` (+ `token`) | ✅ wired |
-| **Custom greeting** | `RealtimeSessionConfig.customGreeting` → `custom_greeting` | ✅ wired |
+| **Custom greeting** | Stored in `RealtimeSessionConfig.customGreeting`, then spoken client-side via normal `conversation.echo` after join so it is interruptible. We do **not** send Tavus `custom_greeting`, because Tavus treats the native greeting as non-interruptible. | ✅ wired |
 | **Conversational context** | `config.context` → `conversational_context` (no PHI) | ✅ wired |
 | **Custom LLM** (`layers.llm.base_url`) | → `POST /api/tavus/llm/chat/completions` = our compliance orchestrator, OpenAI-compatible SSE | ✅ wired + tested |
-| **LLM speculative inference** | `layers.llm.speculative_inference = true` | ✅ wired |
-| **Conversational Flow** | `sparrow-1`, `turn_taking_patience: "low"`, `pal_interruptibility: "medium"`, `voice_isolation: "near"` | ✅ wired for lower response latency |
+| **LLM speculative inference** | `layers.llm.speculative_inference = false` by default; opt in with `NEXUSREP_TAVUS_SPECULATIVE=1` only after validating it does not emit unstable partial answers | ✅ wired |
+| **Conversational Flow** | `sparrow-1`, `turn_taking_patience: "low"`, `replica_interruptibility: "high"`, `voice_isolation: "near"` | ✅ wired for lower response latency |
 | **Text Respond Interaction** | typed HCP text in video mode uses `conversation.respond`, so Tavus runs the same PAL/custom-LLM path as mic input | ✅ wired |
-| **Echo / interrupt** (verbatim speech) | `conversation.echo` remains for platform-controlled scripted segments, e.g. guided overview; `conversation.interrupt` supports barge-in | ✅ wired client-side |
+| **Echo / interrupt** (verbatim speech) | `conversation.echo` remains for platform-controlled scripted segments, e.g. guided overview. Typed/scripted barge-in sends `conversation.interrupt`; microphone speech-start does not, so Tavus can still finalize the HCP utterance. | ✅ wired client-side |
 | **Tool / function calling** | `config.tools[{name,description,parameters}]` → legacy inline `layers.llm.tools`; routing also handled inside our LLM endpoint. For new external tools, prefer Tavus tool registry. | 🟡 legacy-compatible; registry not needed yet |
-| **STT hotwords** (drug names) | `config.hotwords` → `layers.stt.hotwords` (Milvexian, LIBREXIA, Factor XIa) | ✅ wired |
+| **STT engine + hotwords** (drug names) | `NEXUSREP_TAVUS_STT` defaults to `tavus-deepgram-medical`; `config.hotwords` → `layers.stt.hotwords` with Milvexian/LIBREXIA/Factor XIa plus tested ASR mis-hears | ✅ wired |
 | **TTS voice / speech latency** | `layers.tts` is pinned to Cartesia `sonic-3` with global speed from `NEXUSREP_TAVUS_TTS_SPEED`; `config.voice.voiceId` still maps to `external_voice_id` when present | ✅ wired |
 | **Language / multilingual** | `config.language` → conversation `properties.language` | ✅ wired |
 | **Audio-only mode** | `config.audioOnly` → `audio_only` | ✅ wired |
@@ -59,11 +59,12 @@ HCP speaks OR typed text is sent with conversation.respond
 ```
 TAVUS_API_KEY=<key>
 TAVUS_REPLICA_ID=<stock or custom replica id>
+TAVUS_PERSONA_ID=p7dfc4ad195f                              # stable NexusRep PAL; patch in place
 NEXUSREP_PUBLIC_URL=https://<publicly-reachable-app-url>   # so Tavus can call our LLM endpoint
 TAVUS_LLM_KEY=<any shared secret>                          # optional, authenticates Tavus→us
 NEXUSREP_TAVUS_TTS_ENGINE=cartesia                         # default
 NEXUSREP_TAVUS_TTS_MODEL=sonic-3                           # default
-NEXUSREP_TAVUS_TTS_SPEED=1.08                              # clamped 0.8-1.2
+NEXUSREP_TAVUS_TTS_SPEED=1.0                               # neutral default; clamped 0.8-1.2
 ```
 With no key, `getRealtimeProvider()` returns the mock and the HCP view uses the built-in
 free 3D avatar — the app never breaks.
@@ -74,6 +75,14 @@ key is present, Tavus receives grounded LLM-rephrased answers; with no key it ge
 deterministic approved-block builder. Either way Tavus never composes its own answer: it always
 relays what our `/api/tavus/llm` endpoint returns, after retrieval, validation, the final
 compliance gate, ISI cadence, source IDs, slide IDs, audit, and follow-up creation have all run.
+
+Persona reuse is intentionally single-PAL. Pin `TAVUS_PERSONA_ID` whenever possible so every
+session updates the same Tavus PAL in place. If the env is missing, `TavusRealtimeProvider`
+scores existing `NexusRep compliant rep*` PALs by current custom-LLM URL,
+`nexusrep-compliance` model, `tavus-deepgram-medical`, hotwords, and Cartesia Sonic-3 before
+reusing one. It PATCHES that PAL in place and only POSTs `/personas` when the account has no
+NexusRep PAL at all. On 2026-07-15 the live Tavus account was cleaned down to one NexusRep PAL:
+`p7dfc4ad195f` (`NexusRep compliant rep`).
 
 ## Verified against the live API (2026-07-08)
 
@@ -99,9 +108,9 @@ Tavus latency has three separate parts:
    `turn_taking_patience: "low"` and `voice_isolation: "near"` so the PAL responds quickly
    after the HCP stops speaking while still filtering background noise.
 3. **Speech synthesis/rendering**: `layers.tts` is explicitly pinned to Cartesia `sonic-3`
-   with `NEXUSREP_TAVUS_TTS_SPEED` defaulting to `1.08`, so existing cached PALs do not
-   keep an older or unknown Tavus auto TTS choice. If the voice feels rushed, lower the env;
-   if it still lags, raise it up to the documented `1.2` ceiling.
+   with `NEXUSREP_TAVUS_TTS_SPEED` defaulting to neutral `1.0`, so existing cached PALs do
+   not keep an older or unknown Tavus auto TTS choice. Override the env only if a specific
+   voice needs a faster/slower delivery.
 4. **Answer generation**: Tavus calls our custom LLM endpoint. The endpoint runs the same
    NexusRep composer policy as the rest of the live rep: grounded LLM rephrase when keyed,
    deterministic approved text only when no composer is available or when explicitly forced.

@@ -40,7 +40,48 @@ export type TurnOpts = {
   classify?: (text: string) => Promise<RiskClassification>;
   /** Per-turn composer override (the in-chat "Test models" selector); null forces deterministic. */
   composer?: GroundedComposer | null;
+  /** The caller already persisted the HCP utterance at the true input time (typed video path). */
+  reuseLatestHcpTurn?: boolean;
+  /** Optional realtime budgets; timeout falls back to deterministic safe behavior. */
+  classificationTimeoutMs?: number;
+  composerTimeoutMs?: number;
+  composerMaxTokens?: number;
+  /** Live voice can overlap a low-risk grounded draft with classification; final gate still decides. */
+  speculativeCompose?: boolean;
+  /** Tavus/mic voice path: keep full compliance, but skip slow composer repair passes. */
+  liveVoice?: boolean;
+  /** Optional style/length notes for this transport; still subordinate to grounding + gate. */
+  coaching?: string[];
+  /** Live voice should avoid optional "next slide" offers that lengthen speech and queue audio. */
+  suppressRelatedSlide?: boolean;
 };
+
+function sameTurnText(a: string, b: string): boolean {
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  if (norm(a) === norm(b)) return true;
+  const tokens = (s: string) =>
+    norm(s)
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+  const aw = tokens(a);
+  const bw = tokens(b);
+  if (!aw.length || !bw.length) return false;
+  const bset = new Set(bw);
+  const rawOverlap = aw.filter((w) => bset.has(w)).length / Math.max(aw.length, bw.length);
+  if (rawOverlap >= 0.82) return true;
+
+  // Tavus can normalize a typed prompt before it calls the custom LLM (for example
+  // dropping "is" or "the"). Reuse only near-identical content turns, not a new
+  // question that merely shares generic words like "what/how".
+  const stop = new Set(["a", "an", "and", "are", "about", "can", "could", "do", "does", "for", "how", "i", "is", "it", "me", "of", "on", "or", "please", "should", "tell", "the", "to", "what", "would", "you"]);
+  const ac = aw.filter((w) => !stop.has(w));
+  const bc = bw.filter((w) => !stop.has(w));
+  if (Math.max(ac.length, bc.length) < 2) return false;
+  const bcset = new Set(bc);
+  const contentOverlap = ac.filter((w) => bcset.has(w)).length / Math.max(ac.length, bc.length);
+  return contentOverlap >= 0.9;
+}
 
 export class ConversationService {
   constructor(private readonly deps: ConversationDeps) {}
@@ -59,7 +100,14 @@ export class ConversationService {
     // turn is logged, classified, or retrieved — so a garbled name is answered, not bounced.
     const text = canonicalizeProductNames(ctx.text);
     const turnCtx = text === ctx.text ? ctx : { ...ctx, text };
-    await this.deps.sessions.appendTurn(turnCtx.sessionId, { speaker: "hcp", text: turnCtx.text });
+    const existing = opts?.reuseLatestHcpTurn ? await this.deps.sessions.get(turnCtx.sessionId) : null;
+    const latest = existing?.turns[existing.turns.length - 1];
+    const alreadyLogged =
+      latest?.speaker === "hcp" &&
+      sameTurnText(latest.text, turnCtx.text);
+    if (!alreadyLogged) {
+      await this.deps.sessions.appendTurn(turnCtx.sessionId, { speaker: "hcp", text: turnCtx.text });
+    }
 
     // Fold the rep's active coaching rules into runtime steering (default: none).
     const steering = this.deps.steeringFor ? await this.deps.steeringFor(turnCtx.hcpId) : undefined;

@@ -45,6 +45,8 @@ export interface ConversationSession {
   vendorConversationId?: string;
   /** Playback recording URL once Tavus's recording_ready callback lands. */
   recordingUrl?: string;
+  /** Review timeline source. "recorded" means turn.at is already synced to the playback recording. */
+  timelineSource?: "recorded";
 }
 
 /** Severity ordering so a session's status reflects its worst turn. */
@@ -151,6 +153,34 @@ export class SessionService {
       const turns = [...s.turns, turn];
       const questionCount = turns.filter((t) => t.speaker === "hcp").length;
       return this.sessions.update(sessionId, { turns, questionCount });
+    });
+  }
+
+  async removeRecentTurn(
+    sessionId: SessionId,
+    input: { speaker: "hcp" | "rep"; text: string; withinMs?: number },
+  ): Promise<{ session: ConversationSession | null; removed: boolean }> {
+    return this.serialize(sessionId, async () => {
+      const s = await this.sessions.get(sessionId);
+      if (!s) return { session: null, removed: false };
+      const target = input.text.replace(/\s+/g, " ").trim();
+      const withinMs = input.withinMs ?? 45_000;
+      const now = Date.now();
+      const index = (() => {
+        for (let i = s.turns.length - 1; i >= 0; i--) {
+          const turn = s.turns[i]!;
+          if (turn.speaker !== input.speaker) continue;
+          if (turn.text.replace(/\s+/g, " ").trim() !== target) continue;
+          if (turn.at && Number.isFinite(Date.parse(turn.at)) && now - Date.parse(turn.at) > withinMs) continue;
+          return i;
+        }
+        return -1;
+      })();
+      if (index < 0) return { session: s, removed: false };
+      const turns = s.turns.filter((_, i) => i !== index);
+      const questionCount = turns.filter((t) => t.speaker === "hcp").length;
+      const updated = await this.sessions.update(sessionId, { turns, questionCount });
+      return { session: updated, removed: true };
     });
   }
 

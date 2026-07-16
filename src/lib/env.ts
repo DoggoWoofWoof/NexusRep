@@ -130,8 +130,8 @@ export const env = {
    *  speech stack Tavus now recommends for new PALs instead of inheriting stale defaults. */
   tavusTtsEngine: process.env.NEXUSREP_TAVUS_TTS_ENGINE ?? "cartesia",
   tavusTtsModel: process.env.NEXUSREP_TAVUS_TTS_MODEL ?? "sonic-3",
-  // Natural pace by default — 1.08 read as rushed ("in a hurry"). Nudge via env if a
-  // brand wants faster/slower; clamped to the range Tavus/Cartesia support.
+  // Natural pace by default. Nudge via env if a brand wants faster/slower; clamped to the range
+  // Tavus/Cartesia support.
   tavusTtsSpeed: clampNum(process.env.NEXUSREP_TAVUS_TTS_SPEED, 1.0, 0.8, 1.2),
   // Emotion control OFF by default: it drives expressive/dynamic pacing that rushes the START of a
   // sentence ("speeds up a lot at the start"). Off gives steady, even delivery. Set =1 to re-enable.

@@ -12,6 +12,12 @@ function model(): string {
   return process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";
 }
 
+function maxTokens(): number {
+  const raw = process.env.NEXUSREP_CLASSIFIER_MAX_TOKENS;
+  const n = Number(raw);
+  return Number.isFinite(n) && raw !== undefined && raw !== "" ? Math.max(80, Math.min(512, n)) : 180;
+}
+
 export const claudeClassifier: LlmClassifier = {
   name: "claude",
   get label() {
@@ -24,7 +30,7 @@ export const claudeClassifier: LlmClassifier = {
     const t0 = Date.now();
     const res = await client.messages.create({
       model: model(),
-      max_tokens: 512,
+      max_tokens: maxTokens(),
       system: CLASSIFIER_SYSTEM,
       messages: [
         { role: "user", content: text?.trim() || "(no message)" },

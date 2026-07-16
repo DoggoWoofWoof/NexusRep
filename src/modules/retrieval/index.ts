@@ -65,7 +65,10 @@ export class RetrievalService {
     // "the atrial fibrillation trial" → the generic program block, because a keyword topic-bonus
     // outweighed the semantically-correct AF block). The keyword re-rank stays only for the
     // deterministic lexical fallback (offline / CI / no model), where there's no semantic score.
-    const ordered = getEmbeddingMode() === "neural" ? answers : rerankApprovedAnswers(req.text, answers);
+    const ordered =
+      getEmbeddingMode() === "neural" && !hasStrongMechanismIntent(req.text)
+        ? answers
+        : rerankApprovedAnswers(req.text, answers);
     return { answers: ordered, rejected };
   }
 }
@@ -94,7 +97,7 @@ export function configureRetrievalLexicon(topicSynonyms: Record<string, string[]
   );
 }
 
-function topicBonus(queryWords: Set<string>, answer: ApprovedAnswer): number {
+function topicBonus(query: string, queryWords: Set<string>, answer: ApprovedAnswer): number {
   const topic = answer.topic.toLowerCase();
   let bonus = 0;
   const synonymHits = new Set(
@@ -106,7 +109,11 @@ function topicBonus(queryWords: Set<string>, answer: ApprovedAnswer): number {
   const namedMechanismHit = [...synonymHits].some((topicKey) => /mechanism|moa|action/.test(topicKey));
 
   // GENERIC clinical groupings only — brand vocabulary comes from TOPIC_SYNONYMS below.
-  if (hasAny(queryWords, ["mechanism", "moa", "pathway", "fit"]) || (hasAny(queryWords, ["work", "works", "working"]) && !namedProgramHit)) {
+  if (
+    hasAny(queryWords, ["mechanism", "moa", "pathway", "fit"]) ||
+    (/\bhow\s+(?:does|do|is)\b/i.test(query) && !namedProgramHit) ||
+    (hasAny(queryWords, ["work", "works", "working"]) && !namedProgramHit)
+  ) {
     if (/mechanism|action/i.test(topic)) bonus += 10;
   }
   if (hasAny(queryWords, ["program", "trial", "trials", "study", "studying", "phase"])) {
@@ -138,6 +145,26 @@ function topicBonus(queryWords: Set<string>, answer: ApprovedAnswer): number {
   return bonus;
 }
 
+function namedProgramSignal(queryWords: Set<string>): boolean {
+  const synonymHits = new Set(
+    Object.entries(TOPIC_SYNONYMS)
+      .filter(([, words]) => hasAny(queryWords, words))
+      .map(([topicKey]) => topicKey),
+  );
+  return [...synonymHits].some((topicKey) => /program|trial|study/.test(topicKey));
+}
+
+function hasStrongMechanismIntent(query: string): boolean {
+  const queryWords = new Set(tokens(query));
+  if (!queryWords.size) return false;
+  const namedProgramHit = namedProgramSignal(queryWords);
+  return (
+    hasAny(queryWords, ["mechanism", "moa", "pathway", "fit"]) ||
+    (/\bhow\s+(?:does|do|is)\b/i.test(query) && !namedProgramHit) ||
+    (hasAny(queryWords, ["work", "works", "working"]) && !namedProgramHit)
+  );
+}
+
 function lexicalOverlap(queryWords: Set<string>, answer: ApprovedAnswer): number {
   const topicWords = new Set(tokens(answer.topic));
   const bodyWords = new Set(tokens(answer.text));
@@ -156,7 +183,7 @@ function rerankApprovedAnswers(query: string, answers: ApprovedAnswer[]): Approv
     .map((answer, index) => ({
       answer,
       index,
-      score: lexicalOverlap(queryWords, answer) + topicBonus(queryWords, answer),
+      score: lexicalOverlap(queryWords, answer) + topicBonus(query, queryWords, answer),
     }))
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .map((r) => r.answer);

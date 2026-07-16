@@ -58,6 +58,11 @@ export class InMemoryVectorIndex implements VectorIndex {
     pending.forEach((r, i) => { r.vec = vecs[i]; });
   }
 
+  /** Explicit startup warmup so the first live doctor turn doesn't pay to embed the whole deck. */
+  async warmup(): Promise<void> {
+    await this.ensureEmbedded();
+  }
+
   async query(query: VectorQuery): Promise<VectorCandidate[]> {
     await this.ensureEmbedded();
     const [qVec] = await this.provider.embed([query.text]);

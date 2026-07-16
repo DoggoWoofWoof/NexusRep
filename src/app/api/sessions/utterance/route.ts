@@ -18,9 +18,10 @@ import { getContainer } from "@lib/container";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request): Promise<NextResponse> {
-  const body = (await req.json().catch(() => ({}))) as { sessionId?: unknown; speaker?: unknown; text?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { sessionId?: unknown; speaker?: unknown; text?: unknown; at?: unknown };
   const speaker = body.speaker === "rep" ? "rep" : body.speaker === "hcp" ? "hcp" : null;
   const text = typeof body.text === "string" ? body.text.trim() : "";
+  const at = typeof body.at === "string" && Number.isFinite(Date.parse(body.at)) ? body.at : undefined;
   const sessionId = typeof body.sessionId === "string" ? asId<"session_id">(body.sessionId) : null;
   if (!sessionId || !speaker || !text) {
     return NextResponse.json({ error: "sessionId, speaker (hcp|rep), and text are required" }, { status: 400 });
@@ -38,6 +39,6 @@ export async function POST(req: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: true, deduped: true });
   }
 
-  await c.sessions.appendTurn(sessionId, { speaker, text });
+  await c.sessions.appendTurn(sessionId, { speaker, text, ...(at ? { at } : {}) });
   return NextResponse.json({ ok: true });
 }

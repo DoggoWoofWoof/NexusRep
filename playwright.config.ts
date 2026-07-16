@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 // Port is env-overridable so E2E doesn't collide with other local dev servers.
 const PORT = Number(process.env.E2E_PORT) || 3100;
 const BASE_URL = `http://localhost:${PORT}`;
+const SKIP_WEBSERVER = process.env.E2E_SKIP_WEBSERVER === "1";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -35,7 +36,7 @@ export default defineConfig({
       dependencies: ["chromium"],
     },
   ],
-  webServer: {
+  webServer: SKIP_WEBSERVER ? undefined : {
     // Build + start gives deterministic E2E (no first-hit dev compile races).
     command: `npm run build && npm run start -- -p ${PORT}`,
     url: BASE_URL,

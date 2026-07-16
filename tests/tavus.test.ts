@@ -2,10 +2,17 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { env } from "@lib/env";
 import { TavusRealtimeProvider } from "@modules/vendors";
 import { getRealtimeProvider } from "@modules/vendors";
+import { __resetTavusPersonaCacheForTests } from "@modules/vendors/tavus";
 import { POST as llmCompletions } from "@/app/api/tavus/llm/chat/completions/route";
 import { getContainer } from "@lib/container";
+import { __resetLiveTurnGuardForTests } from "@lib/live-turn-guard";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  __resetTavusPersonaCacheForTests();
+  __resetLiveTurnGuardForTests();
+});
 
 /** Collect the assistant content from an OpenAI SSE stream Response. */
 async function readSse(res: Response): Promise<string> {
@@ -37,6 +44,21 @@ describe("Tavus realtime adapter", () => {
     expect(getRealtimeProvider().name).toBe("mock");
   });
 
+  it("turns Tavus AbortError into a clear startup timeout", async () => {
+    vi.stubGlobal("fetch", (async () => {
+      throw new DOMException("This operation was aborted", "AbortError");
+    }) as typeof fetch);
+
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1", timeoutMs: 1000 });
+    await expect(tavus.startSession({
+      sessionId: "hcp-timeout",
+      systemPrompt: "sp",
+      customLlm: { baseUrl: "https://app.example/api/tavus/llm", model: "nexusrep-compliance" },
+      agentId: "r1",
+      tools: [],
+    })).rejects.toThrow("timed out after 1s while starting the video rep");
+  });
+
   it("creates a persona wired to our custom-LLM endpoint, then a conversation, and returns the join URL", async () => {
     const calls: { url: string; method?: string; body: Record<string, unknown> | null }[] = [];
     vi.stubGlobal("fetch", (async (url: string, init?: RequestInit) => {
@@ -64,20 +86,25 @@ describe("Tavus realtime adapter", () => {
     const persona = calls.find((c) => c.url.endsWith("/personas"))!;
     const layers = persona.body?.layers as {
       llm?: { base_url?: string; tools?: unknown[]; speculative_inference?: boolean };
-      conversational_flow?: { turn_taking_patience?: string; turn_detection_model?: string };
+      conversational_flow?: { turn_taking_patience?: string; turn_detection_model?: string; pal_interruptibility?: string; replica_interruptibility?: string };
       tts?: { tts_engine?: string; tts_model_name?: string; tts_emotion_control?: boolean; voice_settings?: { speed?: number } };
     } | undefined;
     const llmLayer = layers?.llm;
     expect(llmLayer?.base_url).toBe("https://app.example/api/tavus/llm"); // our compliance endpoint drives replies
     expect(llmLayer?.tools?.length).toBe(1);
-    expect(llmLayer?.speculative_inference).toBe(true);
+    expect(llmLayer?.speculative_inference).toBe(false);
     expect(layers?.tts).toMatchObject({
       tts_engine: "cartesia",
       tts_model_name: "sonic-3",
       tts_emotion_control: false, // steady pacing by default (emotion control rushed the sentence start)
-      voice_settings: { speed: 1.0 }, // natural pace (1.08 read as rushed)
+      voice_settings: { speed: 1.0 }, // neutral, natural pace by default
     });
-    expect(layers?.conversational_flow).toMatchObject({ turn_detection_model: "sparrow-1", turn_taking_patience: "low" });
+    expect(layers?.conversational_flow).toMatchObject({
+      turn_detection_model: "sparrow-1",
+      turn_taking_patience: "low",
+      pal_interruptibility: "high",
+      replica_interruptibility: "high",
+    });
 
     const convo = calls.find((c) => c.url.endsWith("/conversations"))!;
     expect(convo.body?.persona_id).toBe("p1");
@@ -91,16 +118,32 @@ describe("Tavus realtime adapter", () => {
     expect(calls.some((c) => c.url.endsWith("/end"))).toBe(true);
   });
 
-  it("reuses an existing persona by name (survives restart) instead of creating a duplicate PAL", async () => {
+  it("reuses the best matching existing persona by name (survives restart without picking stale STT/URL layers)", async () => {
     const calls: { url: string; method?: string; body: Record<string, unknown> | null }[] = [];
     vi.stubGlobal("fetch", (async (url: string, init?: RequestInit) => {
       const u = String(url);
       const method = init?.method ?? "GET";
       calls.push({ url: u, method, body: init?.body ? JSON.parse(String(init.body)) : null });
       // The account already has this brand's persona (as after a redeploy — the in-memory cache is
-      // empty on boot). The lookup GET must find it so we DON'T mint another one.
+      // empty on boot). The lookup GET may return stale duplicates from previous runs; the current
+      // one with the matching public URL + medical STT must win so voice quality does not regress.
       if (u.includes("/personas") && method === "GET") {
-        return new Response(JSON.stringify({ data: [{ persona_id: "existing_pal", persona_name: "NexusRep compliant rep · reuse_brand" }] }), { status: 200 });
+        return new Response(JSON.stringify({ data: [
+          {
+            persona_id: "stale_pal",
+            persona_name: "NexusRep compliant rep · reuse_brand",
+            layers: { llm: { base_url: "https://old-render.example/api/tavus/llm" }, stt: { stt_engine: "tavus-auto" } },
+          },
+          {
+            persona_id: "current_pal",
+            persona_name: "NexusRep compliant rep · reuse_brand",
+            layers: {
+              llm: { base_url: "https://app.example/api/tavus/llm", model: "nexusrep-compliance" },
+              stt: { stt_engine: "tavus-deepgram-medical", hotwords: "Milvexian" },
+              tts: { tts_engine: "cartesia", tts_model_name: "sonic-3" },
+            },
+          },
+        ] }), { status: 200 });
       }
       if (u.endsWith("/personas")) return new Response(JSON.stringify({ persona_id: "NEWLY_CREATED" }), { status: 200 }); // POST create — must NOT happen
       if (u.includes("/personas/")) return new Response("{}", { status: 200 }); // PATCH in place
@@ -108,7 +151,7 @@ describe("Tavus realtime adapter", () => {
       return new Response("{}", { status: 200 });
     }) as typeof fetch);
 
-    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1" });
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1", sttEngine: "tavus-deepgram-medical" });
     await tavus.startSession({
       sessionId: "hcp-2",
       systemPrompt: "sp",
@@ -116,11 +159,57 @@ describe("Tavus realtime adapter", () => {
       customLlm: { baseUrl: "https://app.example/api/tavus/llm", model: "nexusrep-compliance" },
       agentId: "r1",
       tools: [],
+      hotwords: ["Milvexian"],
     });
 
     const convo = calls.find((c) => c.url.endsWith("/conversations"))!;
-    expect(convo.body?.persona_id).toBe("existing_pal"); // reused the one already on the account
+    expect(convo.body?.persona_id).toBe("current_pal"); // reused the current matching persona, not the stale duplicate
     expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/personas"))).toBe(false); // no new PAL
+  });
+
+  it("reuses a same-prefix NexusRep PAL when the exact current name is missing, instead of creating another PAL", async () => {
+    const calls: { url: string; method?: string; body: Record<string, unknown> | null }[] = [];
+    vi.stubGlobal("fetch", (async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      calls.push({ url: u, method, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (u.includes("/personas") && method === "GET") {
+        return new Response(JSON.stringify({ data: [
+          {
+            persona_id: "old_exact_name",
+            persona_name: "NexusRep compliant rep",
+            layers: { llm: { base_url: "https://old.example/api/tavus/llm" }, stt: { stt_engine: "tavus-auto" } },
+          },
+          {
+            persona_id: "best_prefixed_pal",
+            persona_name: "NexusRep compliant rep · brand milvexian",
+            layers: {
+              llm: { base_url: "https://app.example/api/tavus/llm", model: "nexusrep-compliance" },
+              stt: { stt_engine: "tavus-deepgram-medical", hotwords: "Milvexian" },
+              tts: { tts_engine: "cartesia", tts_model_name: "sonic-3" },
+            },
+          },
+        ] }), { status: 200 });
+      }
+      if (u.endsWith("/personas")) return new Response(JSON.stringify({ persona_id: "SHOULD_NOT_CREATE" }), { status: 200 });
+      if (u.includes("/personas/")) return new Response("{}", { status: 200 });
+      if (u.endsWith("/conversations")) return new Response(JSON.stringify({ conversation_id: "c10", conversation_url: "https://tavus.daily.co/c10", status: "active" }), { status: 200 });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch);
+
+    const tavus = new TavusRealtimeProvider({ apiKey: "k", baseUrl: "https://tavusapi.com/v2", replicaId: "r1", sttEngine: "tavus-deepgram-medical" });
+    await tavus.startSession({
+      sessionId: "hcp-prefix-reuse",
+      systemPrompt: "sp",
+      customLlm: { baseUrl: "https://app.example/api/tavus/llm", model: "nexusrep-compliance" },
+      agentId: "r1",
+      tools: [],
+      hotwords: ["Milvexian"],
+    });
+
+    const convo = calls.find((c) => c.url.endsWith("/conversations"))!;
+    expect(convo.body?.persona_id).toBe("best_prefixed_pal");
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/personas"))).toBe(false);
   });
 
   it("ignores an invalid stt_engine (e.g. a mis-pasted env-var name) — keeps hotwords, no 400", async () => {
@@ -200,6 +289,49 @@ describe("Tavus custom-LLM endpoint preserves the compliance gate", () => {
     const content = (await readSse(await call("What is the recommended dose and titration?"))).toLowerCase();
     expect(content).toContain("medical information");
     expect(content).not.toMatch(/\bmg\b|milligram/);
+  });
+
+  it("suppresses duplicate Tavus final-ASR calls before they queue more speech", async () => {
+    const c = await getContainer();
+    const session = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
+    const boundCall = (userText: string) =>
+      llmCompletions(new Request("http://localhost/api/tavus/llm/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          authorization: "Bearer test-llm-key",
+          "x-nexusrep-session-id": session.id,
+        },
+        body: JSON.stringify({ messages: [{ role: "user", content: userText }], stream: true }),
+      }));
+
+    const first = await readSse(await boundCall("How does Milvexian work?"));
+    expect(first).toMatch(/Milvexian|Factor XIa/i);
+    const second = await readSse(await boundCall("How does Milvexian work"));
+    expect(second).toBe("");
+    const saved = await c.sessions.get(session.id);
+    expect(saved?.turns.filter((t) => t.speaker === "hcp")).toHaveLength(1);
+    expect(saved?.turns.filter((t) => t.speaker === "rep")).toHaveLength(1);
+  });
+
+  it("routes adverse-event reports even when Tavus leaves trailing punctuation", async () => {
+    const c = await getContainer();
+    const session = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
+    const res = await llmCompletions(new Request("http://localhost/api/tavus/llm/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        authorization: "Bearer test-llm-key",
+        "x-nexusrep-session-id": session.id,
+      },
+      body: JSON.stringify({ messages: [{ role: "user", content: "A patient had bleeding while taking the drug," }], stream: true }),
+    }));
+
+    const content = await readSse(res);
+    expect(content).toMatch(/safety|follow up|report/i);
+    const saved = await c.sessions.get(session.id);
+    expect(saved?.turns.find((t) => t.speaker === "hcp")?.text).toContain("bleeding");
+    expect(saved?.turns.find((t) => t.speaker === "rep")?.text).not.toBe("");
   });
 });
 

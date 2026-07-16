@@ -10,7 +10,540 @@
 
 ## 1. Current build status
 
-### Latest: Coaching drives the deck + why the rehearsal felt inert (2026-07-15)
+### Latest: Training push-to-talk ASR/routing hardening (2026-07-16 local)
+
+- **Aligned Training voice correction with the doctor/HCP path.** Training
+  push-to-talk now uses the shared HCP ASR helper, so observed voice mistakes such
+  as `How does the new vaccine work?` and `What is the LEBIREXIA program?` are
+  corrected before the HCP bubble is rendered and before `/api/train/preview`
+  routes the question.
+- **Stopped Training from silently dropping a recognized question.** If a
+  push-to-talk transcript finalizes while a previous preview answer is still
+  composing, the question is queued and asked immediately after the current
+  preview settles instead of returning early from `ask()`.
+- **Added a live-browser regression.** `e2e/nexusrep.spec.ts` now mocks
+  `SpeechRecognition` in the real Training UI and verifies four paths:
+  Milvexian/mechanism ASR correction, LIBREXIA program ASR correction, apixaban
+  comparison → Medical Information, and bleeding → Pharmacovigilance/safety.
+- **Made live-dev Playwright safer.** `E2E_SKIP_WEBSERVER=1` lets Playwright run
+  against an already-running `localhost:3000` server without starting a second
+  Next process, avoiding `.next` trace/build-manifest lock corruption during
+  local preview testing.
+- **Verified:** `npm run typecheck`; `npm test -- tests/asr-correct.test.ts
+  tests/product-name-recovery.test.ts tests/routing-robustness.test.ts`; direct
+  live browser Training run; and
+  `E2E_PORT=3000 E2E_SKIP_WEBSERVER=1 npx playwright test e2e/nexusrep.spec.ts
+  --grep "Training push-to-talk" --project=chromium` all passed. Dev server is
+  running on `http://localhost:3000`.
+
+### Latest: HCP typed/audio matrix audit + Tavus first-turn hardening (2026-07-16 local)
+
+- **Audited all four HCP paths after the preview failures:** off-video typed,
+  off-video microphone, video-on typed, and real Tavus video voice. The matrix
+  covered product/mechanism, LIBREXIA program, named trial slides, comparative
+  routing, AE/PV routing, ASR recovery (`new vaccine`, `LEBIREXIA`), ISI cadence,
+  transcript insertion, and detail-aid slide IDs.
+- **Fixed first-syllable loss on video mic enable.** The Tavus/Daily transport now
+  pre-warms the WebRTC audio sender with a silent gate. The UI still starts red
+  and off; clicking the mic opens the gate instantly instead of waiting for Daily
+  to create/unmute a sender. This directly targets the "clicked mic during the
+  greeting and the first question disappeared or became `...in work`" failure.
+- **Stopped the greeting when Tavus detects real HCP speech.** Mic toggling is
+  still only mic toggling. A manual interrupt is sent only after Tavus emits a
+  user speech-start event while the replica is speaking, so the greeting/old
+  answer does not mask the doctor's ASR. Finalized HCP turns still drive the
+  compliant NexusRep callback.
+- **Fixed AE fragment buffering.** Tavus sometimes posts safety phrases with a
+  trailing comma. `A patient had bleeding while taking the drug,` now routes to
+  Pharmacovigilance immediately instead of being buffered as an incomplete
+  fragment and returning silence.
+- **Kept the custom LLM path central.** Typed video still uses
+  `conversation.respond`; voice video still calls the OpenAI-compatible Tavus
+  custom-LLM endpoint; both resolve to the same NexusRep turn orchestration,
+  compliance gate, transcript logging, source IDs, and slide IDs.
+- **Real Tavus voice verification.** A five-turn voice run
+  (`session_mrmu6u1o508xao`) produced five HCP turns and five rep answers:
+  mechanism (`slide_moa`), LIBREXIA program (`slide_program`), LIBREXIA STROKE
+  (`slide_stroke`), Eliquis comparison routed to Medical Information, and
+  bleeding routed to the safety team. No rep answer was missing from the session
+  transcript. Measured final-transcript to avatar-audio start was ~2.7s-4.5s in
+  that run; Tavus final text to audio was ~0.6s-0.7s.
+- **Video typed verification.** A real Tavus typed run through the HCP page showed
+  `conversation.respond` writing HCP and rep turns into the actual session with
+  slides for title/program/mechanism and AE routing. Prompt-to-audio remained
+  Tavus-bound at ~4.9s-8.4s, while final text to audio stayed ~0.5s-0.7s.
+- **Off-video verification.** Browser UI tests with rep voice off passed typed
+  and mocked-microphone paths: HCP text is corrected before display, ISI appears
+  once for the session, mechanism/program slides switch immediately without TTS,
+  comparative questions route to Medical Information, and AE reports route to the
+  safety team.
+- **Verification.** `npm run typecheck` passed. Full `npm test` passed **434**
+  tests with **2 skipped**. Real Tavus artifacts/logs from this pass are under
+  `logs/tavus-voice-one-barge-*`, `logs/tavus-voice-multiturn-*`, and
+  `logs/tavus-video-typed-*`.
+
+### Latest: Stable Tavus PAL callback + clipped ASR recovery (2026-07-16 local)
+
+- **Stopped changing the Tavus custom-LLM URL per session.** The HCP preview now
+  points the PAL at the stable `/api/tavus/llm` endpoint and uses NexusRep's
+  active-call binding to resolve the current session/user. That keeps one PAL
+  reusable across previews and avoids a persona PATCH + Tavus connectivity probe
+  just because a new session id was created.
+- **Explained the latest delayed/unfinished run from logs.** In
+  `session_mrmld93pnqdqkg`, the startup callback handler did only ~4ms of work
+  but Tavus held the connectivity-probe POST open for ~24.9s while the overall
+  conversation start took ~40.4s. The first user turn, "Vaccine work.", then
+  routed to fallback because the clipped ASR phrase did not hit the existing
+  "my/the vaccine" recovery. The final "How does Milvexian work?" did reach the
+  backend and produced an approved answer in ~2.3s, but the conversation ended
+  before the avatar could play/log it audibly.
+- **Recovered clipped first-turn product questions.** Both the Tavus ASR
+  correction layer and compliance canonicalizer now treat narrow fragments such
+  as "Vaccine work." / "vaccine mechanism" as Milvexian mechanism questions,
+  while leaving ordinary vaccine phrases such as "vaccine safety in adults"
+  untouched.
+- **Normalized the visible HCP transcript too.** Tavus voice, the HCP video
+  captions, and the non-video mic now share the same HCP ASR helper, so observed
+  mis-hearings such as "How does the new vaccine work?" render in the transcript
+  as "How does Milvexian work?" before the turn is routed. This is not just a
+  backend intent fix; the UI shows the corrected HCP text.
+- **Removed the last raw-caption split.** The HCP `ask()` boundary now
+  canonicalizes HCP text before writing the caption, sending video `respond`, or
+  anchoring the session turn. That covers scripted/typed video turns as well as
+  Tavus-spoken turns, so the visible transcript cannot show raw ASR-like text
+  while the backend uses the corrected form.
+- **Browser/Tavus verification.** In the actual `/hcp?preview=launch` browser
+  UI, entering "How does the new vaccine work?" showed `YOU / How does Milvexian
+  work?` and the raw phrase was absent. A real Tavus fake-audio-device run through
+  Launch preview (`session_mrmqbsman8ysof`, conversation `cb685cd48b182417`) also
+  produced `How does Milvexian work?` in the session transcript, visible captions,
+  and `[nexusrep-latency]`, with the Mechanism slide selected. A browser false
+  positive check kept `vaccine safety in adults` literal.
+- **Hardened HCP preview session linking.** The HCP page no longer reads the live
+  Tavus session id from the QA-only `window.__nexusrep` global. `VideoAgentStage`
+  now reports the session through a React `onSessionReady` contract; the parent
+  stores it in state/ref and clears it on close, toggle, unconfigured startup, or
+  errors. Video typed/scripted asks only write the HCP caption and fallback
+  timestamp anchor after `conversation.respond` accepts the turn, so a connecting
+  call cannot create a transcript row Tavus never received.
+- **Fixed typed video ask during greeting.** A typed/scripted video ask now
+  cancels a pending greeting before sending `conversation.respond`, and the later
+  Tavus echo of that typed HCP text is marked `hcp_final_typed_echo` so the
+  generic HCP-final interrupt does not cancel the answer Tavus just queued. Real
+  browser verification deleted `window.__nexusrep` before asking; session
+  `session_mrmr0n8eyuu3l0` still logged `How does Milvexian work?`, released the
+  AI answer caption, and moved the deck to slide 2 / Mechanism. No
+  `hcp_final_during_rep` interrupt occurred on that typed echo.
+- **Made Tavus latency logs diagnosable.** `[tavus-llm-latency]` now includes a
+  short `inputPreview`, plus `correctedPreview` and `asrCorrections` when ASR
+  recovery changed the text, so future 23-character calls are attributable
+  without guessing from output length.
+- **Verification.** `npm test -- tests\asr-correct.test.ts
+  tests\product-name-recovery.test.ts tests\tavus.test.ts` passed 49/49, and
+  `npm run typecheck` passed. A full `npm test` run passed 427 tests with 2
+  skipped, then hit the existing 5s timeout on the first embedded-Postgres
+  namespace test under suite load; rerunning `tests\pg-namespace.test.ts` alone
+  passed 2/2.
+
+### Latest: First-question Tavus latency cut (2026-07-16 local)
+
+- **Added a better composer fallback ladder.** Live turns no longer jump straight
+  from a bad LLM draft to deterministic copy. If a draft hits the output cap or
+  fails grounding, NexusRep now tries one compact grounded repair compose first
+  (`composer_repair_success` when it works). If repair also truncates, times out,
+  or fails grounding, only then does it use deterministic approved copy and run
+  the final compliance gate.
+- **Expanded the latency/routing stress matrix.** `tests/benchmark-turn-latency.test.ts`
+  now runs 31 real-turn cases when `NEXUSREP_RUN_BENCHMARK=1`: clean product
+  questions, ASR-garbled product/program names, named trial slides, multi-question
+  turns, contextual follow-ups, slide cues, off-label, dosing, patient-use,
+  AE/PV, human handoff, unrelated garbage, and deep efficacy/results asks.
+  The latest real local run passed all route/slide/cue assertions with p50
+  **1.897s**, p90 **4.118s**, p95 **4.132s**, max **6.021s** across the
+  NexusRep pipeline without Tavus transport.
+- **Fixed misses exposed by that matrix.** `LIBREXIA AF` / `LIBREXIA ACS` no
+  longer collapse to plain `LIBREXIA` during ASR canonicalization, named-trial
+  acronym asks promote the correct trial slide, patient prescribing/use questions
+  route to Medical Information, and deep efficacy/results asks route to Medical
+  Information instead of being answered from generic trial blocks.
+- **Added a safe fast path for short contextual follow-ups.** Short follow-up
+  cues such as "keep going" and "yeah sure" skip the LLM classifier only when
+  they contain no safety, dose, patient-use, AE, off-label, blocked-topic, or
+  comparative signal; retrieval remains context-aware and the final gate still
+  runs.
+- **Dropped the first visible Tavus answer below 4s in the clean one-question
+  probe.** After the HCP preview greeting started, the runner interrupted with
+  the first question. The latest measured session `session_mrmi5glugbyqdf`
+  reached avatar audio in **3.887s** from prompt send. NexusRep's compliant
+  callback took **2.031s** and the Tavus POST closed in **2.870s**.
+- **Removed first-turn vector embedding work.** The approved-answer vector index
+  now warms at container startup, so the first HCP question no longer pays to
+  embed the active deck.
+- **Speculative compose stays behind the compliance gate.** For low-risk public
+  product/program/mechanism questions, live Tavus starts a draft composition
+  while classification is running, then only uses it if final classification,
+  retrieval validation, grounding validation, and the compliance gate still pass.
+  Safety, dosing, patient-specific, AE, off-label, and comparative prompts do
+  not use speculative compose.
+- **Shortened live model budgets without turning off the LLM.** Tavus live turns
+  keep the custom LLM endpoint and configured classifier/composer, but use a
+  smaller classifier output budget and a live composer token cap so the model is
+  not asked to generate more than the avatar should say. That cap applies to the
+  **answer output**, not the doctor's question or the approved-source input.
+  Composer providers now report token-limit truncation (`max_tokens` / `length`);
+  if that happens, NexusRep discards the draft, logs `composer_output_truncated`,
+  uses deterministic approved copy, and still runs the final compliance gate.
+- **Closed the Tavus stream immediately once the compliant answer is ready.**
+  The OpenAI-compatible SSE response is now prebuilt with a `Content-Length` and
+  `Connection: close`, which removed the several-second tail where Tavus had our
+  answer but the POST remained open.
+- **Fixed a first-turn semantic miss.** Mechanism rationale questions such as
+  "Why focus on the clotting cascade rather than the usual path?" now route to
+  the mechanism slide instead of being misread as a comparative/clinical route.
+
+### Latest: Clean Tavus barge-in timing run + semantic routing fix (2026-07-16 local)
+
+- **Built a repeatable clean timing runner.** `scripts/measure-tavus-bargein-latency.mjs`
+  starts the real HCP preview, enables the real Tavus video rep, waits for the
+  greeting audio, lets it run for 2s, asks Q1, then waits for each answer audio
+  to start, lets it speak for 2s, and asks the next different question. It prints
+  prompt-to-avatar-audio, approved-text-to-audio, transcript, slide IDs, and the
+  raw browser latency events.
+- **Removed a live-video latency bug.** The typed/video HCP path was awaiting
+  `/api/sessions/utterance` before calling Tavus `conversation.respond`. In the
+  clean run those local transcript writes were taking 3.8-6.6s, so the doctor
+  question was being held before Tavus ever received it. Video questions now send
+  to Tavus immediately and persist the click-time HCP row in the background; the
+  Tavus custom-LLM endpoint still records the authoritative compliant turn.
+- **Measured before/after with the same cadence.** Before the fix, the first
+  clean run showed prompt-to-audio at 16.1s, 13.9s, 14.7s, 6.0s, and 5.4s. After
+  the fix, the same run showed 7.6s, 7.4s, 5.2s, 4.8s, and 6.3s. A final run
+  after the semantic fix showed 8.7s, 7.0s, 7.7s, 5.4s, and 5.9s. Tavus
+  approved-text-to-audio stayed fast throughout: roughly 0.1-0.9s once our text
+  existed.
+- **Verified non-keyword natural questions over multiple turns.** The clean run
+  used: "big picture for this asset", "broad late-stage plan studying",
+  "clotting cascade rather than the usual pathway", a bleeding AE report, and an
+  Eliquis comparison. Slides and routes in the final run: title slide,
+  LIBREXIA program slide, mechanism slide, PV route, Medical Information route.
+- **Fixed the semantic miss found by the run.** The LLM classifier had routed
+  "Why focus on the clotting cascade rather than the usual pathway?" to Medical
+  Information because it over-read the wording as a safety/clinical-specific
+  question. The merge layer now protects mechanism-rationale questions with
+  clotting/coagulation/cascade/pathway signals unless they ask for patient use,
+  dosing, outcomes, AE details, or a true competitor comparison. The final live
+  run answered from the mechanism slide.
+- **Verified locally:** `npm run typecheck` clean;
+  `npm test -- tests/classifiers.test.ts tests/routing-robustness.test.ts
+  tests/sessions.test.ts tests/live-turn-guard.test.ts tests/tavus.test.ts
+  tests/transcript-append.test.ts` passed 86/86. Final live Tavus session:
+  `session_mrmgkxyme556h9`, conversation `cc6a15aa8c5684ed`.
+
+### Latest: Real Tavus barge-in timing and transcript cleanup (2026-07-16 local)
+
+- **Ran the requested true Tavus interruption timing tests.** In a browser-joined
+  Tavus call, the greeting was allowed to start, then question 1 was sent after
+  about 2.5s and a different question 2 was sent 6.5s later to verify the first
+  answer could be stopped without waiting for full speech. Session
+  `session_mrmffx2pyd1rnc` showed question 1 reaching avatar speech in 5.0s from
+  typed send, with Tavus starting audio about 0.6s after the approved transcript
+  existed; question 2 reached avatar speech in 7.0s, again about 0.6s after text
+  existed. Question 2 hit the configured 4s voice composer budget and correctly
+  fell back to the approved deterministic wording after the same compliance gate.
+- **Ran the adaptive version too.** In session `session_mrmfiospjg9px3`, the test
+  waited until the first answer actually started speaking, waited 2s, then sent a
+  different follow-up (`What is LIBREXIA STROKE?`). The first answer reached
+  speech in 5.4s from send and the second in 5.6s, with Tavus post-text speech
+  start about 0.7-1.2s. The second turn interrupted the first, answered the stroke
+  question, and landed on the LIBREXIA-STROKE slide.
+- **Separated real latency from transcript illusion.** Greeting audio no longer
+  gets counted as answer speech, and the latency table marks answers that were
+  generated but interrupted before the avatar spoke. This prevents a stale answer
+  from borrowing the next answer's audio start and making the numbers look worse
+  than the call actually was.
+- **Stopped repeated Tavus final-ASR events from spamming the orchestrator.** A
+  new live turn guard deduplicates exact/same-prefix final HCP turns while they
+  are in flight or recently completed, but still allows genuinely different
+  barge-in questions to run immediately. This fixes the failure mode where an
+  open mic produced repeated `How does Milvexian work?` rows and queued multiple
+  compliant answers.
+- **Removed generated-but-unspoken answers from the visible session transcript.**
+  When the HCP interrupts before an answer reaches avatar audio, the client now
+  tells the session service to remove that pending rep turn from the review
+  transcript while preserving an audit event that the output was interrupted
+  before audio. The transcript should now reflect what was actually spoken.
+- **Kept mic controls simple.** The mic button only toggles mic on/off. Microphone
+  speech-start still does not send a manual Tavus interrupt, because Tavus needs
+  that same audio to produce the final transcript. After Tavus finalizes a new HCP
+  utterance, the client may stop stale agent speech so an old answer does not keep
+  reading over the next question. Typed/scripted barge-in still interrupts before
+  `conversation.respond`.
+- **Verified locally:** `npm run typecheck` clean;
+  `npm test -- tests/sessions.test.ts tests/live-turn-guard.test.ts
+  tests/tavus.test.ts tests/transcript-append.test.ts` passed 39/39. Dev server
+  was left running for manual preview.
+
+### Latest: Tavus mic barge-in + live voice context tuning (2026-07-15)
+
+- **Fixed the post-barge-in dropped-question risk.** Microphone speech-start no
+  longer sends a manual Tavus `conversation.interrupt`. Tavus is already
+  listening to that same audio turn with high replica interruptibility; sending a
+  manual interrupt at the same moment can stop the avatar but also poison/cancel
+  the utterance that should become the next question. The client now clears local
+  replica/caption/slide state on mic barge-in and lets Tavus native
+  interruptibility process the speech. Typed barge-in still sends an explicit
+  interrupt before `conversation.respond`.
+- **Kept live Tavus answers bounded without starving them.** Live video voice now
+  passes a small two-block approved context window to the composer for ordinary
+  single-topic questions, while multi-question turns still receive the full
+  relevant bundle. This avoids a mini-deck recap and Tavus TTS backlog without
+  cutting the answer down to a brittle single source.
+- **Short live cues recover to the right intent.** `Program.` is now locked as a
+  LIBREXIA program question instead of falling through to the generic handoff, and
+  the high-confidence-LLM-`other` merge case is covered.
+- **Verified locally:** `npm run typecheck` clean; `npm test -- tests/classifiers.test.ts
+  tests/routing-robustness.test.ts tests/asr-correct.test.ts
+  tests/product-name-recovery.test.ts` passed 75/75.
+
+### Latest: Tavus medical ASR/persona selection + barge-in slide cancellation (2026-07-15)
+
+- **Confirmed video mode is Tavus ASR, not browser ASR.** Browser
+  `SpeechRecognition`/Whisper fallback exists only for the non-video voice path.
+  The video path receives HCP utterances from Tavus/Daily and routes them through
+  `/api/tavus/llm/chat/completions`.
+- **Found the real ASR regression risk: stale duplicate Tavus personas.** The live
+  Tavus account had 30 same-name `NexusRep compliant rep · brand milvexian`
+  personas; many were still on `tavus-auto`, stale public URLs, and medium
+  interruptibility. `src/modules/vendors/tavus.ts` now keeps one stable NexusRep
+  PAL, scores all existing `NexusRep compliant rep*` PALs by current custom-LLM
+  URL, `nexusrep-compliance` model, `tavus-deepgram-medical`, hotwords, and
+  Cartesia Sonic-3 TTS, then PATCHES the best one in place. It only creates a
+  PAL when the Tavus account has no NexusRep PAL at all.
+- **Cleaned the Tavus account down to one NexusRep PAL.** The only remaining
+  matching PAL is `p7dfc4ad195f` (`NexusRep compliant rep`), patched to the
+  current custom LLM, `tavus-deepgram-medical`, Cartesia Sonic-3, and neutral
+  speed `1.0`. Local `.env.local` is pinned with `TAVUS_PERSONA_ID=p7dfc4ad195f`
+  so preview startup always updates that exact PAL.
+- **Fixed the Tavus interruptibility field.** The persona layer now patches
+  `conversational_flow.replica_interruptibility = "high"` (the field returned by
+  the live API), not the stale `pal_interruptibility` name, while keeping
+  `turn_detection_model = "sparrow-1"` and `turn_taking_patience = "low"`.
+- **Added Tavus-side hotword bias for live mishears.** Conversation startup now
+  sends product/program hotwords plus tested ASR confusions (`LBILE`, `LIBILE`,
+  `LEBREXIA`, `BILL vaccine`, `Mylovaxia`, etc.) so Tavus STT is biased before
+  our correction/classification layer ever sees the transcript.
+- **Kept the real configured classifier in the live Tavus path.** Tavus still
+  calls our OpenAI-compatible endpoint and every answer still goes through
+  NexusRep classification, retrieval/composition, and the final gate. The
+  deterministic keyword classifier remains only the fail-safe floor inside
+  `resolveClassifier()` when the configured classifier errors or is unavailable.
+- **Reduced first-turn cold start without spending Tavus credits.** Server
+  instrumentation now prewarms the default/demo containers, imports the
+  Anthropic SDK, and preloads the Tavus custom-LLM route module in the
+  background. This does not create a Tavus conversation, does not join a room,
+  does not call Claude/OpenAI, and does not consume Tavus credits; it only
+  avoids the first real doctor turn paying local container/module/route
+  compilation while Tavus is waiting.
+- **Kept Tavus speech at a natural pace.** The default Cartesia Sonic-3 speed is
+  neutral `1.0` and remains configurable via `NEXUSREP_TAVUS_TTS_SPEED`.
+  Latency fixes should come from warmup, queue control, and answer timing, not
+  making the avatar talk faster by default.
+- **Barge-in now cancels pending slide cues.** If the HCP starts speaking before
+  the avatar reaches a slide cue, the client cancels the queued deck switch so
+  the deck does not move for an answer the HCP already interrupted. Typed
+  barge-in also sends an explicit Tavus interrupt; microphone barge-in relies on
+  Tavus native interruptibility so the same speech turn still transcribes.
+- **Verified locally:** `npm run typecheck` clean; `npm test -- tests/tavus.test.ts
+  tests/asr-correct.test.ts tests/product-name-recovery.test.ts
+  tests/routing-robustness.test.ts tests/slide-cue.test.ts
+  tests/hcp-cadence-fuzz.test.ts` passed 87/87. A read-only Tavus persona audit
+  confirmed exactly one NexusRep PAL remains and it uses `tavus-deepgram-medical`.
+
+### Latest: Garbled mechanism questions no longer drift to title/company (2026-07-15)
+
+- **Added live ASR aliases from the latest Tavus run.** `BILL vaccine`,
+  `mylovaxia`, `milovaxia`, and `mylovexia` now canonicalize to `Milvexian`
+  in product-style questions, both in the Tavus transcript corrector and the
+  server-side compliance canonicalizer.
+- **Mechanism questions now override neural drift.** Neural retrieval still drives
+  normal semantic ranking, but when a query has a strong mechanism cue (`how does`,
+  `work`, `mechanism`) and does not name the LIBREXIA program, the approved
+  candidate set is re-ranked so the mechanism/MOA block beats generic title or
+  company-collaboration content.
+- **Regression covered:** `What is BILL vaccine? I does Milvexian work?` now logs
+  a corrected Milvexian HCP turn and returns the mechanism slide (`slide_moa`),
+  not the J&J/BMS company slide. `How does mylovaxia work?` also canonicalizes.
+- **Verified locally:** `npm run typecheck` clean; `npm test -- tests/asr-correct.test.ts
+  tests/product-name-recovery.test.ts tests/hcp-cadence-fuzz.test.ts
+  tests/routing-robustness.test.ts` passed 62/62.
+
+### Latest: Tavus ASR, slide metadata, and voice queue fix (2026-07-15)
+
+- **Fixed the `LBILE`/`LIBILE` ASR failure.** Short Tavus collapses of `LIBREXIA`
+  now canonicalize to `LIBREXIA` in product/program questions before
+  classification and retrieval, so `What is the LBILE?` no longer falls to the
+  safe handoff.
+- **Prevented false public-URL warnings from disabling slide metadata.** The
+  `/api/realtime/conversation` diagnostic probe now treats non-local public URLs
+  optimistically when the probe times out during cold compile. That keeps the
+  client in authoritative server-log mode, so rep captions hydrate with the
+  real `detailAidSlideId` from the session instead of losing the slide switch.
+- **Reduced live Tavus voice queue buildup.** The Tavus custom-LLM path now passes
+  a voice-specific coaching note through the normal orchestrator/composer/gate:
+  one short spoken sentence when possible, no full-program recap unless asked,
+  and no optional next-slide offers unless the HCP asks to continue.
+- **Verified locally:** `npm run typecheck` clean; `npm test -- tests/asr-correct.test.ts
+  tests/routing-robustness.test.ts tests/tavus.test.ts tests/slide-cue.test.ts`
+  passed 77/77.
+
+### Latest: Tavus live timing + slide cue hotfix (2026-07-15)
+
+- **Fixed false replica-audio timing.** The HCP/video stage no longer treats
+  `conversation.user.started_speaking` as the avatar starting to speak. Raw Tavus
+  events are now split by user-vs-rep role/type before they can release captions,
+  anchor slide cues, or report `[nexusrep-latency]`.
+- **Slide cue anchoring is back on the actual rep.** Since user speech can no
+  longer trip `vendor_started_speaking`, the deck timer starts from replica audio
+  start and applies the spoken cue offset from there.
+- **Caption slide hydration is rep-only.** When Tavus owns the spoken turn and
+  the client hydrates slide/source metadata from `/api/sessions/:id`, it now only
+  considers rep turns and prefers turns that carry a detail-aid slide.
+- **Accepted follow-ups cover the live phrasing from testing.** `Yeah. Sure did.`
+  now behaves as acceptance of the offered next slide instead of repeating the
+  previous LIBREXIA program answer. Broader natural acceptances like `go for it`,
+  `please do`, and `show it` are covered too.
+- **ASR hotword coverage expanded.** `LEIBREXIA` now snaps to `LIBREXIA` in the
+  same correction layer that already handles `libraxia`, `lebrixia`, and
+  `my/the vaccine` -> Milvexian in product questions.
+- **Latency logs are clearer.** Classifier timeouts now log as
+  `classification_timeout`, not the misleading `composer_timeout`.
+- **Verified locally:** `npm run typecheck` clean; `npm test -- tests/asr-correct.test.ts
+  tests/routing-robustness.test.ts tests/slide-cue.test.ts` passed 60/60.
+
+### Latest: ASR recovery, follow-up intent, and Tavus latency instrumentation (2026-07-15)
+
+- **Fixed common Tavus ASR product-name failures.** `Milvexian` mis-heard as
+  `my vaccine` / `the vaccine` now canonicalizes to Milvexian in product-style
+  questions, both in the generic server canonicalizer and the Tavus transcript
+  correction layer. Existing near-miss recovery (`malvaxian`, `milbaxian`,
+  `LEBREXIA`) still works.
+- **Stopped low-signal garbage from becoming confident product answers.** Unrelated
+  ASR fragments such as `Got a look.`, `I was relaxing work.`, and `What is the
+  limbic syndrome?` no longer retrieve a generic approved block simply because one
+  word overlaps. They fail safe to the existing approved-information handoff.
+- **Accepted slide offers now behave like a human conversation.** When the rep says
+  it can point to a related slide, a pure acceptance (`Yeah. Sure.`) follows that
+  structured offered source instead of repeating the prior answer. Specific trial
+  answers stay focused and do not offer/redirect back to the generic program slide.
+- **Mechanism retrieval is more robust to truncated ASR.** `How does Milvexian`
+  now ranks the mechanism slide, even when Tavus drops the final `work?`.
+- **Tavus callback timing is split more honestly.** The custom compliance callback
+  now logs per-turn audit timings, route, wall time, and realtime budgets. Browser
+  latency metrics now distinguish HCP transcript → audio, first Tavus text event →
+  audio, final Tavus text event → audio, and canonical rep utterance → audio, so
+  we can prove whether delay is our pipeline or Tavus speech start.
+- **Local no-Tavus benchmark added.** `tests/benchmark-turn-latency.test.ts` is
+  opt-in (`NEXUSREP_RUN_BENCHMARK=1`) and loads `.env.local` before importing the
+  app, so it can benchmark the actual local classifier/composer path without
+  spending Tavus credits.
+- **Measured locally with Claude env loaded:** most real answer turns were about
+  2.9-4.4s total; composer itself was about 1.4-2.35s. That supports the live-log
+  diagnosis that the 18-26s gaps are mainly Tavus post-callback speech start, not
+  NexusRep compose time.
+- **Verified locally:** `npm run typecheck` clean. Focused pass:
+  `npm test -- tests/tavus.test.ts tests/slide-cue.test.ts tests/isi-cadence.test.ts
+  tests/product-name-recovery.test.ts tests/asr-correct.test.ts tests/routing-robustness.test.ts`
+  passed 88/88. Full `npm test` passed 408/408 with 2 skipped.
+
+### Preview startup timeout + coaching activation clarity (2026-07-15)
+
+- **Preview "operation aborted" clarified and hardened.** The Tavus REST adapter no longer
+  bubbles the browser/runtime's raw AbortError. Cold Tavus preview startup now has a 30s bounded
+  budget for persona lookup/patch/create plus conversation creation, and an abort reports a clear
+  timeout: `tavus ... timed out ... while starting the video rep`.
+- **Coaching rule activation is explicit.** Training now labels accepted coached answers as
+  saved **draft** rules and says to activate them in Rules before they affect live previews.
+  Rehearsal still uses draft style coaching immediately; live HCP turns use only active,
+  compliance-cleared rules.
+- **Verified locally:** `npm run typecheck` clean; `npm test -- tests/tavus.test.ts
+  tests/rules.test.ts tests/studio.test.ts` passed 45/45. A direct local preview-start API call
+  returned a valid Tavus conversation and was immediately ended.
+
+### Tavus timing/debug pass + clean real showcase recording (2026-07-15)
+
+- **Created a real Tavus showcase recording, not a mocked replay.** Final artifact:
+  `/recordings/nexusrep-full-tavus-session-20260715-143910.webm` with sidecars
+  `/recordings/nexusrep-full-tavus-session-20260715-143910.session.json`,
+  `/recordings/nexusrep-full-tavus-session-20260715-143910.transcript.txt`, and
+  `/recordings/nexusrep-full-tavus-session-20260715-143910.timing.json`.
+  Session `session_mrm6rmv5f9wp4p`: 01:21, 11 turns, 5 HCP questions, 29 audited
+  events, 5/5 gated outputs, 10 sources cited, AE routed, and 3 follow-ups restored
+  for the demo UI import.
+- **Fixed typed-video duplicate questions.** Tavus sometimes normalizes typed prompts
+  before calling the custom LLM (for example dropping a small word). The custom LLM
+  callback now fuzzy-reuses the click-time HCP turn instead of adding a second fake
+  HCP row, preserving the true timestamp and preventing inflated question counts.
+- **Fixed recorder pacing and evidence retention.** The recorder now waits for a new
+  `rep_final_utterance` and then the following speech stop before sending the next
+  scripted prompt. It also keeps a larger timing buffer and writes a `.timing.json`
+  sidecar so answer text, Tavus speech start/stop, click-time HCP prompts, and caption
+  release can be audited after the browser closes.
+- **Barge-in state is more robust.** The video stage now tracks "likely speaking"
+  while a rep answer is pending or estimated to still be audible, so typed barge-in
+  sends a Tavus interrupt even when Tavus omits or delays started/stopped-speaking
+  events.
+- **Visual replay verified.** In the seeded demo profile, Sessions shows the imported
+  row as `01:21`, `5` questions, `AE routed`, `3 follow-ups`. Review playback loaded
+  the WebM; clicking transcript `00:13` jumped video to ~14.25s and showed the
+  `Mechanism of action` slide; clicking `00:26` jumped video to ~27.05s and showed
+  `The LIBREXIA Phase 3 program` slide.
+- **Latency finding from real logs.** Our custom LLM endpoint took roughly 1.7-4.5s
+  for most turns after warmup, while Tavus speech start still lagged finalized rep text
+  by roughly 5-11s in the real calls. The code now measures and preserves that split;
+  the remaining delay is provider-side TTS/render/turn pipeline, not the UI hiding text.
+- **Verified locally:** `npm run typecheck` clean; `npm test -- tests/sessions.test.ts
+  tests/tavus.test.ts` clean. Full `npm test` ran 403 passing / 1 skipped with one
+  parallel timeout in `tests/ingest.test.ts`; rerunning `npm test -- tests/ingest.test.ts`
+  passed 6/6 immediately. Dev server left running on `http://localhost:3000`.
+
+### Real Tavus showcase recording + exact replay timing (2026-07-15)
+
+- **Real Tavus session cleanup + showcase run.** Cleared local session-side rows, ran the
+  HCP/video path against Tavus with the NexusRep custom LLM endpoint exposed through the
+  local tunnel, attached the Tavus WebM recording through the webhook, and ended the Tavus
+  conversation after recording. Current real showcase session: `session_mrm2itgnfx0l33` -
+  11 turns, 5 HCP questions, 29 audit events, 5/5 gated outputs, 10 cited sources, AE
+  routed, 3 follow-ups, recording
+  `/recordings/nexusrep-full-tavus-session-20260715-124016.webm`. Sidecars:
+  `/recordings/nexusrep-full-tavus-session-20260715-124016.transcript.txt` and
+  `/recordings/nexusrep-full-tavus-session-20260715-124016.session.json`.
+- **Recorder start + exact replay timing.** The video recorder now starts only after the
+  Tavus replica has joined with both video and audio tracks, and the greeting is queued
+  only after MediaRecorder is live, so the opening line is not clipped. The recorder exports
+  browser timing events; the local session resequencer marks `timelineSource: "recorded"`
+  and writes exact turn offsets instead of relying on server/API timestamps or word-count
+  estimates. Session detail preserves those exact offsets without scaling them to duration.
+  Verified visually: transcript lines show `00:10`, `00:12`, `00:40`, `00:42`, etc.;
+  no recording-short warning; the Mechanism answer jumps to the Mechanism slide at ~00:13.6,
+  and the LIBREXIA answer jumps to the LIBREXIA program slide at ~00:43.9.
+- **Typed transcript fidelity.** For scripted typed video demos, the recorder sync now restores
+  the exact typed HCP prompt from the browser timing log. Tavus can normalize text internally
+  (for example dropping a small word); the recorded session transcript now preserves what was
+  actually typed while still using Tavus/custom-LLM for the rep's spoken answer.
+- **Replay controls.** Transcript rows have stable `data-testid="session-transcript-turn"`
+  markers; Review buttons carry a stable `data-session-id`; the detail page falls back to
+  the latest reviewable real session if selected state is missing or stale; and transcript
+  seeks survive the WebM duration-header fix instead of snapping back to `00:00`.
+- **Training modes.** Training now has explicit modes inside the page: Practice, Coach session,
+  and Model lab. The full slide-by-slide script editor lives only in Pitch & Script; Training
+  keeps a lightweight **Rehearse the pitch** action that generates the approved overview in
+  the coach thread. Coach session clones a real session transcript into Training so each rep
+  line can be coached and accepted as rule(s).
+- **Verified locally:** `npm run typecheck` clean; browser visual pass on Sessions list,
+  Session review playback, transcript click-to-jump, and exact recorded transcript offsets.
+  No commit or push was made for this local pass.
+
+### Coaching drives the deck + why the rehearsal felt inert (2026-07-15)
 
 - Coaching a specific slide now works: the trial-specificity re-rank reads the query AND the coaching
   notes, so "actually use the LIBREXIA stroke slide" promotes the stroke answer + slide (when it's a
@@ -280,7 +813,7 @@ the cue, the rep sometimes never naming an on-screen slide) — root-caused and 
 - **Tuned Tavus response timing:** PAL personas are created/patched with
   `conversational_flow.turn_taking_patience = low` and `sparrow-1`, while keeping
   `speculative_inference = true`, plus an explicit Cartesia/Sonic-3 TTS layer and
-  `NEXUSREP_TAVUS_TTS_SPEED` (default `1.08`) so cached PALs do not sit on unknown
+  `NEXUSREP_TAVUS_TTS_SPEED` (default `1.0`) so cached PALs do not sit on unknown
   Tavus auto speech defaults. Tavus always calls our custom-LLM endpoint and shares the exact
   same composer policy as typed chat: grounded LLM rephrasing when model keys are present;
   deterministic approved text only when no composer exists or the composer times out/errors.
@@ -542,7 +1075,7 @@ plus a live screen-by-screen pass. Every confirmed finding fixed:
   passage listed by document with topic, live/in-review status, and its text. Nothing hidden
   behind an aggregate number.
 - **Train thread autoscrolls** to the newest message (new questions, re-answers, and the
-  session-review "Coach this exchange" handoff land in view — no manual scrolling).
+  session-review "Coach this session" handoff land in view — no manual scrolling).
 - **Rules from your coaching moved** from below the tall pitch card (where nobody scrolled)
   to the left column next to the thread that creates them.
 - **Model lab moved to Training** (from the HCP preview): same A/B streamed comparison with
@@ -615,9 +1148,9 @@ plus a live screen-by-screen pass. Every confirmed finding fixed:
   it slide-by-slide), shows the sections as a readable list (title + anchored slide) instead of
   anonymous numbered squares, autosaves edits (no redundant Save button), and has **▶ Rehearse**
   right on the card — running the pitch in the coaching thread. All status copy renamed to match.
-- **Session review → “✎ Coach this exchange”.** The Turn-evidence panel in a session review can now
-  send the exact doctor question to Training (one-shot localStorage seed), which auto-asks it so you
-  coach the very line that needed work. E2E-covered in `nexusrep.spec.ts`.
+- **Session review → “✎ Coach this session”.** The Turn-evidence panel in a session review now
+  sends the whole session ID to Training (one-shot localStorage seed). Training clones the real
+  transcript into the coach thread so each rep line can be refined and accepted as rule(s).
 - **Bug fixed: text/voice sessions were invisible in Sessions.** The list API filtered to
   `recordingUrl` only; it now lists any session with real turns OR a recording (same rule as the
   detail view) — restoring the “improve from sessions” loop for non-video conversations.

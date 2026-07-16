@@ -42,8 +42,11 @@ export async function POST(req: Request): Promise<NextResponse> {
       partialCount: ms(body.partialCount), // # of user streaming partials this turn; 0 = Tavus gives us no user partials (can't see inside)
       sttTailAfterStopMs: ms(body.sttTailAfterStopMs), // VAD-stop → last partial: STT still transcribing after silence (STT-side)
       finalizeMs: ms(body.finalizeMs), // last partial → final transcript: dead time after last word (turn-confirm + finalize)
-      thinkToVoiceMs: ms(body.thinkToVoiceMs), // transcript → replica audio (our endpoint + Tavus TTS)
-      transcriptToVoiceMs: ms(body.transcriptToVoiceMs), // rep text ready → replica audio (~Tavus TTS render)
+      transcriptToAudioMs: ms(body.transcriptToAudioMs), // HCP final transcript → replica audio
+      firstVendorTextToAudioMs: ms(body.firstVendorTextToAudioMs), // first Tavus rep text event → audio
+      finalVendorTextToAudioMs: ms(body.finalVendorTextToAudioMs), // final Tavus rep text event → audio
+      repFinalUtteranceToAudioMs: ms(body.repFinalUtteranceToAudioMs),
+      audioStartReason: typeof body.audioStartReason === "string" ? body.audioStartReason : null,
     }),
   );
   return NextResponse.json({ ok: true });

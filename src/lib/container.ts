@@ -10,7 +10,7 @@
 
 import { asId, type AiRepId, type BrandId, type CampaignId, type ContentAssetId, type DetailAidSlideId, type HcpId, type MlrApprovalId, type SessionId, type TenantId } from "@lib/ids";
 import { InMemoryVectorIndex } from "@lib/vector-index";
-import { getRepositoryFactory, PgRepositoryFactory } from "@lib/db";
+import { getRepositoryFactory, ResilientPgRepositoryFactory } from "@lib/db";
 import { MemoryRepositoryFactory, type RepositoryFactory } from "@lib/repository";
 import { appAuthEnabled, usernameFromCookie, userData, SESSION_COOKIE } from "@lib/auth-session";
 import { ContentService, PresentationSkill, defaultComposer, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
@@ -300,6 +300,9 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
       text: `${a.topic} ${a.text}`,
     });
   }
+  // Embed the approved deck during container warmup, not on the first Tavus/HCP turn. The vector
+  // index is a rebuildable cache; this just materializes its vectors from canonical approved rows.
+  await index.warmup();
 
   const isi: SafetyStatement = {
     id: asId<"safety_statement_id">("isi_main") as SafetyStatement["id"],
@@ -361,7 +364,7 @@ function containerCache(): Map<string, Promise<AppContainer>> {
  *  otherwise an isolated in-memory store (resets on restart — fine for local/dev). */
 function perUserRepos(userId: string): RepositoryFactory {
   if (env.dataDriver === "postgres") {
-    return new PgRepositoryFactory(`u_${userId.toLowerCase().replace(/[^a-z0-9]/g, "_")}_`);
+    return new ResilientPgRepositoryFactory(`u_${userId.toLowerCase().replace(/[^a-z0-9]/g, "_")}_`);
   }
   return new MemoryRepositoryFactory();
 }

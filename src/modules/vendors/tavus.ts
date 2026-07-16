@@ -67,16 +67,26 @@ const KNOWN_STT_ENGINES = new Set([
   "tavus-auto", "tavus-whisper", "tavus-turbo", "tavus-advanced", "tavus-parakeet", "tavus-soniox", "tavus-deepgram-medical",
 ]);
 
-// Process-wide cache of ONE persona PER BRAND (keyed by personaCacheKey), so every session
-// reuses its brand's persona instead of spawning a new "pal" each time — and a second brand
-// in the same process can never reuse/PATCH the first brand's persona. `prompts` tracks the
-// last-applied system prompt per key so we update in place (PATCH) when it changes.
+const DEFAULT_PERSONA_NAME = "NexusRep compliant rep";
+
+// Process-wide cache of ONE Tavus PAL for NexusRep, so every session reuses the same PAL instead
+// of spawning a new one. The PAL is PATCHED in place when prompt/layers change. `personaCacheKey`
+// remains accepted by the interface for future multi-PAL deployments, but this demo/product path
+// intentionally keeps one stable PAL because Tavus accounts are otherwise littered with duplicates.
 const createdPersonas = new Map<string, string>();
 const personaPrompts = new Map<string, string>();
 const personaLayerSignatures = new Map<string, string>();
 /** In-flight creations — two concurrent first sessions for a brand must share ONE
  *  persona POST instead of each creating (and leaking) their own. */
 const personaCreations = new Map<string, Promise<string>>();
+
+export function __resetTavusPersonaCacheForTests(): void {
+  if (process.env.NODE_ENV !== "test") return;
+  createdPersonas.clear();
+  personaPrompts.clear();
+  personaLayerSignatures.clear();
+  personaCreations.clear();
+}
 
 export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, AgentPreviewStudio {
   readonly name = "tavus";
@@ -89,10 +99,11 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
 
   private async api<T>(path: string, init: RequestInit): Promise<T> {
     const controller = new AbortController();
-    // 15s default: observed live that first-boot persona create/patch + conversation create
-    // can exceed 8s, which made the FIRST video call of a session fail (configured:false)
-    // and succeed only on retry.
-    const timer = setTimeout(() => controller.abort(), this.cfg.timeoutMs ?? 15000);
+    // Cold starts can involve persona lookup/patch plus conversation creation. A 15s ceiling
+    // surfaced as the browser's useless "operation aborted" even though a retry worked. Keep a
+    // bounded timeout, but give Tavus enough headroom for first preview after deploy/spin-up.
+    const timeoutMs = this.cfg.timeoutMs ?? 30_000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(`${this.cfg.baseUrl.replace(/\/$/, "")}${path}`, {
         ...init,
@@ -101,6 +112,11 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
       });
       if (!res.ok) throw new Error(`tavus ${path} ${res.status}: ${(await res.text()).slice(0, 200)}`);
       return (await res.json()) as T;
+    } catch (error) {
+      if ((error as { name?: string })?.name === "AbortError") {
+        throw new Error(`tavus ${path} timed out after ${Math.round(timeoutMs / 1000)}s while starting the video rep`);
+      }
+      throw error;
     } finally {
       clearTimeout(timer);
     }
@@ -113,17 +129,17 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
    * UPDATE the existing persona in place (best-effort PATCH) instead of recreating it.
    */
   private async ensurePersona(config: RealtimeSessionConfig): Promise<string> {
-    const cacheKey = config.personaCacheKey ?? "default";
-    const personaName = cacheKey === "default" ? "NexusRep compliant rep" : `NexusRep compliant rep · ${cacheKey}`;
+    const cacheKey = "default";
+    const personaName = DEFAULT_PERSONA_NAME;
     const layers = this.layersFor(config);
     const layerSignature = JSON.stringify(layers);
-    // Reuse order: explicit config/env id → this-process cache → an EXISTING persona with our name
-    // already on the account → only then create. The name lookup is what makes reuse survive a
-    // process restart/redeploy: `createdPersonas` is in-memory, so without it every deploy (and
-    // every idle spin-down) minted a brand-new PAL — the "why does it change PALs" leak.
+    // Reuse order: explicit config/env id → this-process cache → an EXISTING NexusRep persona
+    // already on the account → only then create. The account may have stale duplicate names from
+    // earlier local tunnels, so lookup scores candidates by desired layers instead of picking the
+    // first row. This is what makes reuse survive restarts/redeploys without minting new PALs.
     let existing = config.personaId ?? this.cfg.personaId ?? createdPersonas.get(cacheKey);
     if (!existing) {
-      const found = await this.findPersonaByName(personaName);
+      const found = await this.findReusablePersona(personaName, layers);
       if (found) {
         existing = found;
         createdPersonas.set(cacheKey, found); // skip the lookup for the rest of this process
@@ -179,8 +195,8 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
     }
 
     const body = {
-      // Stable, per-brand name (not per-session) — one persona per brand, reused across sessions
-      // (and found by name after a restart, so we never create a second one for the same brand).
+      // Stable product PAL name (not per-session or per-brand) — one NexusRep PAL reused across
+      // every session and found by name after a restart if TAVUS_PERSONA_ID is not pinned.
       persona_name: personaName,
       system_prompt: config.systemPrompt,
       default_replica_id: config.agentId ?? this.cfg.replicaId,
@@ -227,11 +243,32 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
   /** Find an existing persona on the account by its exact name (best-effort). This is what lets
    *  reuse survive a process restart — otherwise the in-memory cache is empty on boot and we'd
    *  create a duplicate PAL. Returns undefined on any error so the caller falls back to creating. */
-  private async findPersonaByName(name: string): Promise<string | undefined> {
+  private async findReusablePersona(name: string, desiredLayers?: Record<string, unknown>): Promise<string | undefined> {
     try {
-      const res = await this.api<{ data?: { persona_id?: string; persona_name?: string }[] }>("/personas?limit=100", { method: "GET" });
-      const list = Array.isArray(res) ? (res as { persona_id?: string; persona_name?: string }[]) : res.data ?? [];
-      return list.find((p) => p.persona_name === name)?.persona_id;
+      type PersonaRow = { persona_id?: string; persona_name?: string; layers?: Record<string, unknown> };
+      const res = await this.api<{ data?: PersonaRow[] }>("/personas?limit=100", { method: "GET" });
+      const list = Array.isArray(res) ? (res as PersonaRow[]) : res.data ?? [];
+      const matches = list.filter((p) => typeof p.persona_name === "string" && p.persona_name.startsWith(DEFAULT_PERSONA_NAME) && p.persona_id);
+      if (!matches.length) return undefined;
+      const desiredLlm = desiredLayers?.llm as Record<string, unknown> | undefined;
+      const desiredStt = desiredLayers?.stt as Record<string, unknown> | undefined;
+      const desiredTts = desiredLayers?.tts as Record<string, unknown> | undefined;
+      const score = (p: PersonaRow) => {
+        const layers = p.layers ?? {};
+        const llm = layers.llm as Record<string, unknown> | undefined;
+        const stt = layers.stt as Record<string, unknown> | undefined;
+        const tts = layers.tts as Record<string, unknown> | undefined;
+        let s = 0;
+        if (p.persona_name === name) s += 1;
+        if (desiredLlm?.base_url && llm?.base_url === desiredLlm.base_url) s += 10;
+        if (desiredLlm?.model && llm?.model === desiredLlm.model) s += 2;
+        if (desiredStt?.stt_engine && stt?.stt_engine === desiredStt.stt_engine) s += 6;
+        if (desiredStt?.hotwords && stt?.hotwords === desiredStt.hotwords) s += 2;
+        if (desiredTts?.tts_engine && tts?.tts_engine === desiredTts.tts_engine) s += 2;
+        if (desiredTts?.tts_model_name && tts?.tts_model_name === desiredTts.tts_model_name) s += 2;
+        return s;
+      };
+      return matches.sort((a, b) => score(b) - score(a))[0]?.persona_id;
     } catch {
       return undefined;
     }
@@ -246,10 +283,11 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
       // non-empty placeholder is always safe.
       llm.api_key = config.customLlm.apiKey || "nexusrep";
       llm.model = config.customLlm.model ?? "nexusrep-compliance";
-      // Tavus can begin processing partial transcriptions before the user fully stops
-      // speaking. We still final-gate on our side before output, but this reduces
-      // perceived latency in the CVI pipeline when supported.
-      llm.speculative_inference = true;
+      // Keep this OFF by default for NexusRep. With a compliance-gated custom LLM, Tavus
+      // speculative inference calls the endpoint on growing interim ASR text; that creates
+      // multiple approved answers for one doctor utterance and can queue stale TTS. The rep should
+      // answer the settled turn. Opt in only for controlled latency experiments.
+      llm.speculative_inference = /^(1|true|yes)$/i.test(process.env.NEXUSREP_TAVUS_SPECULATIVE ?? "");
     }
     if (config.tools?.length) {
       llm.tools = config.tools.map((t) => ({
@@ -286,13 +324,16 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
       ...(config.voice?.voiceId ? { external_voice_id: config.voice.voiceId } : {}),
     };
     // Lowest-latency conversational flow per Tavus docs: sparrow-1 turn detection (fastest),
-    // turn_taking_patience "low" (eager to respond once the HCP stops), pal_interruptibility "high"
+    // turn_taking_patience "low" (eager to respond once the HCP stops), interruptibility "high"
     // (stops instantly when the HCP starts speaking — snappiest barge-in). These are the only
     // turn/latency knobs the API exposes; the residual is Tavus's own STT/turn processing.
     layers.conversational_flow = {
       turn_detection_model: "sparrow-1",
       turn_taking_patience: "low",
+      // Docs call this pal_interruptibility; the live API also surfaces replica_interruptibility
+      // in existing personas. Send both so old/new naming cannot leave the PAL at "medium".
       pal_interruptibility: "high",
+      replica_interruptibility: "high",
       voice_isolation: "near",
       idle_engagement: "off",
     };
@@ -310,7 +351,7 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
       // non-interruptible and drops anything the doctor says during it (docs: "The face's greeting
       // is always non-interruptible … these settings only take effect after the greeting
       // completes"). Instead the client speaks the opening as a normal echoed utterance once the
-      // replica is live, so it obeys pal_interruptibility and the doctor can barge in over it.
+      // replica is live, so it obeys replica_interruptibility and the doctor can barge in over it.
       ...(config.context ? { conversational_context: config.context } : {}),
       ...(config.audioOnly ? { audio_only: true } : {}),
       ...(config.callbackUrl ? { callback_url: config.callbackUrl } : {}),

@@ -10,7 +10,7 @@ import { SlideView } from "../_components/SlideView";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { StudioAgentMode } from "./StudioAgentMode";
 import { OpenAiVoiceProvider, createRecognizer, setSpeechLanguage, toneSpeechOpts, estimateSpeechMs, type ClientRecognizer } from "@lib/browser-speech";
-import { correctBestAlternative, correctionTerms } from "@lib/asr-correct";
+import { correctHcpAsrBestAlternative } from "@lib/asr-correct";
 import { useCuedSlide } from "../_components/useCuedSlide";
 import { invalidateBrandCache, useBrand } from "../_components/useBrand";
 import type { SetupProposedAction } from "@modules/setupAssistant";
@@ -222,7 +222,7 @@ export function StudioScreen({ app }: { app: AppState }) {
           ))}
         </div>
         <span style={{ font: "500 12px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", flex: 1, minWidth: 220 }}>
-          {mode === "setup" ? "Answer DocNexus's questions on the left — it drafts each section on the right." : mode === "agent" ? "Pick who your rep is on video — face and voice. Browse the gallery or train your own from footage." : mode === "pitch" ? "Pick the deck, perfect the slide-by-slide script. Coach any line — approved text changes go through MLR." : mode === "train" ? "Free-flow practice: ask anything a doctor might, coach the answers. The deck follows the conversation." : mode === "rules" ? "Locked guardrails + the rules your coaching creates." : "Resolve the checklist, then submit for approval."}
+          {mode === "setup" ? "Answer DocNexus's questions on the left — it drafts each section on the right." : mode === "agent" ? "Pick who your rep is on video — face and voice. Browse the gallery or train your own from footage." : mode === "pitch" ? "Pick the deck, perfect the slide-by-slide script. Coach any line — approved text changes go through MLR." : mode === "train" ? "Practice from scratch or clone a real session, coach the answers, and turn accepted feedback into rules." : mode === "rules" ? "Locked guardrails + the rules your coaching creates." : "Resolve the checklist, then submit for approval."}
         </span>
       </div>
 
@@ -989,6 +989,7 @@ interface RepAnswer {
   route: string;
   isi: boolean;
   detailAidSlideId?: string | null;
+  sourceIds?: string[];
   /** Did an LLM actually apply the coaching? false = no AI key (approved text only). */
   usedLlm: boolean;
   /** For a guided-overview answer: the per-slide steps, so Train renders it paragraph-by-paragraph. */
@@ -1004,7 +1005,43 @@ interface Exchange {
   scope: CoachScope;
   accepted: boolean;
   ruleCount?: number; // rules saved on accept
+  sourceSessionId?: string;
+  sourceTurnIndex?: number;
+  sourceHcpName?: string;
+  sourceAt?: string | null;
 }
+
+interface SessionListRow {
+  id: string;
+  hcp: string;
+  date: string;
+  duration: string;
+  questions: number | string;
+  comp: string;
+  compTone: string;
+  hasRecording?: boolean;
+  followup: string;
+}
+interface SessionDetailTurn {
+  speaker: "hcp" | "rep";
+  text: string;
+  sourceIds?: string[];
+  detailAidSlideId?: string | null;
+  at?: string | null;
+}
+interface SessionDetailSnap {
+  session: {
+    id: string;
+    hcp: string;
+    startedAt: string;
+    durationSeconds: number;
+    questionCount: number;
+    complianceStatus: string;
+    recordingUrl?: string | null;
+  };
+  turns: SessionDetailTurn[];
+}
+interface TrainSeed { q?: string; from?: string; sessionId?: string; mode?: "practice" | "session" }
 
 function makePreviewSessionId(): string {
   return `session_train_preview_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
@@ -1025,6 +1062,40 @@ function loadTrainState(brandName?: string): TrainStore {
     if (brandName && stored.brandName && stored.brandName !== brandName) return {};
     return stored;
   } catch { return {}; }
+}
+
+function cloneSessionTurnsForTraining(detail: SessionDetailSnap): Exchange[] {
+  const cloned: Exchange[] = [];
+  let lastHcp = "";
+  detail.turns.forEach((turn, idx) => {
+    if (turn.speaker === "hcp") {
+      lastHcp = turn.text;
+      return;
+    }
+    const text = turn.text.trim();
+    if (!text) return;
+    const isOpening = !lastHcp;
+    cloned.push({
+      q: lastHcp,
+      kind: isOpening ? "greeting" : undefined,
+      answers: [{
+        text,
+        route: turn.sourceIds?.length ? "approved_content" : "session_line",
+        isi: /\bImportant Safety Information\b/i.test(text),
+        detailAidSlideId: turn.detailAidSlideId ?? null,
+        sourceIds: turn.sourceIds ?? [],
+        usedLlm: true,
+      }],
+      coachings: [],
+      scope: "hcp",
+      accepted: false,
+      sourceSessionId: detail.session.id,
+      sourceTurnIndex: idx,
+      sourceHcpName: detail.session.hcp,
+      sourceAt: turn.at ?? null,
+    });
+  });
+  return cloned;
 }
 
 /** Split a rep answer into its coachable body and the active approved ISI block. */
@@ -1401,6 +1472,12 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
   const [coachDraft, setCoachDraft] = useState<Record<number, string>>(() => loadTrainState().coachDraft ?? {});
   const [busyIdx, setBusyIdx] = useState<number | null>(null);
   const [showVideo, setShowVideo] = useState(false);
+  const [trainMode, setTrainMode] = useState<"practice" | "session" | "lab">("practice");
+  const [sessionRows, setSessionRows] = useState<SessionListRow[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [selectedCoachSessionId, setSelectedCoachSessionId] = useState("");
+  const [loadedCoachSessionId, setLoadedCoachSessionId] = useState<string | null>(null);
+  const [sessionCoachMsg, setSessionCoachMsg] = useState("");
   const videoRef = useRef<VideoAgentStageHandle | null>(null);
   // Talk to the rep to rehearse, exactly like a doctor would — same browser ASR the HCP view uses.
   const [listening, setListening] = useState(false);
@@ -1408,7 +1485,12 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
   const recRef = useRef<ClientRecognizer | null>(null);
   const [previewSessionId, setPreviewSessionId] = useState(() => loadTrainState().previewSessionId ?? makePreviewSessionId());
   // Shared script plan (per-line coaching writes to it; the deck panel follows the convo).
-  const { activePlanStepId, setActivePlanStepId, activePlanSlideId, applyPlanNote } = useOverviewPlan();
+  const {
+    activePlanStepId,
+    setActivePlanStepId,
+    activePlanSlideId,
+    applyPlanNote,
+  } = useOverviewPlan();
   const [followSlideId, setFollowSlideId] = useState<string | null>(null);
   // Detail-aid slide switching timed to WHEN the rep speaks the cue — the SAME hook the doctor
   // preview uses. On video the timer anchors to the replica's audio-start (onRepAudioStart →
@@ -1421,8 +1503,11 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
   // Coach menu is COLLAPSED per exchange by default — the thread stays a clean read of answers, and
   // the full coach controls (notes + scope + accept) open only when you click to coach that line.
   const [coachOpen, setCoachOpen] = useState<Record<number, boolean>>({});
+  // If push-to-talk finalizes while the previous preview answer is still composing, do not drop the
+  // question. Queue it and run it as soon as the current preview settles.
+  const pendingAskRef = useRef<string[]>([]);
   // Keep the coaching thread pinned to the newest message (new questions, re-answers,
-  // seeded "Coach this exchange" handoffs) — no manual scrolling to find the latest.
+  // seeded session-coaching handoffs) — no manual scrolling to find the latest.
   const threadRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = threadRef.current;
@@ -1478,8 +1563,8 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
       const body = ex.kind === "greeting" ? { kind: "greeting", current: ex.current, coaching } : { kind: ex.kind, text: ex.q, coaching, previewSessionId };
       const res = await fetch("/api/train/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (res.ok) {
-        const d = (await res.json()) as { response?: string; route?: string; isiDelivered?: boolean; detailAidSlideId?: string | null; usedLlm?: boolean; segments?: OverviewSegment[] };
-        return { text: d.response ?? "", route: d.route ?? "", isi: !!d.isiDelivered, detailAidSlideId: d.detailAidSlideId ?? null, usedLlm: !!d.usedLlm, ...(d.segments?.length ? { segments: d.segments } : {}) };
+        const d = (await res.json()) as { response?: string; route?: string; isiDelivered?: boolean; detailAidSlideId?: string | null; sourceIds?: string[]; usedLlm?: boolean; segments?: OverviewSegment[] };
+        return { text: d.response ?? "", route: d.route ?? "", isi: !!d.isiDelivered, detailAidSlideId: d.detailAidSlideId ?? null, sourceIds: d.sourceIds ?? [], usedLlm: !!d.usedLlm, ...(d.segments?.length ? { segments: d.segments } : {}) };
       }
     } catch {
       /* fall through */
@@ -1501,29 +1586,39 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
   const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 
   const ask = async (forced?: string) => {
-    if (asking) return;
     const q = forced?.trim() || input.trim() || brand?.tryQuestions[0] || "Tell me about this therapy.";
+    if (asking) {
+      const last = pendingAskRef.current[pendingAskRef.current.length - 1];
+      if (q && q !== last) pendingAskRef.current.push(q);
+      setInput("");
+      return;
+    }
     const kind = isOverviewPrompt(q, { productTerms: brand?.productTerms ?? [] }) ? "overview" : undefined;
     setAsking(true);
     setInput("");
-    const a = await runPreview({ kind, q, current: "" }, []);
-    setExchanges((xs) => [...xs, { q, kind, answers: [a], coachings: [], scope: "persona", accepted: false }]);
-    // Deliver exactly like the doctor preview: WALK an overview segment-by-segment (each segment's
-    // slide is cued as the rep reaches it), else cue the single answer's slide. Backend gates the
-    // slide on a spoken cue, so no cue → no switch. The error fallback is never read aloud.
-    if (a.route !== "error") {
-      if (a.segments?.length) {
-        for (const seg of a.segments) {
-          cueSlide(seg.detailAidSlideId, seg.response, showVideo);
-          speakAnswer(seg.response);
-          await wait(estimateSpeechMs(seg.response));
+    try {
+      const a = await runPreview({ kind, q, current: "" }, []);
+      setExchanges((xs) => [...xs, { q, kind, answers: [a], coachings: [], scope: "persona", accepted: false }]);
+      // Deliver exactly like the doctor preview: WALK an overview segment-by-segment (each segment's
+      // slide is cued as the rep reaches it), else cue the single answer's slide. Backend gates the
+      // slide on a spoken cue, so no cue → no switch. The error fallback is never read aloud.
+      if (a.route !== "error") {
+        if (a.segments?.length) {
+          for (const seg of a.segments) {
+            cueSlide(seg.detailAidSlideId, seg.response, showVideo);
+            speakAnswer(seg.response);
+            await wait(estimateSpeechMs(seg.response));
+          }
+        } else {
+          cueSlide(a.detailAidSlideId, a.text, showVideo);
+          speakAnswer(a.text);
         }
-      } else {
-        cueSlide(a.detailAidSlideId, a.text, showVideo);
-        speakAnswer(a.text);
       }
+    } finally {
+      setAsking(false);
+      const next = pendingAskRef.current.shift();
+      if (next) window.setTimeout(() => void ask(next), 0);
     }
-    setAsking(false);
   };
 
   // Push-to-talk rehearsal: tap the mic, speak a question, the recognized text drives ask().
@@ -1536,25 +1631,85 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
     // Snap mis-heard drug/program names to their canonical spelling — the SAME correction the doctor
     // view applies. Without it the browser ASR sent "Lebrixia stock" straight to the rep (wrong
     // transcript AND, sometimes, the wrong answer).
-    const terms = correctionTerms([...(brand?.hotwords ?? []), ...(brand?.productTerms ?? [])]);
     rec.start(
       (text, alts) => {
         setListening(false); setInput("");
-        const { text: corrected } = correctBestAlternative(alts?.length ? alts : [text], terms);
+        const { text: corrected } = correctHcpAsrBestAlternative(alts?.length ? alts : [text], brand?.hotwords ?? [], brand?.productTerms ?? []);
         void ask(corrected || text);
       },
       () => setListening(false),
     );
   };
 
-  // Session review → "Coach this exchange": the reviewed doctor question arrives via a one-shot
-  // seed, so coaching starts from the exact line that needed work — no retyping.
+  const loadSessionRows = async () => {
+    if (sessionsLoading) return;
+    setSessionsLoading(true);
+    try {
+      const res = await fetch("/api/sessions");
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as { rows?: SessionListRow[] };
+      const rows = data.rows ?? [];
+      setSessionRows(rows);
+      if (!selectedCoachSessionId && rows[0]) setSelectedCoachSessionId(String(rows[0].id));
+    } catch (e) {
+      setSessionCoachMsg(`Couldn't load sessions: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (trainMode === "session" && sessionRows.length === 0) void loadSessionRows();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trainMode]);
+
+  const cloneSessionForCoaching = async (sessionId: string) => {
+    const id = sessionId.trim();
+    if (!id) return;
+    setSessionCoachMsg("Cloning the session into Training…");
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
+      const detail = (await res.json()) as SessionDetailSnap & { error?: string };
+      if (!res.ok) throw new Error(detail.error ?? String(res.status));
+      const cloned = cloneSessionTurnsForTraining(detail);
+      if (!cloned.length) {
+        setExchanges([]);
+        setCoachDraft({});
+        setCoachOpen({});
+        setLoadedCoachSessionId(null);
+        setSessionCoachMsg("That session has no rep turns to coach yet.");
+        return;
+      }
+      setExchanges(cloned);
+      setCoachDraft({});
+      setCoachOpen({});
+      setPreviewSessionId(makePreviewSessionId());
+      setLoadedCoachSessionId(detail.session.id);
+      setSelectedCoachSessionId(detail.session.id);
+      setFollowSlideId(cloned.find((ex) => ex.answers[0]?.detailAidSlideId)?.answers[0]?.detailAidSlideId ?? null);
+      setSessionCoachMsg(`Cloned ${cloned.length} rep line(s) from ${detail.session.hcp}. Coach any line, then Accept to save rule(s).`);
+    } catch (e) {
+      setSessionCoachMsg(`Couldn't clone session: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  // Sessions → Training: clone the WHOLE session into the coach thread. A stale one-question seed
+  // from older builds still works, but new handoffs always pass a session id.
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(TRAIN_SEED_KEY);
       if (!raw) return;
       window.localStorage.removeItem(TRAIN_SEED_KEY);
-      const seed = JSON.parse(raw) as { q?: string };
+      const seed = JSON.parse(raw) as TrainSeed;
+      const sessionId = seed.sessionId ?? seed.from;
+      if (seed.mode === "session" || sessionId) {
+        setTrainMode("session");
+        if (sessionId) {
+          setSelectedCoachSessionId(sessionId);
+          void cloneSessionForCoaching(sessionId);
+        }
+        return;
+      }
       if (seed.q) void ask(seed.q);
     } catch { /* malformed seed — ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1590,7 +1745,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
       // Pitch notes were applied to the plan the moment they were coached (reAnswer /
       // per-section coach) — accepting just closes the exchange. No duplicate rules.
     } else if (ex.coachings.length) {
-      await post({ action: "acceptCoaching", coachings: ex.coachings, question: ex.q, answer: finalAnswer, scope: ex.scope });
+      await post({ action: "acceptCoaching", coachings: ex.coachings, question: ex.q, answer: finalAnswer, scope: ex.scope, sourceSessionId: ex.sourceSessionId, sourceTurnIndex: ex.sourceTurnIndex });
     }
     setExchanges((xs) => xs.map((x, i) => (i === idx ? { ...x, accepted: true, ruleCount: ex.coachings.length } : x)));
   };
@@ -1633,11 +1788,50 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
             <span onClick={() => { setExchanges([greetingExchange()]); setCoachDraft({}); setPreviewSessionId(makePreviewSessionId()); }} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>↺ Restart</span>
           </div>
         </div>
-        <ModelLab />
-        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)" }}>
-          <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", marginBottom: 5 }}>How this works</div>
-          <div style={{ font: "400 11px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>Coach an answer and <strong>Accept</strong> — it becomes a rule. The slide-by-slide script lives in <strong onClick={() => app.setStudioMode("pitch")} style={{ color: "var(--dn-brand-light)", cursor: "pointer" }}>Pitch &amp; Script</strong>.</div>
+        <div style={{ display: "inline-flex", background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 11, padding: 4, gap: 3, boxShadow: "var(--dn-shadow-card)" }}>
+          {([["practice", "Practice"], ["session", "Coach session"], ["lab", "Model lab"]] as const).map(([k, label]) => (
+            <span
+              key={k}
+              onClick={() => setTrainMode(k)}
+              style={{ flex: 1, textAlign: "center", padding: "8px 9px", borderRadius: 8, font: "600 11px/1 var(--dn-font-sans)", cursor: "pointer", color: trainMode === k ? "#fff" : "var(--dn-fg-muted)", background: trainMode === k ? "var(--dn-brand-base)" : "transparent" }}
+            >
+              {label}
+            </span>
+          ))}
         </div>
+        {trainMode === "practice" && (
+          <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)" }}>
+            <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", marginBottom: 5 }}>How this works</div>
+            <div style={{ font: "400 11px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>Ask as the HCP, coach an answer, then <strong>Accept</strong> so it becomes a reviewable rule. Use <strong onClick={() => app.setStudioMode("pitch")} style={{ color: "var(--dn-brand-light)", cursor: "pointer" }}>Pitch & Script</strong> for the full slide-by-slide editor.</div>
+          </div>
+        )}
+        {trainMode === "session" && (
+          <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", flexDirection: "column", gap: 9 }}>
+            <div>
+              <div style={{ font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-subtle)", marginBottom: 5 }}>Coach a real session</div>
+              <div style={{ font: "400 11px/1.45 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>Clone a recorded or text session into Training. Each rep line stays coachable, and accepted coaching becomes rule(s).</div>
+            </div>
+            <div style={{ display: "flex", gap: 7 }}>
+              <select
+                value={selectedCoachSessionId}
+                onFocus={() => { if (!sessionRows.length) void loadSessionRows(); }}
+                onChange={(e) => setSelectedCoachSessionId(e.target.value)}
+                disabled={sessionsLoading || sessionRows.length === 0}
+                style={{ flex: 1, minWidth: 0, padding: "8px 9px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "500 11px/1.3 var(--dn-font-sans)", background: "#fff", color: "var(--dn-fg)" }}
+              >
+                {sessionRows.length === 0 ? <option>{sessionsLoading ? "Loading sessions..." : "No sessions found"}</option> : sessionRows.map((s) => (
+                  <option key={s.id} value={s.id}>{s.hcp} · {s.duration} · {s.questions} question(s)</option>
+                ))}
+              </select>
+              <button onClick={() => void cloneSessionForCoaching(selectedCoachSessionId)} disabled={!selectedCoachSessionId || sessionsLoading} style={{ ...btnPrimary, padding: "8px 10px", font: "600 11px/1 var(--dn-font-sans)", opacity: selectedCoachSessionId && !sessionsLoading ? 1 : 0.55 }}>Clone</button>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+              <span style={{ font: "500 10.5px/1.4 var(--dn-font-sans)", color: sessionCoachMsg.startsWith("Couldn't") ? "var(--dn-danger)" : "var(--dn-fg-subtle)" }}>{sessionCoachMsg || (loadedCoachSessionId ? `Loaded ${loadedCoachSessionId}` : "Pick a session to coach the full conversation.")}</span>
+              <span onClick={() => void loadSessionRows()} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer", whiteSpace: "nowrap" }}>{sessionsLoading ? "Refreshing..." : "Refresh"}</span>
+            </div>
+          </div>
+        )}
+        {trainMode === "lab" && <ModelLab />}
       </div>
 
       {/* Coaching thread */}
@@ -1651,6 +1845,12 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
             const needsKey = ex.coachings.length > 0 && !latest.usedLlm;
             return (
               <div key={idx} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {ex.sourceSessionId && (
+                  <div style={{ alignSelf: "flex-start", display: "inline-flex", gap: 6, alignItems: "center", padding: "4px 8px", borderRadius: 7, background: "rgba(6,73,172,.06)", color: "var(--dn-fg-subtle)", font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".04em", textTransform: "uppercase" }}>
+                    <span>Cloned session</span>
+                    <span style={{ fontFamily: "var(--dn-font-mono)", letterSpacing: 0, textTransform: "none" }}>{ex.sourceHcpName ?? ex.sourceSessionId}</span>
+                  </div>
+                )}
                 {/* HCP question — or, for the greeting exchange, a label (no question) */}
                 {ex.kind === "greeting" ? (
                   <div style={{ display: "inline-flex", alignItems: "center", gap: 7, alignSelf: "flex-start", font: "600 9px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-accent-purple)", background: "rgba(124,58,237,.08)", padding: "5px 9px", borderRadius: 7 }}>★ Rep&apos;s opening line</div>
@@ -1770,7 +1970,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
                         ? ex.coachings.length ? "opening line updated — live everywhere the rep greets" : "no changes needed"
                         : ex.kind === "overview"
                           ? ex.coachings.length ? "pitch plan updated — every section keeps your notes" : "no changes needed"
-                        : ex.coachings.length ? "your coaching saved as rule(s) → review in Rules" : "no changes needed"}
+                        : ex.coachings.length ? "draft rule(s) saved → activate them in Rules to affect live previews" : "no changes needed"}
                     </span>
                   </div>
                 ) : !coachOpen[idx] ? (
@@ -1797,7 +1997,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
                     )}
                     <div style={{ display: "flex", gap: 8, marginTop: ex.kind === "greeting" ? 9 : 0 }}>
                       <button onClick={() => void reAnswer(idx)} disabled={busy || !(coachDraft[idx] ?? "").trim()} style={{ ...btnGhost, flex: 1, padding: 9, font: "600 11.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)", opacity: busy || !(coachDraft[idx] ?? "").trim() ? 0.5 : 1 }}>{busy ? "Rep is rethinking…" : "↻ Coach & re-answer"}</button>
-                      <button onClick={() => void accept(idx)} disabled={busy} style={{ ...btnPrimary, flex: 1, padding: 9, font: "600 11.5px/1 var(--dn-font-sans)" }}>{ex.kind === "greeting" ? (ex.coachings.length ? "Save opening line" : "Keep as is") : ex.coachings.length ? "Accept & save rules" : "Accept answer"}</button>
+                      <button onClick={() => void accept(idx)} disabled={busy} style={{ ...btnPrimary, flex: 1, padding: 9, font: "600 11.5px/1 var(--dn-font-sans)" }}>{ex.kind === "greeting" ? (ex.coachings.length ? "Save opening line" : "Keep as is") : ex.coachings.length ? "Accept & save draft rules" : "Accept answer"}</button>
                     </div>
                   </div>
                 )}

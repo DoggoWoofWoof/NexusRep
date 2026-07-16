@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AppState } from "./NexusRepApp";
 import { createRecognizer, setSpeechLanguage, speechVoiceHint, toneSpeechOpts, OpenAiVoiceProvider, type ClientRecognizer, type ClientVoiceProvider } from "@lib/browser-speech";
-import { correctBestAlternative, correctionTerms } from "@lib/asr-correct";
+import { correctHcpAsrBestAlternative } from "@lib/asr-correct";
 import { startBargeInVad, type BargeController } from "@lib/barge-vad";
 import { LiveAvatar, type LiveAvatarHandle } from "../_components/LiveAvatar";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
@@ -12,6 +12,7 @@ import { useBrand } from "../_components/useBrand";
 import { isOverviewPrompt } from "./overviewPrompt";
 import { appendTurn, type TranscriptMsg } from "@lib/transcript";
 import { useCuedSlide } from "../_components/useCuedSlide";
+import { isSameLiveTurnText } from "@lib/live-turn-guard";
 
 // Wall-clock read behind a tiny indirection. These timestamps are for ASR-latency telemetry in
 // DEFERRED handlers (mic tap, recognizer callbacks) — never during render — but a bare Date.now()
@@ -43,7 +44,10 @@ export function HcpExperience({ app }: { app?: AppState }) {
   // The doctor's mic starts OFF in every mode (red = off). Click the mic to talk. Same rule for
   // the live video call and the voice-off chat, so the control never means opposite things.
   const [callMicOn, setCallMicOn] = useState(false);
+  const [videoMicReady, setVideoMicReady] = useState(false);
+  const [videoMicActive, setVideoMicActive] = useState(false);
   const [videoOn, setVideoOn] = useState(false);
+  const [videoSession, setVideoSession] = useState<{ sessionId: string | null; conversationUrl: string | null } | null>(null);
   const [deckFocus, setDeckFocus] = useState<string>(""); // "" → SlideView shows the first slide (title)
   const [fs, setFs] = useState(false);
   const [listening, setListening] = useState(false);
@@ -62,10 +66,18 @@ export function HcpExperience({ app }: { app?: AppState }) {
   const rootRef = useRef<HTMLDivElement>(null);
   // This text/voice chat's own reviewable session (video uses the Tavus session).
   const chatSessionRef = useRef<string | null>(null);
+  const videoSessionRef = useRef<{ sessionId: string | null; conversationUrl: string | null } | null>(null);
+  const lastSpokenHcpRef = useRef<{ text: string; at: number } | null>(null);
+  const suppressNextMicClickRef = useRef(false);
   // Detail-aid slide switching timed to WHEN the rep speaks the cue. On video the timer is anchored
   // to the replica's audio-start (onRepAudioStart → VideoAgentStage), then counts the cue offset;
   // off-video it anchors to when we start the TTS. Backend decides WHETHER (only a cued answer).
   const { cueSlide, onRepAudioStart, cancel: cancelSlideCue } = useCuedSlide(setDeckFocus);
+
+  function setActiveVideoSession(session: { sessionId: string | null; conversationUrl: string | null } | null) {
+    videoSessionRef.current = session;
+    setVideoSession(session);
+  }
 
   // The rep's speech locale (ASR + TTS) follows the brand persona's language.
   useEffect(() => { setSpeechLanguage(brand?.language); }, [brand]);
@@ -123,7 +135,11 @@ export function HcpExperience({ app }: { app?: AppState }) {
     }
     // Transcript first, immediately — the caption is never delayed to match the voice.
     showRep(text);
-    cueSlide(slideId, text, false);
+    if (voiceOn) cueSlide(slideId, text, false);
+    else {
+      cancelSlideCue();
+      if (slideId) setDeckFocus(slideId);
+    }
     // Then speak (kick the audio off the moment the text exists). Awaited so a multi-segment
     // overview still paces one segment after the previous finishes.
     if (voiceOn) await speak(text);
@@ -142,12 +158,57 @@ export function HcpExperience({ app }: { app?: AppState }) {
     cueSlide(turn.detailAidSlideId, text, true);
   }
 
-  function addSpokenHcpTurn(text: string) {
+  function correctSpokenHcpText(text: string): string {
     // Snap the video rep's STT (Tavus) mis-hearings of the drug/program names to their canonical
     // spelling before they hit the transcript — same corrector the off-video mic uses.
-    const terms = correctionTerms([...(brand?.hotwords ?? []), ...(brand?.productTerms ?? [])]);
-    const { text: corrected } = correctBestAlternative([text], terms);
-    setMsgs((current) => appendTurn(current, "hcp", corrected || text));
+    const { text: corrected } = correctHcpAsrBestAlternative([text], brand?.hotwords ?? [], brand?.productTerms ?? []);
+    return corrected || text;
+  }
+
+  function isShortHcpTail(text: string): boolean {
+    const words = text.trim().split(/\s+/).filter(Boolean);
+    return words.length > 0 && words.length <= 3 && /^[a-z0-9\s,.?!-]+$/i.test(text.trim());
+  }
+
+  function isOpenHcpFragment(text: string): boolean {
+    const t = text.trim();
+    return /[,;:–-]\s*$/.test(t) || (/^(?:what|how|tell|explain|can|could|does|is)\b/i.test(t) && !/[?!.]\s*$/.test(t));
+  }
+
+  function mergeHcpFragments(head: string, tail: string): string {
+    return correctSpokenHcpText(`${head.replace(/[\s,;:–-]+$/g, "")} ${tail.trim()}`)
+      .replace(/\s+([,.;:!?])/g, "$1")
+      .trim();
+  }
+
+  function addSpokenHcpTurn(text: string) {
+    const finalText = correctSpokenHcpText(text);
+    const now = nowMs();
+    const last = lastSpokenHcpRef.current;
+    if (last && now - last.at < 22_000 && isSameLiveTurnText(last.text, finalText)) return;
+    if (last && now - last.at < 3_000 && isShortHcpTail(finalText) && isOpenHcpFragment(last.text)) {
+      const merged = mergeHcpFragments(last.text, finalText);
+      lastSpokenHcpRef.current = { text: merged, at: now };
+      setMsgs((current) => {
+        const idx = (() => {
+          for (let i = current.length - 1; i >= 0; i -= 1) {
+            if (current[i]!.role === "hcp" && current[i]!.text === last.text) return i;
+          }
+          return -1;
+        })();
+        if (idx < 0) return appendTurn(current, "hcp", merged);
+        const next = [...current];
+        next[idx] = { role: "hcp", text: merged };
+        return next;
+      });
+      return;
+    }
+    lastSpokenHcpRef.current = { text: finalText, at: now };
+    setMsgs((current) => (
+      current.slice(-6).some((m) => m.role === "hcp" && isSameLiveTurnText(m.text, finalText))
+        ? current
+        : appendTurn(current, "hcp", finalText)
+    ));
   }
 
   // Monotonic playback generation: each new ask bumps it, so an in-flight multi-segment
@@ -160,31 +221,54 @@ export function HcpExperience({ app }: { app?: AppState }) {
   function interruptPlayback() {
     playGenRef.current += 1;
     voiceRef.current?.cancel();
+    cancelSlideCue();
     setSpeaking(false);
   }
 
   async function ask(q: string) {
-    const text = q.trim();
+    const text = correctSpokenHcpText(q.trim());
     if (!text) return;
     // Barge-in: a new question interrupts whatever the rep is still saying.
     const gen = ++playGenRef.current;
     voiceRef.current?.cancel();
+    cancelSlideCue();
     setSpeaking(false);
     setInput("");
-    const videoSession = videoOn ? (window as unknown as { __nexusrep?: { sessionId?: string } }).__nexusrep?.sessionId : undefined;
-    if (videoOn && !videoSession) {
+    const activeVideoSession = videoOn ? videoSessionRef.current : null;
+    const videoSessionId = activeVideoSession?.sessionId || undefined;
+    if (videoOn && !videoSessionId) {
       setNotice("The video rep is still connecting. Give it a moment, then ask again.");
       return;
     }
     const openNew = !videoOn && !chatSessionRef.current;
-    const sessionId = videoSession ?? chatSessionRef.current ?? undefined;
+    const sessionId = videoSessionId ?? chatSessionRef.current ?? undefined;
     setPending(true);
-    setMsgs((m) => [...m, { role: "hcp", text }]);
     try {
       // Session routing: video → the live Tavus session (its own greeting + turns come via the
       // replica's utterances). Text/voice → this chat's own session, created on the first message.
       // No greeting is sent off-video: the doctor never heard one, so the transcript starts with
       // this question (the greeting is a video-only, Tavus-spoken thing).
+      if (videoOn) {
+        const sent = videoAgentRef.current?.respond(text) ?? false;
+        if (!sent) {
+          setNotice("The video rep is still connecting. Give it a moment, then ask again.");
+          return;
+        }
+        const at = new Date(nowMs()).toISOString();
+        lastSpokenHcpRef.current = { text, at: nowMs() };
+        setMsgs((m) => [...m, { role: "hcp", text }]);
+        // Send the live turn to Tavus immediately. Transcript persistence is a background
+        // best-effort timestamp anchor; the custom LLM endpoint still records the authoritative
+        // compliant HCP+rep turn, and it reuses this click-time HCP row when the write wins the race.
+        void fetch("/api/sessions/utterance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: videoSessionId, speaker: "hcp", text, at }),
+        }).catch(() => undefined);
+        finishPending(gen);
+        return;
+      }
+      setMsgs((m) => [...m, { role: "hcp", text }]);
       if (isOverviewPrompt(text, { productTerms: brand?.productTerms ?? [] })) {
         const res = await fetch("/api/presentation/overview", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -198,12 +282,6 @@ export function HcpExperience({ app }: { app?: AppState }) {
           if (playGenRef.current !== gen) return; // superseded by a newer question
           await deliverRep(segment.response, segment.detailAidSlideId, gen);
         }
-        return;
-      }
-      if (videoOn) {
-        const sent = videoAgentRef.current?.respond(text) ?? false;
-        finishPending(gen);
-        if (!sent) setNotice("The video rep is still connecting. Give it a moment, then ask again.");
         return;
       }
       const res = await fetch("/api/conversation/turn", {
@@ -226,15 +304,17 @@ export function HcpExperience({ app }: { app?: AppState }) {
     // Same barge-in as ask(): a deck command interrupts whatever is still being spoken.
     const gen = ++playGenRef.current;
     voiceRef.current?.cancel();
+    cancelSlideCue();
     setSpeaking(false);
     const label = displayText?.trim() || (action === "next" ? "Please keep going." : action === "previous" ? "Can you go back to the prior point?" : action === "jump" && query ? `Can you talk about ${query}?` : "Can you walk me through the approved information?");
-    const videoSession = videoOn ? (window as unknown as { __nexusrep?: { sessionId?: string } }).__nexusrep?.sessionId : undefined;
-    if (videoOn && !videoSession) {
+    const activeVideoSession = videoOn ? videoSessionRef.current : null;
+    const videoSessionId = activeVideoSession?.sessionId || undefined;
+    if (videoOn && !videoSessionId) {
       setNotice("The video rep is still connecting. Give it a moment, then continue.");
       return;
     }
     const openNew = !videoOn && !chatSessionRef.current;
-    const sessionId = videoSession ?? chatSessionRef.current ?? undefined;
+    const sessionId = videoSessionId ?? chatSessionRef.current ?? undefined;
     setPending(true);
     setMsgs((m) => [...m, { role: "hcp", text: label }]);
     try {
@@ -274,14 +354,13 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setListening(true);
     // Correct mis-heard drug/program names against the brand's known terms, and log ASR latency so
     // this off-video path can be A/B'd against the Tavus asrMs with no video credits spent.
-    const terms = correctionTerms([...(brand?.hotwords ?? []), ...(brand?.productTerms ?? [])]);
     const startedAt = nowMs();
     let lastInterimAt = startedAt;
     rec.start(
       (text, alts) => {
         setListening(false);
         const finalAt = nowMs();
-        const { text: corrected, corrections, chosenIndex } = correctBestAlternative(alts?.length ? alts : [text], terms);
+        const { text: corrected, corrections, chosenIndex } = correctHcpAsrBestAlternative(alts?.length ? alts : [text], brand?.hotwords ?? [], brand?.productTerms ?? []);
         const finalText = corrected || text;
         setInput("");
         const payload = {
@@ -310,6 +389,9 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setVideoOn((v) => !v);
     setVideoMuted(false);
     setCallMicOn(false);
+    setVideoMicReady(false);
+    setVideoMicActive(false);
+    setActiveVideoSession(null);
   }
 
   // Off-video barge-in "like Tavus": while the rep is speaking (browser TTS) and we're not already
@@ -330,21 +412,48 @@ export function HcpExperience({ app }: { app?: AppState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speaking, videoOn, listening]);
 
-  const doctorMicOn = videoOn ? callMicOn : listening;
+  function setVideoDoctorMic(on: boolean) {
+    setCallMicOn(on);
+    if (!on) setVideoMicActive(false);
+    videoAgentRef.current?.setMicEnabled(on);
+  }
+
+  const doctorMicOn = videoOn ? (callMicOn && videoMicReady && videoMicActive) : listening;
+  const doctorMicArming = videoOn && callMicOn && videoMicReady && !videoMicActive;
   const doctorMicOff = !doctorMicOn;
+  const doctorMicDisabled = videoOn && !videoMicReady;
+  const videoSessionLinked = Boolean(videoSession?.sessionId);
   const askBar = (label: string) => (
     <div style={{ display: "flex", gap: 8, marginBottom: 11 }}>
-      <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void ask(input); }} placeholder={listening ? "Listening…" : videoOn ? "Type, or talk to the rep…" : "Type or tap the mic to talk…"} style={{ flex: 1, padding: "11px 13px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 13px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
-      {micSupported && (
+      <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void ask(input); }} placeholder={listening ? "Listening…" : videoOn && !videoSessionLinked ? "Video rep is linking the session…" : videoOn && !videoMicReady ? "Video rep is connecting…" : videoOn ? "Type, or talk to the rep…" : "Type or tap the mic to talk…"} style={{ flex: 1, padding: "11px 13px", border: "1px solid var(--dn-border)", borderRadius: 9, font: "400 13px/1 var(--dn-font-sans)", background: "var(--dn-surface-2)" }} />
+      {(videoOn || micSupported) && (
         <button
           type="button"
+          onPointerDown={() => {
+            if (!videoOn || !videoMicReady || callMicOn) return;
+            // Start unmuting on pointer-down so Daily gets a head start before the click event and
+            // the doctor's first syllable. This is only mic enablement, not a Tavus interrupt.
+            suppressNextMicClickRef.current = true;
+            setVideoDoctorMic(true);
+          }}
           onClick={() => {
-            if (videoOn) { const next = !callMicOn; setCallMicOn(next); videoAgentRef.current?.setMicEnabled(next); }
+            if (videoOn) {
+              if (suppressNextMicClickRef.current) {
+                suppressNextMicClickRef.current = false;
+                return;
+              }
+              if (!videoMicReady) {
+                setNotice("The video rep is still connecting. The mic will be available once the call is live.");
+                return;
+              }
+              setVideoDoctorMic(!callMicOn);
+            }
             else toggleMic();
           }}
+          disabled={doctorMicDisabled}
           aria-label={doctorMicOn ? "Turn microphone off" : "Turn microphone on"}
-          title={doctorMicOn ? "Your microphone is on — click to stop" : "Your microphone is off — click to talk"}
-          style={{ padding: "11px 13px", background: doctorMicOff ? "var(--dn-danger)" : "var(--dn-brand-base)", color: "#fff", border: "1px solid var(--dn-border)", borderRadius: 9, fontSize: 15, cursor: "pointer" }}
+          title={doctorMicDisabled ? "The video rep is connecting — the mic will unlock when the call is live" : doctorMicArming ? "Your microphone is turning on…" : doctorMicOn ? "Your microphone is on — click to stop" : "Your microphone is off — click to talk"}
+          style={{ padding: "11px 13px", background: doctorMicDisabled ? "#94a3b8" : doctorMicArming ? "#d97706" : doctorMicOff ? "var(--dn-danger)" : "var(--dn-brand-base)", color: "#fff", border: "1px solid var(--dn-border)", borderRadius: 9, fontSize: 15, cursor: doctorMicDisabled ? "not-allowed" : "pointer", opacity: doctorMicDisabled ? 0.75 : 1 }}
         >🎤</button>
       )}
       <button onClick={() => void ask(input)} disabled={pending} style={{ padding: "11px 18px", minWidth: 74, textAlign: "center", background: "var(--dn-brand-base)", color: "#fff", border: "none", borderRadius: 9, font: "600 13px/1 var(--dn-font-sans)", cursor: "pointer" }}>{pending ? "…" : label}</button>
@@ -419,7 +528,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
               {/* LEFT — the rep (live Tavus video OR the 3D/2D avatar) + one ask bar */}
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {videoOn
-                  ? <VideoAgentStage onMutedChange={setVideoMuted} onHcpUtterance={addSpokenHcpTurn} ref={videoAgentRef} onClose={() => setVideoOn(false)} onRepTurn={syncVideoRepTurn} onRepAudioStart={onRepAudioStart} hcpId={inviteHcpId || undefined} />
+                  ? <VideoAgentStage onMutedChange={setVideoMuted} onMicReadyChange={(ready) => { setVideoMicReady(ready); if (!ready) { setCallMicOn(false); setVideoMicActive(false); } }} onDoctorMicActiveChange={setVideoMicActive} onSessionReady={setActiveVideoSession} onHcpUtterance={addSpokenHcpTurn} normalizeHcpUtterance={correctSpokenHcpText} ref={videoAgentRef} onClose={() => { setVideoOn(false); setActiveVideoSession(null); setVideoMicReady(false); setVideoMicActive(false); setCallMicOn(false); }} onRepTurn={syncVideoRepTurn} onRepAudioStart={onRepAudioStart} onHcpSpeechStart={cancelSlideCue} hcpId={inviteHcpId || undefined} />
                   : <LiveAvatar ref={liveRef} enabled={threeD} speaking={speaking} fallbackStream={null} fallbackStatus={listening ? "Listening…" : speaking ? "Speaking…" : "Ready"} height={300} />}
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{hintsCard}{askBar("Ask")}{tryChips}</div>
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -477,7 +586,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
             <div style={{ width: 56, height: 56, borderRadius: "50%", background: "var(--dn-accent-green-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 26, color: "#166534" }}>✓</div>
             <h1 style={{ font: "600 21px/1.25 var(--dn-font-sans)", margin: 0, color: "var(--dn-fg)" }}>Thanks for your time</h1>
             <p style={{ font: "400 13px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "10px 0 20px" }}>Request a follow-up and we&apos;ll send approved {displayName} information or connect you with our team.</p>
-            <button onClick={() => { cancelSlideCue(); setScr("invite"); setMsgs([]); setNotice(""); setDeckFocus(""); setVideoOn(false); chatSessionRef.current = null; }} style={{ width: "100%", padding: 12, background: "var(--dn-surface-2)", color: "var(--dn-fg-muted)", border: "1px solid var(--dn-border)", borderRadius: 10, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Close session</button>
+            <button onClick={() => { cancelSlideCue(); setScr("invite"); setMsgs([]); setNotice(""); setDeckFocus(""); setVideoOn(false); setActiveVideoSession(null); chatSessionRef.current = null; }} style={{ width: "100%", padding: 12, background: "var(--dn-surface-2)", color: "var(--dn-fg-muted)", border: "1px solid var(--dn-border)", borderRadius: 10, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Close session</button>
           </div>
         </div>
       )}

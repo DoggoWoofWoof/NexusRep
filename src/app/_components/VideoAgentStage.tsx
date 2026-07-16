@@ -20,8 +20,10 @@ type TimingEvent = {
   delayMs?: number;
   text?: string;
   detailAidSlideId?: string | null;
+  captionKind?: PendingRepEcho["kind"];
   audioStarted?: boolean;
   level?: number;
+  role?: string;
 };
 
 /** Imperative handle so platform-controlled scripted segments can make the agent
@@ -37,9 +39,45 @@ export interface VideoAgentStageHandle {
 }
 
 type RepTurnNotice = { text: string; detailAidSlideId?: string | null; sourceIds?: string[] };
-type PendingRepEcho = { text: string; detailAidSlideId?: string | null; timer?: number; notified: boolean; queuedAt: number };
+type SessionTurnNotice = RepTurnNotice & { speaker?: "hcp" | "rep" };
+type PendingRepEcho = { text: string; detailAidSlideId?: string | null; timer?: number; notified: boolean; queuedAt: number; kind: "greeting" | "answer" };
+type VideoSessionNotice = { sessionId: string | null; conversationUrl: string | null };
+type VideoAgentStageProps = {
+  onClose: () => void;
+  bare?: boolean;
+  onRepTurn?: (turn: RepTurnNotice) => void;
+  onHcpUtterance?: (text: string) => void;
+  normalizeHcpUtterance?: (text: string) => string;
+  hcpId?: string;
+  onMutedChange?: (muted: boolean) => void;
+  onRepAudioStart?: () => void;
+  onHcpSpeechStart?: () => void;
+  onMicReadyChange?: (ready: boolean) => void;
+  onDoctorMicActiveChange?: (active: boolean) => void;
+  onSessionReady?: (session: VideoSessionNotice | null) => void;
+};
 
-export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () => void; bare?: boolean; onRepTurn?: (turn: RepTurnNotice) => void; onHcpUtterance?: (text: string) => void; hcpId?: string; onMutedChange?: (muted: boolean) => void; onRepAudioStart?: () => void }>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, hcpId, onMutedChange, onRepAudioStart }, ref) {
+function estimateReplicaSpeechMs(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.min(45_000, Math.max(2_400, words * 430 + 1_200));
+}
+
+function isHcpRawEvent(e: { type: string; role: string }): boolean {
+  const role = e.role.toLowerCase();
+  const type = e.type.toLowerCase();
+  return /\b(hcp|user|human|participant|remote)\b/.test(role) ||
+    /(?:^|[._-])(?:user|hcp|human|participant|remote)(?:[._-]|$)/.test(type);
+}
+
+function isRepRawEvent(e: { type: string; role: string }): boolean {
+  if (isHcpRawEvent(e)) return false;
+  const role = e.role.toLowerCase();
+  const type = e.type.toLowerCase();
+  return /\b(replica|assistant|agent|ai|pal|face)\b/.test(role) ||
+    /(?:^|[._-])(?:replica|assistant|agent|pal|face)(?:[._-]|$)/.test(type);
+}
+
+export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStageProps>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, normalizeHcpUtterance, hcpId, onMutedChange, onRepAudioStart, onHcpSpeechStart, onMicReadyChange, onDoctorMicActiveChange, onSessionReady }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const transportRef = useRef<VideoCallTransport | null>(null);
@@ -53,6 +91,11 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   // from there. (The streaming TEXT is NOT used to switch: with a custom LLM it arrives well before
   // it's spoken, which switched the deck far too early.)
   const onRepAudioStartRef = useRef<typeof onRepAudioStart>(onRepAudioStart);
+  const onHcpSpeechStartRef = useRef<typeof onHcpSpeechStart>(onHcpSpeechStart);
+  const onMicReadyChangeRef = useRef<typeof onMicReadyChange>(onMicReadyChange);
+  const onDoctorMicActiveChangeRef = useRef<typeof onDoctorMicActiveChange>(onDoctorMicActiveChange);
+  const onSessionReadyRef = useRef<typeof onSessionReady>(onSessionReady);
+  const normalizeHcpUtteranceRef = useRef<typeof normalizeHcpUtterance>(normalizeHcpUtterance);
   // The opening line we speak as a normal (interruptible) echo once the replica is live — instead
   // of Tavus's custom_greeting, which is always non-interruptible. Echoed exactly once.
   const greetingRef = useRef<string | null>(null);
@@ -70,6 +113,12 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   // Tavus finalized utterance. Keep the pending gated text here so the transcript can still be
   // written when the replica starts speaking, with the slide id already known.
   const pendingRepEchoRef = useRef<PendingRepEcho | null>(null);
+  const desiredMicOnRef = useRef(false);
+  const micReadyRef = useRef(false);
+  const doctorMicActiveRef = useRef(false);
+  const remoteVideoReadyRef = useRef(false);
+  const remoteAudioReadyRef = useRef(false);
+  const greetingTimerRef = useRef<number | null>(null);
   // True while the replica is currently producing audio (between started/stopped-speaking).
   // A caption armed while this is true is released at once (the voice is already out); one armed
   // before it flips releases when speaking starts — so the caption lands WITH the voice, either order.
@@ -77,6 +126,15 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   // The doctor question (hcp_final_utterance.at) whose latency we've already reported, so each turn
   // logs its ASR/think breakdown exactly once when the replica starts speaking.
   const lastLatencyTurnRef = useRef(0);
+  const repStopFallbackRef = useRef<number | null>(null);
+  const repLikelySpeakingUntilRef = useRef(0);
+  const typedRespondRef = useRef<{ text: string; at: number } | null>(null);
+  const startNonceRef = useRef("");
+  const startupRunRef = useRef(0);
+  const deferredCleanupRef = useRef<number | null>(null);
+  if (!startNonceRef.current) {
+    startNonceRef.current = globalThis.crypto?.randomUUID?.() ?? `video_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  }
 
   // Make the agent speak our (already gated) text verbatim, via the transport.
   const speakAgent = (text: string, detailAidSlideId?: string | null): boolean => {
@@ -85,23 +143,37 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     const ok = transportRef.current?.speak(t) ?? false;
     if (!ok) return false;
     recordTiming({ type: "echo_queued", text: t, detailAidSlideId: detailAidSlideId ?? null });
-    armRepCaption({ text: t, detailAidSlideId: detailAidSlideId ?? null });
+    armRepCaption({ text: t, detailAidSlideId: detailAidSlideId ?? null, kind: "answer" });
     return true;
   };
   const applyMuted = (m: boolean) => { setMuted(m); onMutedChange?.(m); };
   useImperativeHandle(ref, () => ({
     speak: (text: string, detailAidSlideId?: string | null) => speakAgent(text, detailAidSlideId),
     respond: (text: string) => {
-      const ok = transportRef.current?.respond(text) ?? false;
-      if (ok) recordTiming({ type: "typed_respond_sent", text });
+      // A typed/scripted video turn should prevent the scheduled greeting from firing after the
+      // doctor has already asked something. If the greeting is merely pending, cancel it locally;
+      // if the replica is already speaking, shouldInterruptDoctorInput() below will still interrupt.
+      cancelPendingGreeting("typed_respond");
+      const interrupt = shouldInterruptDoctorInput();
+      const ok = transportRef.current?.respond(text, interrupt) ?? false;
+      if (ok) {
+        typedRespondRef.current = { text: text.replace(/\s+/g, " ").trim(), at: Date.now() };
+        if (interrupt) cancelCurrentRepForBargeIn("typed_barge_in");
+        recordTiming({ type: "typed_respond_sent", text, reason: interrupt ? "barge_in" : "idle" });
+      }
       return ok;
     },
     setMuted: (m: boolean) => { applyMuted(m); },
-    setMicEnabled: (on: boolean) => { transportRef.current?.setMicEnabled(on); },
+    setMicEnabled: (on: boolean) => {
+      desiredMicOnRef.current = on;
+      if (!on) setDoctorMicActive(false, "requested_off");
+      if (micReadyRef.current) {
+        const active = transportRef.current?.setMicEnabled(on) ?? false;
+        if (on && active) setDoctorMicActive(true, "set_local_audio_returned_true");
+      }
+      recordTiming({ type: "doctor_mic_toggled", reason: on ? "on" : "off" });
+    },
   }));
-  // Guards React StrictMode's double-invoke of effects in dev — without it the
-  // component opens TWO vendor conversations (wasted minutes + a concurrent-slot clash).
-  const startedRef = useRef(false);
   const [stage, setStage] = useState<Stage>("loading");
   const [note, setNote] = useState("");
   const [muted, setMuted] = useState(false);
@@ -112,14 +184,43 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
   useEffect(() => {
     onRepTurnRef.current = onRepTurn;
     onRepAudioStartRef.current = onRepAudioStart;
-  }, [onRepTurn, onRepAudioStart]);
+    onHcpSpeechStartRef.current = onHcpSpeechStart;
+    onMicReadyChangeRef.current = onMicReadyChange;
+    onDoctorMicActiveChangeRef.current = onDoctorMicActiveChange;
+    onSessionReadyRef.current = onSessionReady;
+    normalizeHcpUtteranceRef.current = normalizeHcpUtterance;
+  }, [onRepTurn, onRepAudioStart, onHcpSpeechStart, onMicReadyChange, onDoctorMicActiveChange, onSessionReady, normalizeHcpUtterance]);
+
+  function setDoctorMicActive(active: boolean, reason: string) {
+    if (doctorMicActiveRef.current === active) return;
+    doctorMicActiveRef.current = active;
+    recordTiming({ type: "doctor_mic_active", reason: active ? reason : `inactive_${reason}` });
+    onDoctorMicActiveChangeRef.current?.(active);
+  }
+
+  function setMicReady(ready: boolean, reason: string) {
+    if (micReadyRef.current === ready) return;
+    micReadyRef.current = ready;
+    recordTiming({ type: "doctor_mic_ready", reason: ready ? reason : "not_ready" });
+    onMicReadyChangeRef.current?.(ready);
+    if (!ready) setDoctorMicActive(false, reason);
+    if (ready) {
+      const active = transportRef.current?.setMicEnabled(desiredMicOnRef.current) ?? false;
+      setDoctorMicActive(desiredMicOnRef.current && active, active ? "ready_apply_true" : "ready_apply_pending");
+    }
+  }
+
+  function updateMicReady(reason: string) {
+    setMicReady(Boolean(transportRef.current && remoteVideoReadyRef.current && remoteAudioReadyRef.current), reason);
+  }
 
   // Arm a rep caption and HOLD it until the replica's audio actually starts, so the caption lands
   // with the voice instead of ahead of it (the greeting used to caption before it was spoken).
-  // If the replica is already speaking, release now; otherwise a started-speaking event releases it,
-  // and a safety timer releases it regardless so a caption can never get stuck or lost.
-  const CAPTION_SAFETY_MS = 2500;
-  function armRepCaption(input: { text: string; detailAidSlideId?: string | null }) {
+  // If the replica is already speaking, release now; otherwise a started-speaking event OR remote
+  // audio activity releases it. The long timeout is only a no-drop fallback for browsers that block
+  // audio metering; it is not the normal timing source.
+  const CAPTION_SAFETY_MS = 12_000;
+  function armRepCaption(input: { text: string; detailAidSlideId?: string | null; kind?: PendingRepEcho["kind"] }) {
     const t = input.text.trim();
     if (!t) return;
     // A NEW turn arrived (often a barge-in) before the previous caption was released. FLUSH the
@@ -129,17 +230,124 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     const pending: PendingRepEcho = {
       text: t,
       detailAidSlideId: input.detailAidSlideId ?? null,
+      kind: input.kind ?? "answer",
       notified: false,
       queuedAt: Date.now(),
     };
     pendingRepEchoRef.current = pending;
+    markRepLikelySpeaking(t, 2_500);
     if (repSpeakingRef.current) { void notifyPendingRepEcho("already_speaking"); return; }
+    void (async () => {
+      const audio = await waitForAgentAudioActivity(CAPTION_SAFETY_MS - 500);
+      if (pendingRepEchoRef.current !== pending || pending.notified || repSpeakingRef.current) return;
+      if (audio.started) markRepAudioStart("audio_meter_started", pending.text);
+    })();
     pending.timer = window.setTimeout(() => { void notifyPendingRepEcho("safety_timeout"); }, CAPTION_SAFETY_MS);
   }
 
   function recordTiming(event: Omit<TimingEvent, "at">) {
     const w = window as unknown as { __nexusrepTiming?: TimingEvent[] };
-    w.__nexusrepTiming = [...(w.__nexusrepTiming ?? []).slice(-120), { at: Date.now(), ...event }];
+    w.__nexusrepTiming = [...(w.__nexusrepTiming ?? []).slice(-600), { at: Date.now(), ...event }];
+  }
+
+  function markRepLikelySpeaking(text: string, tailMs = 1_500): number {
+    const until = Date.now() + estimateReplicaSpeechMs(text) + tailMs;
+    repLikelySpeakingUntilRef.current = Math.max(repLikelySpeakingUntilRef.current, until);
+    return until;
+  }
+
+  function shouldInterruptDoctorInput(): boolean {
+    return repSpeakingRef.current || Boolean(pendingRepEchoRef.current) || Date.now() < repLikelySpeakingUntilRef.current;
+  }
+
+  function markRepAudioStart(reason: string, speechText?: string) {
+    const wasSpeaking = repSpeakingRef.current;
+    const pending = pendingRepEchoRef.current;
+    const spoken = speechText ?? pending?.text ?? "";
+    repSpeakingRef.current = true;
+    if (repStopFallbackRef.current) window.clearTimeout(repStopFallbackRef.current);
+    const fallbackUntil = markRepLikelySpeaking(spoken);
+    recordTiming({ type: "vendor_started_speaking", reason, text: spoken, detailAidSlideId: pending?.detailAidSlideId ?? null, captionKind: pending?.kind });
+    if (!wasSpeaking && pending?.kind !== "greeting") {
+      onRepAudioStartRef.current?.();
+      reportTurnLatency();
+    }
+    void notifyPendingRepEcho(reason);
+    const fallbackMs = Math.max(2_000, fallbackUntil - Date.now());
+    repStopFallbackRef.current = window.setTimeout(() => {
+      repSpeakingRef.current = false;
+      if (repLikelySpeakingUntilRef.current <= fallbackUntil + 100) repLikelySpeakingUntilRef.current = 0;
+      recordTiming({ type: "vendor_stopped_speaking", reason: "estimated_audio_end" });
+    }, fallbackMs);
+  }
+
+  function markRepAudioStop(reason: string) {
+    repSpeakingRef.current = false;
+    repLikelySpeakingUntilRef.current = 0;
+    if (repStopFallbackRef.current) {
+      window.clearTimeout(repStopFallbackRef.current);
+      repStopFallbackRef.current = null;
+    }
+    recordTiming({ type: "vendor_stopped_speaking", reason });
+  }
+
+  function cancelCurrentRepForBargeIn(reason: string) {
+    if (repSpeakingRef.current) {
+      markRepAudioStop(reason);
+    } else if (pendingRepEchoRef.current) {
+      dropPendingRepCaption(reason);
+    }
+    repLikelySpeakingUntilRef.current = 0;
+    if (repStopFallbackRef.current) {
+      window.clearTimeout(repStopFallbackRef.current);
+      repStopFallbackRef.current = null;
+    }
+  }
+
+  function dropPendingRepCaption(reason: string) {
+    const pending = pendingRepEchoRef.current;
+    if (!pending) return;
+    const sid = sessionIdRef.current;
+    pending.notified = true;
+    if (pending.timer) window.clearTimeout(pending.timer);
+    pendingRepEchoRef.current = null;
+    recordTiming({
+      type: "caption_drop",
+      reason,
+      delayMs: Date.now() - pending.queuedAt,
+      text: pending.text,
+      detailAidSlideId: pending.detailAidSlideId ?? null,
+      captionKind: pending.kind,
+    });
+    if (pending.kind === "answer" && serverLogsRef.current && sid && /^hcp_|typed_barge_in|safe_interrupt/.test(reason)) {
+      void fetch("/api/sessions/utterance/interrupted", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: sid, text: pending.text }),
+      }).catch(() => undefined);
+    }
+  }
+
+  function cancelPendingGreeting(reason: string): boolean {
+    let cancelled = false;
+    if (greetingTimerRef.current) {
+      window.clearTimeout(greetingTimerRef.current);
+      greetingTimerRef.current = null;
+      cancelled = true;
+    }
+    if (pendingRepEchoRef.current?.kind === "greeting") {
+      dropPendingRepCaption(reason);
+      cancelled = true;
+    }
+    if (cancelled && !repSpeakingRef.current) {
+      repLikelySpeakingUntilRef.current = 0;
+      if (repStopFallbackRef.current) {
+        window.clearTimeout(repStopFallbackRef.current);
+        repStopFallbackRef.current = null;
+      }
+    }
+    if (cancelled) recordTiming({ type: "greeting_cancelled", reason });
+    return cancelled;
   }
 
   function setupAudioMeter(stream: MediaStream) {
@@ -214,7 +422,11 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     if (!q || q.at === lastLatencyTurnRef.current) return; // greeting / already-reported turn
     lastLatencyTurnRef.current = q.at;
     const stopped = [...t].reverse().find((e) => e.type === "hcp_stopped_speaking" && e.at <= q.at);
-    const repText = [...t].reverse().find((e) => e.type === "rep_final_utterance" && e.at >= q.at);
+    const repText = t.find((e) => e.type === "rep_final_utterance" && e.at >= q.at);
+    const firstVendorRepText = t.find((e) => e.type === "vendor_streaming_utterance" && e.at >= q.at);
+    const finalVendorRepText = t.find((e) => e.type === "vendor_final_utterance" && e.at >= q.at);
+    const now = Date.now();
+    const answerAudioStart = t.find((e) => e.type === "vendor_started_speaking" && e.at <= now && e.at >= q.at && e.captionKind !== "greeting");
     // Split asrMs to attribute it. Scope this turn's user partials to (prevFinal, q]. Then:
     //   sttTailAfterStopMs = VAD-stop → last partial   → STT still transcribing after silence (STT-side)
     //   finalizeMs         = last partial → final txt   → dead time after the last word (turn-confirm)
@@ -224,15 +436,17 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     const windowStart = prevFinal?.at ?? 0;
     const partials = t.filter((e) => e.type === "hcp_streaming_utterance" && e.at > windowStart && e.at <= q.at);
     const lastPartial = partials[partials.length - 1];
-    const now = Date.now();
     const payload = {
       question: (q.text ?? "").slice(0, 60),
       asrMs: stopped ? q.at - stopped.at : null, // speech end → transcript (ASR / turn detection)
       partialCount: partials.length, // user streaming partials seen this turn (0 ⇒ no visibility into the split)
       sttTailAfterStopMs: stopped && lastPartial ? lastPartial.at - stopped.at : null, // STT still transcribing after silence
       finalizeMs: lastPartial ? q.at - lastPartial.at : null, // last partial → final transcript (turn-confirm)
-      thinkToVoiceMs: now - q.at, // transcript → replica audio (our endpoint + Tavus TTS)
-      transcriptToVoiceMs: repText ? now - repText.at : null, // rep text ready → audio (~TTS render)
+      transcriptToAudioMs: now - q.at, // HCP final transcript → replica audio start (server callback + Tavus TTS/queue)
+      firstVendorTextToAudioMs: firstVendorRepText ? now - firstVendorRepText.at : null, // Tavus emitted first text → audio
+      finalVendorTextToAudioMs: finalVendorRepText ? now - finalVendorRepText.at : null, // Tavus emitted final text → audio
+      repFinalUtteranceToAudioMs: repText ? now - repText.at : null, // canonical rep utterance event → audio
+      audioStartReason: answerAudioStart?.reason ?? null,
     };
     // eslint-disable-next-line no-console
     console.info("[nexusrep-latency]", payload);
@@ -261,11 +475,12 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`);
       if (!res.ok) return notice;
-      const data = (await res.json()) as { turns?: RepTurnNotice[] };
-      const reps = (data.turns ?? []).filter((t) => t && "text" in t);
+      const data = (await res.json()) as { turns?: SessionTurnNotice[] };
+      const reps = (data.turns ?? []).filter((t) => t?.speaker === "rep" && t.text);
       const normalized = utterance.replace(/\s+/g, " ").trim();
       const turn =
         [...reps].reverse().find((t) => t.text.replace(/\s+/g, " ").trim() === normalized) ??
+        [...reps].reverse().find((t) => t.detailAidSlideId) ??
         [...reps].reverse().find((t) => t.text);
       if (turn) notice = { ...turn, text: utterance };
     } catch {
@@ -304,7 +519,10 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
       const hydrated = await hydratedRepTurn(sid, pending.text);
       notice = {
         ...hydrated,
-        text: pending.text,
+        // When Tavus emits a short finalized fragment ("Sure,", "Milvexian") before the settled
+        // utterance, the authoritative session already has the full approved/gated rep turn. Show
+        // that server turn in the captions; the vendor fragment is only a timing trigger.
+        text: hydrated.text || pending.text,
         detailAidSlideId: hydrated.detailAidSlideId ?? pending.detailAidSlideId,
         sourceIds: hydrated.sourceIds,
       };
@@ -329,8 +547,17 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
         .filter(({ e }) => e.type === "hcp_final_utterance")
         .map(({ e, i }) => {
           const stopped = prevBefore(i, "hcp_stopped_speaking");
-          const repSpoke = nextAfter(i, "vendor_started_speaking");
           const repText = nextAfter(i, "rep_final_utterance");
+          const interrupted = repText
+            ? t.find((x, j) => j > i && x.at >= repText.at && x.type === "caption_drop" && x.captionKind === "answer")
+            : undefined;
+          const repSpoke = t.find((x, j) =>
+            j > i &&
+            x.type === "vendor_started_speaking" &&
+            x.captionKind !== "greeting" &&
+            (!repText || x.at >= repText.at) &&
+            (!interrupted || x.at < interrupted.at),
+          );
           // asrMs split (see reportTurnLatency): partials scoped to (prevFinal, e].
           const prevFinal = prevBefore(i, "hcp_final_utterance");
           const ws = prevFinal?.at ?? 0;
@@ -342,6 +569,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             partials: partials.length, // 0 ⇒ Tavus gave us no user partials (split unavailable)
             sttTailAfterStopMs: stopped && lastPartial ? lastPartial.at - stopped.at : null, // STT still transcribing after silence
             finalizeMs: lastPartial ? e.at - lastPartial.at : null, // last partial → final transcript (turn-confirm)
+            interruptedBeforeAudio: Boolean(interrupted && !repSpoke),
             thinkToVoiceMs: repSpoke ? repSpoke.at - e.at : null, // transcript → replica audio (endpoint + TTS)
             transcriptToVoiceMs: repText && repSpoke ? repSpoke.at - repText.at : null, // rep text ready → rep audio (~TTS render)
           };
@@ -349,23 +577,37 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
       console.table(turns);
       return turns;
     };
-    return () => {
-      const cur = window as unknown as { __nexusrepVideoAgent?: { speak?: unknown }; __nexusrepLatency?: unknown };
-      if (cur.__nexusrepVideoAgent?.speak === speakAgent) { delete cur.__nexusrepVideoAgent; delete cur.__nexusrepLatency; }
-    };
-  }, [note, stage]);
+  });
 
   useEffect(() => {
-    // Start exactly once per mount (StrictMode invokes effects twice in dev).
-    if (!startedRef.current) {
-      startedRef.current = true;
-      void (async () => {
+    if (deferredCleanupRef.current) {
+      window.clearTimeout(deferredCleanupRef.current);
+      deferredCleanupRef.current = null;
+    }
+    const runId = ++startupRunRef.current;
+    let cancelled = false;
+    let localConversationId = "";
+    const endLocalConversation = (conversationId: string) => {
+      if (!conversationId) return;
+      try {
+        void fetch("/api/realtime/conversation/end", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversationId }),
+          keepalive: true,
+        });
+      } catch { /* best-effort */ }
+    };
+    const conversationIdFromUrl = (url: string) => {
+      try { return new URL(url).pathname.split("/").filter(Boolean).pop() || ""; } catch { return ""; }
+    };
+    void (async () => {
       try {
         const res = await fetch("/api/realtime/conversation", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           // Invite-link identity — server honors it only for a real cohort member.
-          body: JSON.stringify(hcpId ? { hcpId } : {}),
+          body: JSON.stringify({ ...(hcpId ? { hcpId } : {}), startNonce: startNonceRef.current }),
         });
         // The server always returns JSON — but an OOM/502 or gateway error yields an
         // HTML error page. Parse defensively so we show a clean note instead of crashing
@@ -375,21 +617,31 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
         try {
           d = JSON.parse(raw) as ConvResp;
         } catch {
+          onSessionReadyRef.current?.(null);
           setNote(`Couldn't start the video rep: the service returned an error (HTTP ${res.status}). It may be out of memory or restarting — the built-in avatar still works.`);
           setStage("unconfigured");
           return;
         }
         if (!d.configured || !d.conversationUrl) {
+          onSessionReadyRef.current?.(null);
           setNote(d.note);
           setStage("unconfigured");
           return;
         }
+        localConversationId = conversationIdFromUrl(d.conversationUrl);
+        if (cancelled) {
+          if (startupRunRef.current === runId) endLocalConversation(localConversationId);
+          return;
+        }
         sessionIdRef.current = d.sessionId ?? null;
         greetingRef.current = d.greeting ?? null;
-        convIdRef.current = (() => { try { return new URL(d.conversationUrl!).pathname.split("/").filter(Boolean).pop() || ""; } catch { return ""; } })();
+        convIdRef.current = localConversationId;
+        const sessionNotice = { sessionId: d.sessionId ?? null, conversationUrl: d.conversationUrl };
+        onSessionReadyRef.current?.(sessionNotice);
         // Expose ids for automation/QA (the record bot reads these to attach the
-        // recording to the right session). Harmless in normal use.
-        (window as unknown as { __nexusrep?: unknown }).__nexusrep = { sessionId: d.sessionId ?? null, conversationUrl: d.conversationUrl };
+        // recording to the right session). Harmless in normal use; production UI state uses
+        // onSessionReady, not this debug/global hook.
+        (window as unknown as { __nexusrep?: unknown }).__nexusrep = sessionNotice;
         if (d.reachableLlm === false) setNote(d.note);
         // Reachable → the server's compliance endpoint is the transcript source of truth.
         serverLogsRef.current = d.reachableLlm === true;
@@ -397,40 +649,62 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
 
         const transport = createVideoTransport(d.provider, { conversationUrl: d.conversationUrl, token: d.token });
         if (!transport) {
+          onSessionReadyRef.current?.(null);
           setNote(`No client transport for the "${d.provider}" provider — the built-in avatar still works.`);
           setStage("unconfigured");
           return;
         }
+        if (cancelled) {
+          if (startupRunRef.current === runId) endLocalConversation(localConversationId);
+          return;
+        }
         transportRef.current = transport;
 
-        // Bare/record mode: capture ONLY the agent stream (video+audio) starting at
-        // the FIRST live frame — trims the connect boot and excludes all page chrome.
+        // Bare/record mode: capture ONLY the agent stream (video+audio) starting when
+        // the replica joins with BOTH media tracks. The greeting is queued only after
+        // this recorder is live, so the first spoken words cannot be clipped.
         // Exposes window.__nexusrepRec.stop() → base64 webm for the recorder.
         let recStarted = false;
-        const maybeStartRec = () => {
+        let recReadyResolve: (() => void) | null = null;
+        const recReady = new Promise<void>((resolve) => { recReadyResolve = resolve; });
+        const recWanted = () => bare || (window as unknown as { __nexusrepRecord?: boolean }).__nexusrepRecord === true;
+        const waitForRecReady = async (timeoutMs: number) => {
+          if (!recWanted() || recStarted) return;
+          await Promise.race([
+            recReady,
+            new Promise<void>((resolve) => window.setTimeout(resolve, timeoutMs)),
+          ]);
+        };
+        const maybeStartRec = (allowVideoOnly = false) => {
           // Record when in bare mode OR when a recorder set window.__nexusrepRecord
           // (used to capture an agent-only clip of a full multi-turn doctor session).
-          const recWanted = bare || (window as unknown as { __nexusrepRecord?: boolean }).__nexusrepRecord === true;
-          if (!recWanted || recStarted || typeof MediaRecorder === "undefined") return;
+          if (!recWanted() || recStarted || typeof MediaRecorder === "undefined") return false;
           const vs = videoRef.current?.srcObject as MediaStream | null;
           const as = audioRef.current?.srcObject as MediaStream | null;
           const tracks = [...(vs?.getVideoTracks() ?? []), ...(as?.getAudioTracks() ?? [])];
-          if (!tracks.some((t) => t.kind === "video")) return; // wait for the video track
+          const hasVideo = tracks.some((t) => t.kind === "video");
+          const hasAudio = tracks.some((t) => t.kind === "audio");
+          if (!hasVideo || (!hasAudio && !allowVideoOnly)) return false; // wait for the media pair
           recStarted = true;
           try {
             const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus") ? "video/webm;codecs=vp8,opus" : "video/webm";
             const rec = new MediaRecorder(new MediaStream(tracks), { mimeType: mime });
             const chunks: BlobPart[] = [];
+            const startedAt = Date.now();
             rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
             rec.start(1000);
+            recordTiming({ type: "recording_started", reason: hasAudio ? "media_tracks" : "video_only_fallback" });
             (window as unknown as { __nexusrepRec?: unknown }).__nexusrepRec = {
               mimeType: mime,
+              startedAt,
+              timings: () => ((window as unknown as { __nexusrepTiming?: TimingEvent[] }).__nexusrepTiming ?? []),
               stop: () =>
                 new Promise<string>((resolve) => {
                   let settled = false;
                   const finish = async () => {
                     if (settled) return;
                     settled = true;
+                    recordTiming({ type: "recording_stopped" });
                     const bytes = new Uint8Array(await new Blob(chunks, { type: mime }).arrayBuffer());
                     let bin = "";
                     const CH = 0x8000;
@@ -448,7 +722,13 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
                   }
                 }),
             };
-          } catch { recStarted = false; }
+            recReadyResolve?.();
+            recReadyResolve = null;
+            return true;
+          } catch {
+            recStarted = false;
+            return false;
+          }
         };
 
         await transport.join({
@@ -457,35 +737,55 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
               videoRef.current.srcObject = stream;
               void videoRef.current.play?.();
               setHasVideo(true);
+              remoteVideoReadyRef.current = true;
+              updateMicReady("remote_video");
               // A dying track (vendor shutdown, network) must not leave a frozen black
               // frame — drop back to the status area, which explains what happened.
               const track = stream.getVideoTracks()[0];
-              if (track) track.onended = () => setHasVideo(false);
+              if (track) track.onended = () => {
+                remoteVideoReadyRef.current = false;
+                updateMicReady("remote_video_ended");
+                setHasVideo(false);
+              };
             }
             if (kind === "audio" && audioRef.current) {
               audioRef.current.srcObject = stream;
               setupAudioMeter(stream);
               void audioRef.current.play?.();
+              remoteAudioReadyRef.current = true;
+              updateMicReady("remote_audio");
+              const track = stream.getAudioTracks()[0];
+              if (track) track.onended = () => {
+                remoteAudioReadyRef.current = false;
+                updateMicReady("remote_audio_ended");
+              };
             }
-            // Fallback: if the agent never emits an utterance event, still start recording a few
-            // seconds after the video track arrives so we never miss a clip. The PRIMARY start is
-            // on the agent's first spoken words (see onUtterance) — that trims the connect boot.
-            if (kind === "video") setTimeout(maybeStartRec, 6000);
+            // Start the recorder as soon as the replica has joined with both video+audio. If the
+            // audio track never appears, a late video-only fallback captures a debuggable clip, but
+            // the normal path is the media pair above.
+            if (kind === "video" || kind === "audio") {
+              maybeStartRec();
+              if (kind === "video") window.setTimeout(() => maybeStartRec(true), 6000);
+            }
             // Speak the opening greeting as a NORMAL (interruptible) echoed utterance, once the
             // replica is live. We don't use Tavus's custom_greeting (always non-interruptible); this
-            // way the doctor can barge in over it (mic live + pal_interruptibility). Pure echo (no
-            // interrupt). Small delay so the replica's speech pipeline is ready to render it.
+            // way the doctor can barge in over it (mic live + replica_interruptibility). Pure echo (no
+            // interrupt). In record mode, wait until MediaRecorder is live before queuing it.
             if (kind === "video" && !greetedRef.current) {
               const g = greetingRef.current;
               if (g) {
                 greetedRef.current = true;
-                setTimeout(() => {
+                void (async () => {
+                  await waitForRecReady(5000);
+                  greetingTimerRef.current = window.setTimeout(() => {
+                  greetingTimerRef.current = null;
                   transportRef.current?.speak(g, false);
                   // Caption it ourselves: an echoed greeting doesn't reliably emit a Tavus utterance
                   // event (the native custom_greeting did), so without this the opening never lands
                   // in the transcript. armRepCaption releases it with the voice (or the safety timer).
-                  armRepCaption({ text: g });
-                }, 900);
+                  armRepCaption({ text: g, kind: "greeting" });
+                  }, recWanted() ? 250 : 900);
+                })();
               }
             }
           },
@@ -494,11 +794,13 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // does after an echo (started/stopped speaking, utterances). Harmless.
             const w = window as unknown as { __nexusrepEvents?: { type: string; role: string; text: string }[] };
             w.__nexusrepEvents = [...(w.__nexusrepEvents ?? []).slice(-40), { ...e, text: e.text.slice(0, 160) }];
-            if (/replica|assistant|agent|ai|pal|face/i.test(e.role)) {
+            const repEvent = isRepRawEvent(e);
+            const hcpEvent = isHcpRawEvent(e);
+            if (repEvent) {
               if (/conversation\.utterance\.streaming/i.test(e.type)) {
-                recordTiming({ type: "vendor_streaming_utterance", reason: e.type, text: e.text.slice(0, 160) });
+                recordTiming({ type: "vendor_streaming_utterance", reason: e.type, role: e.role, text: e.text.slice(0, 160) });
               } else if (/conversation\.utterance$/i.test(e.type)) {
-                recordTiming({ type: "vendor_final_utterance", reason: e.type, text: e.text.slice(0, 160) });
+                recordTiming({ type: "vendor_final_utterance", reason: e.type, role: e.role, text: e.text.slice(0, 160) });
               }
             }
             // The replica's audio started → release the held caption so it lands WITH the voice, AND
@@ -507,27 +809,23 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
             // streaming-text trigger fired well ahead of the spoken word with a custom LLM).
             if (
               /start(?:ed)?[_\s.-]*speak|speech[_\s.-]*start|speaking[_\s.-]*start/i.test(e.type) &&
-              (!e.role || /replica|assistant|agent|ai/i.test(e.role))
+              repEvent
             ) {
-              repSpeakingRef.current = true;
-              recordTiming({ type: "vendor_started_speaking", reason: e.type });
-              onRepAudioStartRef.current?.();
-              reportTurnLatency();
-              void notifyPendingRepEcho("vendor_started");
+              markRepAudioStart(e.type);
               void recordAgentAudioActivity(e.type);
             }
             // The replica finished speaking → the next turn's caption must wait for its own audio.
             if (
               /stop(?:ped)?[_\s.-]*speak|speech[_\s.-]*(?:stop|end)|speaking[_\s.-]*(?:stop|end)|done[_\s.-]*speak/i.test(e.type) &&
-              (!e.role || /replica|assistant|agent|ai/i.test(e.role))
+              repEvent
             ) {
-              repSpeakingRef.current = false;
+              markRepAudioStop(e.type);
             }
             // Doctor (HCP) speech-detection markers — the start of the pipeline. The gap from
             // hcp_stopped_speaking → the doctor's finalized transcript is the ASR/turn-detection
             // latency; from there → vendor_started_speaking is our endpoint + Tavus TTS. See
             // window.__nexusrepLatency() for the per-turn breakdown.
-            if (/hcp|user|human|participant|remote/i.test(e.role)) {
+            if (hcpEvent) {
               if (/conversation\.utterance\.streaming/i.test(e.type)) {
                 // User partial transcripts, IF Tavus streams them for the user role. Timestamped so
                 // reportTurnLatency can split asrMs into STT-tail (VAD-stop → last partial: STT still
@@ -536,12 +834,16 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
                 // utterance, which itself points the finger at STT-side finalization.
                 recordTiming({ type: "hcp_streaming_utterance", reason: e.type, text: e.text });
               } else if (/start(?:ed)?[_\s.-]*speak/i.test(e.type)) {
+                // VAD only: this can fire immediately after the doctor turns the mic on, before
+                // any words exist. Mic-on/noise is NOT an interrupt, but a Tavus USER speech-start
+                // event while the replica is speaking is the earliest safe point to stop the agent's
+                // audio so the greeting does not mask the question ASR.
                 recordTiming({ type: "hcp_started_speaking", reason: e.type });
-                // NO client-side conversation.interrupt here. Tried it (even gated on repSpeakingRef,
-                // only on speech-start): it races Tavus's own turn-taking and made latency WORSE —
-                // the interrupt stops/restarts the replica and delays transcribing the doctor's
-                // question ("didn't render until much later"). Barge-in must be Tavus-native
-                // (pal_interruptibility) so Tavus owns the turn boundary; we only record the marker.
+                if (shouldInterruptDoctorInput()) {
+                  transportRef.current?.stopAgentSpeech();
+                  cancelCurrentRepForBargeIn("hcp_speech_start_native");
+                  recordTiming({ type: "hcp_start_during_rep", reason: "native_speech_start_interrupt" });
+                }
               } else if (/stop(?:ped)?[_\s.-]*speak|done[_\s.-]*speak/i.test(e.type)) {
                 recordTiming({ type: "hcp_stopped_speaking", reason: e.type });
               }
@@ -555,24 +857,58 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
               setStage("ended");
             }
           },
+          onMicState: (s) => {
+            recordTiming({
+              type: "doctor_mic_transport_state",
+              reason: s.reason,
+              level: s.level,
+              audioStarted: s.localAudio,
+            });
+            setDoctorMicActive(s.desired && s.localAudio, s.reason);
+          },
           onUtterance: ({ speaker, text }) => {
             // ASR silence/noise artifacts are not speech — never caption or log them.
             if (/^\s*[[(]\s*(?:blank[_ ]?audio|inaudible|silence|no[_ ]?speech|noise|music|applause|laughter)\s*[\])]\s*$/i.test(text)) return;
-            // Begin the recording at the agent's FIRST words (the greeting) so the clip trims
-            // the connect boot + any idle before the rep speaks. No-op once already recording.
-            if (speaker === "rep") maybeStartRec();
+            const finalText = speaker === "hcp" ? (normalizeHcpUtteranceRef.current?.(text) ?? text) : text;
+            // Recording should already be live before the greeting is queued. This late call is only
+            // a defensive fallback if a browser withheld the audio track events.
+            if (speaker === "rep") maybeStartRec(true);
             // The doctor's SPOKEN words must appear in the captions like typed ones do —
             // without this, a voice-only conversation has no "You" lines at all. (Barge-in
-            // interrupt is handled on hcp_started_speaking, gated on the rep actually speaking —
-            // interrupting from here fired on stray blips before the rep spoke and froze the turn.)
-            if (speaker === "hcp") onHcpUtterance?.(text);
+            // is handled by Tavus native turn-taking. Do not send a manual interrupt here: this is
+            // still part of the microphone path, and the manual stop can race Tavus's finalized
+            // utterance → custom-LLM handoff and make the real question appear "eaten".)
+            if (speaker === "hcp") {
+              onHcpSpeechStartRef.current?.();
+              cancelPendingGreeting("hcp_final_utterance");
+              const normalizedFinal = finalText.replace(/\s+/g, " ").trim();
+              const typed = typedRespondRef.current;
+              const isTypedRespondEcho = Boolean(
+                typed &&
+                Date.now() - typed.at < 20_000 &&
+                typed.text === normalizedFinal,
+              );
+              if (shouldInterruptDoctorInput() && !isTypedRespondEcho) {
+                // Safe barge-in point: Tavus has already finalized the doctor's words and called
+                // our custom LLM, so interrupting now cannot consume the question. It just clears
+                // an echoed greeting/old answer that Tavus sometimes leaves playing, which otherwise
+                // queues the new approved reply several seconds behind stale audio.
+                transportRef.current?.stopAgentSpeech();
+                cancelCurrentRepForBargeIn("hcp_final_native");
+                recordTiming({ type: "hcp_final_during_rep", reason: "finalized_safe_interrupt" });
+              } else if (isTypedRespondEcho) {
+                recordTiming({ type: "hcp_final_typed_echo", text: finalText });
+                typedRespondRef.current = null;
+              }
+              onHcpUtterance?.(finalText);
+            }
             const sid = sessionIdRef.current;
             if (!sid) return;
-            const key = `${speaker}:${text}`;
+            const key = `${speaker}:${finalText}`;
             if (key === lastUtterRef.current) return; // client-side dedup of re-emits
             lastUtterRef.current = key;
             // Finalized-transcript marker (one per unique utterance) — the ASR output timestamp.
-            recordTiming({ type: speaker === "hcp" ? "hcp_final_utterance" : "rep_final_utterance", text });
+            recordTiming({ type: speaker === "hcp" ? "hcp_final_utterance" : "rep_final_utterance", text: finalText });
             // Only log from the client when the server can't (unreachable compliance endpoint).
             // When reachable, the server already logged this turn with its slideId.
             if (serverLogsRef.current) {
@@ -587,32 +923,51 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
               if (speaker === "rep") {
                 const pend = pendingRepEchoRef.current;
                 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-                if (!pend || norm(pend.text) !== norm(text)) armRepCaption({ text });
+                if (!pend || norm(pend.text) !== norm(text)) armRepCaption({ text, kind: "answer" });
               }
               return;
             }
             void fetch("/api/sessions/utterance", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ sessionId: sid, speaker, text }),
+              body: JSON.stringify({ sessionId: sid, speaker, text: finalText }),
             });
-            if (speaker === "rep") onRepTurnRef.current?.({ text });
+            if (speaker === "rep") onRepTurnRef.current?.({ text: finalText });
           },
         });
+        if (cancelled) {
+          transport.leave();
+          if (transportRef.current === transport) transportRef.current = null;
+          if (startupRunRef.current === runId) endLocalConversation(localConversationId);
+          return;
+        }
+        // join() intentionally starts muted to avoid hot-mic surprises. If the doctor clicked the
+        // mic while the room was still joining, reapply that desired state after Daily's join-side
+        // setLocalAudio(false) has run; otherwise the UI says "on" while WebRTC is still muted.
+        updateMicReady("join_complete");
         setStage("live");
-        maybeStartRec(); // in case the video track already arrived before join resolved
+        maybeStartRec(); // in case both tracks arrived before join resolved
       } catch (e) {
+        if (cancelled) return;
+        onSessionReadyRef.current?.(null);
         setNote(e instanceof Error ? e.message : String(e));
         setStage("error");
       }
-      })();
-    }
+    })();
     return () => {
+      cancelled = true;
+      deferredCleanupRef.current = window.setTimeout(() => {
+        if (startupRunRef.current !== runId) return;
       // Flush (not drop) any held caption so the LAST answer the rep spoke still lands in the
       // transcript when the doctor ends the call before its release fired. Synchronous (skipHydrate).
       void notifyPendingRepEcho("unmount", true);
       transportRef.current?.leave();
       transportRef.current = null;
+      onSessionReadyRef.current?.(null);
+      remoteVideoReadyRef.current = false;
+      remoteAudioReadyRef.current = false;
+      setMicReady(false, "unmount");
+      setDoctorMicActive(false, "unmount");
       void audioCtxRef.current?.close().catch(() => undefined);
       audioCtxRef.current = null;
       audioAnalyserRef.current = null;
@@ -621,18 +976,16 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, { onClose: () =
       // Leaving the room does NOT end the vendor conversation — it lingers and holds a
       // concurrent-session slot until the vendor times it out. End it explicitly so repeated
       // previews don't pile up to the account cap. keepalive: survives the unmount/navigation.
-      const cid = convIdRef.current;
+      const cid = convIdRef.current || localConversationId;
       if (cid) {
-        try {
-          void fetch("/api/realtime/conversation/end", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ conversationId: cid }),
-            keepalive: true,
-          });
-        } catch { /* best-effort */ }
+        endLocalConversation(cid);
       }
       convIdRef.current = "";
+      const cur = window as unknown as { __nexusrep?: unknown; __nexusrepVideoAgent?: unknown; __nexusrepLatency?: unknown };
+      delete cur.__nexusrep;
+      delete cur.__nexusrepVideoAgent;
+      delete cur.__nexusrepLatency;
+      }, 750);
     };
   }, []);
 

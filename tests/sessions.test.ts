@@ -70,6 +70,18 @@ describe("SessionService", () => {
     expect(after ? deriveSessionDurationSeconds(after) : 0).toBe(150);
   });
 
+  it("can remove a generated rep turn that was interrupted before avatar audio", async () => {
+    const svc = new SessionService();
+    const s = await svc.start({ aiRepId, hcpId, seed: "s_interrupted", startedAt: "2026-07-08T09:00:00.000Z" });
+    await svc.appendTurn(s.id, { speaker: "hcp", text: "How does it work?", seed: "q1" });
+    await svc.appendTurn(s.id, { speaker: "rep", text: "Generated but not spoken", seed: "a1" });
+    const removed = await svc.removeRecentTurn(s.id, { speaker: "rep", text: "Generated but not spoken" });
+    expect(removed.removed).toBe(true);
+    const after = await svc.get(s.id);
+    expect(after?.turns.map((t) => t.text)).toEqual(["How does it work?"]);
+    expect(after?.questionCount).toBe(1);
+  });
+
   it("maps routes to statuses", () => {
     expect(outcomeToStatus({ route: "approved_answer", decision: "approved" })).toBe("approved");
     expect(outcomeToStatus({ route: "off_label_refusal", decision: "approved" })).toBe("needs_review");
@@ -101,6 +113,47 @@ describe("ConversationService", () => {
     expect(session?.questionCount).toBe(1);
     expect(session?.complianceStatus).toBe("approved");
     expect((await sessions.get(s.id))?.turns[1]?.sourceIds).toEqual(["ans_dosing"]);
+  });
+
+  it("reuses a pre-logged HCP turn so Tavus callback latency does not shift typed-video timestamps", async () => {
+    const { sessions, conversation } = build(output({ route: "approved_answer", decision: "approved" }));
+    const s = await conversation.start({ aiRepId, hcpId, seed: "c_prelog" });
+    await sessions.appendTurn(s.id, {
+      speaker: "hcp",
+      text: "What is Milvexian?",
+      at: "2026-07-08T09:00:08.000Z",
+      seed: "prelogged_click",
+    });
+
+    const { session } = await conversation.turn(
+      { sessionId: s.id, hcpId, text: "What is Milvexian?" },
+      { reuseLatestHcpTurn: true },
+    );
+
+    expect(session?.turns.map((t) => t.speaker)).toEqual(["hcp", "rep"]);
+    expect(session?.questionCount).toBe(1);
+    expect(session?.turns[0]?.at).toBe("2026-07-08T09:00:08.000Z");
+  });
+
+  it("reuses a pre-logged HCP turn when Tavus normalizes a typed prompt", async () => {
+    const { sessions, conversation } = build(output({ route: "approved_answer", decision: "approved" }));
+    const s = await conversation.start({ aiRepId, hcpId, seed: "c_prelog_fuzzy" });
+    await sessions.appendTurn(s.id, {
+      speaker: "hcp",
+      text: "What is Milvexian and how does it work?",
+      at: "2026-07-08T09:00:08.000Z",
+      seed: "prelogged_click_fuzzy",
+    });
+
+    const { session } = await conversation.turn(
+      { sessionId: s.id, hcpId, text: "What Milvexian and how does it work?" },
+      { reuseLatestHcpTurn: true },
+    );
+
+    expect(session?.turns.map((t) => t.speaker)).toEqual(["hcp", "rep"]);
+    expect(session?.questionCount).toBe(1);
+    expect(session?.turns[0]?.text).toBe("What is Milvexian and how does it work?");
+    expect(session?.turns[0]?.at).toBe("2026-07-08T09:00:08.000Z");
   });
 
   it("enqueues a CRM outbox event and audits it on escalation", async () => {

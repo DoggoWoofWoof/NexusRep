@@ -17,9 +17,76 @@ import { setActiveCall } from "@lib/active-call";
 
 export const dynamic = "force-dynamic";
 
+const LLM_PROBE_TIMEOUT_MS = 5000;
+const LLM_PROBE_CACHE_MS = 60_000;
+let llmProbeCache: { baseUrl: string; at: number; ok: boolean } | null = null;
+const START_DEDUPE_MS = 30_000;
+
+type ConversationStartPayload = {
+  provider: string;
+  configured: boolean;
+  conversationUrl: string | null;
+  token: string | null;
+  sessionId: string | null;
+  reachableLlm: boolean;
+  note: string;
+  greeting?: string | null;
+};
+
+const inFlightStarts = new Map<string, Promise<ConversationStartPayload>>();
+const recentStarts = new Map<string, { at: number; payload: ConversationStartPayload }>();
+
+function tavusLlmBaseUrl(): string {
+  const base = env.publicBaseUrl.replace(/\/$/, "");
+  return `${base}/api/tavus/llm`;
+}
+
+async function probePublicLlmReachability(): Promise<boolean> {
+  const baseUrl = env.publicBaseUrl.replace(/\/$/, "");
+  if (/localhost|127\.0\.0\.1/.test(baseUrl)) return false;
+  if (llmProbeCache && llmProbeCache.baseUrl === baseUrl && Date.now() - llmProbeCache.at < LLM_PROBE_CACHE_MS) {
+    return llmProbeCache.ok;
+  }
+  let ok = false;
+  try {
+    const probe = await fetch(`${baseUrl}/api/models`, { signal: AbortSignal.timeout(LLM_PROBE_TIMEOUT_MS) });
+    ok = probe.ok;
+  } catch {
+    // A cold Next/Render/Cloudflare tunnel can miss a short probe while Tavus's real custom-LLM
+    // callback succeeds a moment later. Do not disable authoritative server-side transcript/slide
+    // logging just because this diagnostic timed out; only localhost is definitely unreachable.
+    ok = true;
+  }
+  llmProbeCache = { baseUrl, at: Date.now(), ok };
+  return ok;
+}
+
 export async function POST(req: Request): Promise<NextResponse> {
   try {
-    return await startConversation(req);
+    const body = (await req.json().catch(() => ({}))) as { hcpId?: unknown; startNonce?: unknown };
+    const ownerUserId = await currentUserId();
+    const startNonce = typeof body.startNonce === "string" ? body.startNonce.trim().slice(0, 120) : "";
+    const dedupeKey = startNonce ? `${ownerUserId ?? "__default__"}:${startNonce}` : "";
+    if (dedupeKey) {
+      const recent = recentStarts.get(dedupeKey);
+      if (recent && Date.now() - recent.at < START_DEDUPE_MS) return NextResponse.json(recent.payload);
+      const existing = inFlightStarts.get(dedupeKey);
+      if (existing) return NextResponse.json(await existing);
+      const started = startConversation(body, ownerUserId)
+        .then((payload) => {
+          recentStarts.set(dedupeKey, { at: Date.now(), payload });
+          return payload;
+        })
+        .finally(() => {
+          inFlightStarts.delete(dedupeKey);
+          for (const [key, value] of recentStarts) {
+            if (Date.now() - value.at > START_DEDUPE_MS) recentStarts.delete(key);
+          }
+        });
+      inFlightStarts.set(dedupeKey, started);
+      return NextResponse.json(await started);
+    }
+    return NextResponse.json(await startConversation(body, ownerUserId));
   } catch (error) {
     // Never return an HTML 500 — the client parses this as JSON and would crash with
     // "Unexpected token '<'". Always hand back a clean, actionable payload.
@@ -39,13 +106,11 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 }
 
-async function startConversation(req: Request): Promise<NextResponse> {
-  const body = (await req.json().catch(() => ({}))) as { hcpId?: unknown };
+async function startConversation(body: { hcpId?: unknown }, ownerUserId: string | null): Promise<ConversationStartPayload> {
   // Resolve the container owner explicitly (not just getContainer()) so we can record it: the
   // vendor's cookie-less callback (/api/tavus/llm) must reload THIS SAME per-user container to find
   // the call's session. Without it the callback hit the default container, missed the session, and
   // started a fresh one per turn — re-delivering the ISI every reply.
-  const ownerUserId = await currentUserId();
   const c = await getContainerForUser(ownerUserId);
   const provider = getRealtimeProvider();
   // Persona is brand config resolved from the Setup Assistant's answers — so what the brand
@@ -73,29 +138,65 @@ async function startConversation(req: Request): Promise<NextResponse> {
     await c.audit.record(hist.id, "response_output", { route: "greeting", text: persona.customGreeting, sourceIds: [], greeting: true });
   }
 
+  // Tavus STT receives these as hotwords, so proper nouns are biased BEFORE the transcript reaches
+  // our correction/classification path. Include known mis-hear shapes from live testing; they help
+  // Deepgram-medical snap toward the right phrase without changing the approved-content model.
+  const tavusHotwords = Array.from(new Set([
+    ...persona.hotwords,
+    "Milvexian",
+    "milvexian",
+    "Milvaxian",
+    "Mylovaxia",
+    "Milovaxia",
+    "Mylovexia",
+    "my vaccine",
+    "BILL vaccine",
+    "LIBREXIA",
+    "LIBRAXIA",
+    "LEBREXIA",
+    "LEBIREXIA",
+    "LBILE",
+    "LIBILE",
+    "Lipoaxial",
+    "LIBREXIA STROKE",
+    "LIBREXIA ACS",
+    "LIBREXIA AF",
+    "Factor XIa",
+    "FXIa",
+  ].map((term) => term.trim()).filter(Boolean)));
+
   const startArgs = {
       record: true,
       // The webhook carries the shared key so recording callbacks can be verified —
       // without it anyone who learns a conversation id could attach an arbitrary URL.
       callbackUrl: `${env.publicBaseUrl}/api/tavus/webhook${env.tavusLlmKey ? `?k=${encodeURIComponent(env.tavusLlmKey)}` : ""}`,
       sessionId: hist.id,
-      personaCacheKey: c.brand.brandId, // one Tavus persona per brand, reused across sessions
+      // The Tavus adapter intentionally keeps one stable PAL and patches it in place, rather
+      // than creating a new PAL for each session or tunnel URL.
+      personaCacheKey: c.brand.brandId,
       systemPrompt: persona.systemPrompt,
       customGreeting: persona.customGreeting,
       context: persona.context,
       customLlm: {
-        baseUrl: `${env.publicBaseUrl}/api/tavus/llm`,
+        // Keep the reusable PAL's LLM URL stable. The live call's NexusRep session is bound through
+        // the active-call/session map; putting a per-session URL on a global PAL races when React dev
+        // double-starts preview or a stale Tavus conversation is still shutting down.
+        baseUrl: tavusLlmBaseUrl(),
         apiKey: env.tavusLlmKey || undefined,
         model: "nexusrep-compliance",
       },
       agentId,
-      hotwords: persona.hotwords,
+      hotwords: tavusHotwords,
       language: persona.language,
       tools: [],
       // Routing (off-label→MSL, AE→PV) is handled inside our custom-LLM endpoint, so
       // no inline persona tools are needed. External tool-calling would use Tavus's
       // /v2/tools registry. No external_voice_id — the replica uses its default voice.
     };
+
+  // Probe our public compliance callback in parallel with Tavus startup. It is only a diagnostic
+  // note for the client; it should never add a serial 5s wait to "agent joining".
+  const reachableLlmPromise = probePublicLlmReachability();
 
   let session;
   try {
@@ -111,20 +212,20 @@ async function startConversation(req: Request): Promise<NextResponse> {
         try {
           session = await provider.startSession(startArgs);
         } catch (retryError) {
-          return NextResponse.json({
+          return {
             provider: provider.name, configured: false, conversationUrl: null, token: null, sessionId: hist.id,
             reachableLlm: !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl),
             note: `The DocNexus Agent could not start: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
-          });
+          };
         }
       }
     }
     if (!session) {
-      return NextResponse.json({
+      return {
         provider: provider.name, configured: false, conversationUrl: null, token: null, sessionId: hist.id,
         reachableLlm: !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl),
         note: `The DocNexus Agent could not start: ${message}`,
-      });
+      };
     }
   }
 
@@ -134,20 +235,8 @@ async function startConversation(req: Request): Promise<NextResponse> {
     await c.sessions.setVendorConversation(hist.id, session.id);
   }
 
-  // Tavus's servers call our custom-LLM endpoint to get each reply. Actively PROBE the
-  // public URL instead of guessing from its shape — a dead tunnel (trycloudflare URLs die
-  // with their process) previously reported reachable and the replica greeted then went
-  // silent with no explanation.
-  let reachableLlm = !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl);
-  if (reachableLlm) {
-    try {
-      const probe = await fetch(`${env.publicBaseUrl.replace(/\/$/, "")}/api/models`, { signal: AbortSignal.timeout(5000) });
-      reachableLlm = probe.ok;
-    } catch {
-      reachableLlm = false;
-    }
-  }
-  return NextResponse.json({
+  const reachableLlm = await reachableLlmPromise;
+  return {
     provider: provider.name,
     configured: Boolean(session.transportUrl),
     conversationUrl: session.transportUrl ?? null,
@@ -164,5 +253,5 @@ async function startConversation(req: Request): Promise<NextResponse> {
       : reachableLlm
         ? "Live DocNexus Agent — replies produced by our compliance endpoint."
         : "The DocNexus Agent renders and greets, but replies won't flow: the public URL isn't reachable. Restart it and update NEXUSREP_PUBLIC_URL.",
-  });
+  };
 }

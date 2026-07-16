@@ -306,5 +306,5 @@ export function compStyle(tone: SegTone | "red"): React.CSSProperties {
   return segStyle(tone);
 }
 
-/** One-shot handoff: Session review "Coach this exchange" → Train mode auto-asks the question. */
+/** One-shot handoff: Sessions / Session review → Training clones that real session for coaching. */
 export const TRAIN_SEED_KEY = "nexusrep:train:seed";

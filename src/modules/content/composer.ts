@@ -45,6 +45,8 @@ export interface ComposeInput {
   /** True once the AI/investigational disclosure has been given this session — the answer
    *  must not restate it (a rep who re-introduces themselves every reply reads as canned). */
   alreadyDisclosed?: boolean;
+  /** Optional per-call generation budget. Live voice uses a smaller budget than coaching drafts. */
+  maxTokens?: number;
 }
 
 /** Build the composer system prompt: absolute rules + approved blocks + required safety + coaching. */
@@ -80,7 +82,7 @@ function lengthConstraint(notes: string[]): string {
 export interface GroundedComposer {
   readonly name: string;
   available(): boolean;
-  compose(input: ComposeInput): Promise<{ text: string; latencyMs: number }>;
+  compose(input: ComposeInput): Promise<{ text: string; latencyMs: number; truncated?: boolean }>;
 }
 
 function blocksText(blocks: ApprovedAnswer[]): string {
@@ -94,18 +96,18 @@ function anthropicModel(): string {
 const claudeComposer: GroundedComposer = {
   name: "claude",
   available: () => Boolean(process.env.ANTHROPIC_API_KEY),
-  async compose({ question, blocks, guidance, safety, alreadyDisclosed }) {
+  async compose({ question, blocks, guidance, safety, alreadyDisclosed, maxTokens }) {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic();
     const t0 = Date.now();
     const res = await client.messages.create({
       model: anthropicModel(),
-      max_tokens: env.composerMaxTokens,
+      max_tokens: maxTokens ?? env.composerMaxTokens,
       system: systemFor(blocks, guidance, safety, alreadyDisclosed),
       messages: [{ role: "user", content: question }],
     });
     const text = res.content.find((b) => b.type === "text")?.text ?? "";
-    return { text, latencyMs: Date.now() - t0 };
+    return { text, latencyMs: Date.now() - t0, truncated: res.stop_reason === "max_tokens" };
   },
 };
 
@@ -115,7 +117,7 @@ function makeOpenAiCompatibleComposer(cfg: CompatCfg): GroundedComposer {
   return {
     name: cfg.name,
     available: () => Boolean(cfg.baseUrl()) && Boolean(cfg.apiKey()),
-    async compose({ question, blocks, guidance, safety, alreadyDisclosed }) {
+    async compose({ question, blocks, guidance, safety, alreadyDisclosed, maxTokens }) {
       const baseUrl = cfg.baseUrl();
       const apiKey = cfg.apiKey();
       if (!baseUrl || !apiKey) throw new Error(`${cfg.name}: not configured`);
@@ -125,7 +127,7 @@ function makeOpenAiCompatibleComposer(cfg: CompatCfg): GroundedComposer {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
           model: cfg.model(),
-          max_tokens: env.composerMaxTokens,
+          max_tokens: maxTokens ?? env.composerMaxTokens,
           messages: [
             { role: "system", content: systemFor(blocks, guidance, safety, alreadyDisclosed) },
             { role: "user", content: question },
@@ -133,8 +135,9 @@ function makeOpenAiCompatibleComposer(cfg: CompatCfg): GroundedComposer {
         }),
       });
       if (!res.ok) throw new Error(`${cfg.name}: HTTP ${res.status}`);
-      const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-      return { text: data.choices?.[0]?.message?.content ?? "", latencyMs: Date.now() - t0 };
+      const data = (await res.json()) as { choices?: { message?: { content?: string }; finish_reason?: string }[] };
+      const choice = data.choices?.[0];
+      return { text: choice?.message?.content ?? "", latencyMs: Date.now() - t0, truncated: choice?.finish_reason === "length" };
     },
   };
 }

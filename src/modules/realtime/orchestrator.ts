@@ -53,14 +53,163 @@ export interface TurnOutput {
   detailAidSlideId?: string;
 }
 
+type FollowUpSuggestion = { sourceId?: string; slideId?: string };
+type AuditEvent = Awaited<ReturnType<AuditService["forSession"]>>[number];
+type RetrievalSettled =
+  | { result: Awaited<ReturnType<RetrievalService["retrieveApproved"]>>; retrievalText: string; latencyMs: number }
+  | { error: unknown; latencyMs: number };
+type RankedAnswers = {
+  answers: ApprovedAnswer[];
+  led: ApprovedAnswer[];
+  promoted?: { answer: ApprovedAnswer; trial: string };
+};
+type SpeculativeComposeResult =
+  | { ok: true; text: string; latencyMs: number; wallMs: number; answerIds: string[]; topId: string }
+  | { ok: false; reason: string };
+
 const SAFE_FALLBACK =
   "I want to make sure I only share approved information. Let me connect you with someone who can help.";
 const COMPOSER_TIMEOUT_MS = 2500;
+const COMPOSER_REPAIR_GUIDANCE =
+  "Recovery pass: write one compact spoken answer under 28 words using only the approved blocks. Answer the exact question, keep the slide cue if a slide is shown, and do not add background.";
 
 // A short message that references the slides/deck or asks to continue but names NO topic of its
 // own — its meaning depends on what was just discussed ("show me the slides", "tell me more",
 // "walk me through it", "keep going"). Retrieval biases these toward the prior turn's topic.
-const FOLLOWUP_RE = /\b(show me|show us|pull up|walk me through|the slides?|the deck|the presentation|the detail aid|tell me more|more on (that|this|it)|what about (that|this|it)|continue|keep going|go on|next|yes|yeah|yep|sure|okay|ok|please|go ahead|sounds good|absolutely|definitely)\b/i;
+const FOLLOWUP_RE = /\b(show me|show us|show it|pull up|walk me through|the slides?|the deck|the presentation|the detail aid|tell me more|more on (that|this|it)|what about (that|this|it)|continue|keep going|go on|next|yes|yeah|yep|sure(?: did| thing)?|okay|ok|please(?: do)?|go ahead|go for it|sounds good|absolutely|definitely|do that|that works|let'?s do it)\b/i;
+const PURE_ACCEPTANCE_RE = /^(?:(?:yes|yeah|yep|sure(?:\s+(?:did|thing))?|okay|ok|please(?:\s+do)?|go\s+ahead|go\s+for\s+it|sounds\s+good|absolutely|definitely|do\s+that|that\s+works|show\s+(?:me|it)|let'?s\s+do\s+it)[\s.,!?]*)+$/i;
+
+function isPureAcceptance(text: string): boolean {
+  return PURE_ACCEPTANCE_RE.test(text.trim());
+}
+
+const PRODUCT_DOMAIN_SIGNAL_RE = /\b(?:mechanism|moa|factor\s*(?:xia|xi|11a)|fxia|program|trial|trials|study|studying|phase|indication|indications|fast\s+track|approved|approval|development|status|anticoagulant|inhibitor|safety|isi|warning|risk|slide|slides|deck|presentation|detail\s+aid)\b/i;
+const LOW_SIGNAL_QUESTION_RE = /\b(?:what(?:'s|\s+is)|how\s+(?:does|do|is)|tell\s+me|explain|got\s+a\s+look)\b/i;
+const SIGNAL_STOP = new Set([
+  "the", "is", "a", "an", "of", "to", "in", "and", "or", "at", "as", "with", "for", "on", "by",
+  "be", "are", "was", "it", "this", "that", "from", "per", "what", "which", "how", "do", "does",
+  "can", "i", "you", "your", "me", "my", "about", "tell", "show", "approved", "information",
+  "got", "look", "sure", "yeah", "yes", "ok", "okay", "please", "syndrome",
+]);
+
+function signalTokens(text: string): string[] {
+  return (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((t) => t.length > 2 && !SIGNAL_STOP.has(t));
+}
+
+function hasMeaningfulOverlap(question: string, answers: ApprovedAnswer[]): boolean {
+  const q = signalTokens(question);
+  if (!q.length || !answers.length) return false;
+  const answerWords = new Set(signalTokens(answers.map((a) => `${a.topic} ${a.text}`).join(" ")));
+  return q.some((word) => answerWords.has(word));
+}
+
+function shouldSafeFallbackLowSignal(rawText: string, retrievalText: string, answers: ApprovedAnswer[]): boolean {
+  const raw = rawText.trim();
+  if (!raw) return true;
+  // A contextual follow-up intentionally retrieves using prior topic + the short acceptance text.
+  if (retrievalText.trim() !== raw) return false;
+  if (PRODUCT_DOMAIN_SIGNAL_RE.test(raw)) return false;
+  if (hasMeaningfulOverlap(raw, answers)) return false;
+  const wordCount = raw.split(/\s+/).filter(Boolean).length;
+  return wordCount <= 5 || LOW_SIGNAL_QUESTION_RE.test(raw);
+}
+
+function asksMultipleDistinctQuestions(text: string): boolean {
+  const qMarks = (text.match(/\?/g) ?? []).length;
+  if (qMarks >= 2) return true;
+  return /\b(?:and|also|plus)\b.+\b(?:what|how|why|when|where|which|tell|explain|show|program|mechanism|safety|trial|dose|dosing)\b/i.test(text);
+}
+
+const SPECULATIVE_PUBLIC_INFO_RE =
+  /\b(?:big picture|overview|asset|what (?:is|are)|how does|how do|why focus|mechanism|moa|factor\s*(?:xia|xi|11a)|fxia|clotting|coagulation|cascade|pathway|program|librexia|milvexian|trial|trials|study|studying|phase|indication|indications|development|status|fast\s+track)\b/i;
+const SPECULATIVE_RISK_STOP_RE =
+  /\b(?:my patient|patient|patients?|should i|can i (?:use|prescribe|give|start)|recommend|dose|dosage|mg|administration|administer|bleeding|bleed|rash|adverse|side effects?|safety|warning|contraindication|pregnan|pediatric|children|renal|hepatic|surgery|off[-\s]?label|compare|versus|vs\.?|better|safer|superior|inferior|eliquis|apixaban|xarelto|rivaroxaban|warfarin|dabigatran|edoxaban)\b/i;
+
+/**
+ * Safe latency optimization: only public product/program/mechanism questions may start an early
+ * grounded draft before the LLM classifier returns. It is never released until classification,
+ * grounding, and the final compliance gate pass. Anything patient-specific, comparative, dosing,
+ * safety/AE, or off-label stays sequential so raw risky text is not sent to the answer composer.
+ */
+function canSpeculativelyCompose(text: string, blockedTopics: string[]): boolean {
+  const clean = text.trim();
+  if (!clean) return false;
+  if (blockedTopics.some((topic) => matchesTopic(clean, topic))) return false;
+  if (SPECULATIVE_RISK_STOP_RE.test(clean)) return false;
+  return SPECULATIVE_PUBLIC_INFO_RE.test(clean);
+}
+
+function canFastClassifyContextFollowup(text: string, blockedTopics: string[]): boolean {
+  const clean = text.trim();
+  if (!clean || clean.split(/\s+/).filter(Boolean).length > 9) return false;
+  if (!FOLLOWUP_RE.test(clean)) return false;
+  if (blockedTopics.some((topic) => matchesTopic(clean, topic))) return false;
+  return !SPECULATIVE_RISK_STOP_RE.test(clean);
+}
+
+function canFastClassifyLivePublicInfo(text: string, blockedTopics: string[]): boolean {
+  if (blockedTopics.some((topic) => matchesTopic(text, topic))) return false;
+  return canSpeculativelyCompose(text, blockedTopics);
+}
+
+function rankAnswersForTurn(answers: ApprovedAnswer[], specificityText: string, leadTopics: string[]): RankedAnswers {
+  let ranked = [...answers];
+  let led: ApprovedAnswer[] = [];
+  if (leadTopics.length && ranked.length > 1) {
+    led = ranked.filter((a) => leadTopics.some((t) => matchesTopic(`${a.topic} ${a.text}`, t)));
+    if (led.length) {
+      const rest = ranked.filter((a) => !led.includes(a));
+      ranked = [...led, ...rest];
+    }
+  }
+  const namedTrials = namedTrialTopics(specificityText);
+  let promoted: RankedAnswers["promoted"];
+  if (namedTrials.length === 1 && ranked.length > 1) {
+    const idx = ranked.findIndex((a) => namedTrials[0]!.topic.test(a.topic));
+    if (idx > 0) {
+      const copy = [...ranked];
+      const [specific] = copy.splice(idx, 1);
+      ranked = [specific!, ...copy];
+      promoted = { answer: specific!, trial: namedTrials[0]!.name };
+    }
+  }
+  return { answers: ranked, led, promoted };
+}
+
+function addNamedTrialAnswerIfMissing(answers: ApprovedAnswer[], specificityText: string, allAnswers: ApprovedAnswer[]): { answers: ApprovedAnswer[]; added?: ApprovedAnswer; trial?: string } {
+  const namedTrials = namedTrialTopics(specificityText);
+  if (namedTrials.length !== 1) return { answers };
+  const trial = namedTrials[0]!;
+  if (answers.some((a) => trial.topic.test(a.topic))) return { answers };
+  const added = allAnswers.find((a) => a.mlr.status === "active" && trial.topic.test(a.topic));
+  if (!added) return { answers };
+  return { answers: [added, ...answers.filter((a) => a.id !== added.id)], added, trial: trial.name };
+}
+
+function slideGuidance(slideTitle?: string, relatedTitle?: string): string[] {
+  return slideTitle
+    ? [`A detail-aid slide titled "${slideTitle}" is being shown on the doctor's screen${relatedTitle ? ` (a "${relatedTitle}" slide is also available)` : ""}. Briefly NAME the slide you're showing in one short, natural clause (e.g. "you can see this on the ${slideTitle} slide") so the doctor knows what's on screen — vary the wording and keep it to a short clause, but don't omit it unless you were explicitly asked to be terse.`]
+    : [];
+}
+
+function disclosureAlreadyGiven(priorEvents: AuditEvent[]): boolean {
+  return priorEvents.some((e) => e.type === "response_output" && typeof e.payload.text === "string" && (e.payload.text as string).trim().length > 0);
+}
+
+function antiRepeatGuidance(priorEvents: AuditEvent[]): string[] {
+  const priorReplies = priorEvents
+    .filter((e) => e.type === "response_output" && typeof e.payload.text === "string")
+    .map((e) => (e.payload.text as string).split(/\n\nImportant Safety Information:/)[0]!.trim())
+    .filter((t) => t.length > 20);
+  const covered = [...new Set(priorReplies)].slice(-8);
+  return covered.length
+    ? [
+        `Earlier in THIS conversation you already said:\n${covered
+          .map((t, i) => `(${i + 1}) ${t.slice(0, 180)}`)
+          .join("\n")}\nDon't sound repetitive: do NOT repeat an earlier answer word-for-word or open with the same phrase, and don't pad a reply with background that isn't what was asked. Restating an important or directly-relevant point is fine, but say it in DIFFERENT words and framing and lead with something new. When the approved content genuinely has nothing new to add, say so briefly and offer to go deeper rather than repeating an earlier answer verbatim.`,
+      ]
+    : [];
+}
 
 // The three LIBREXIA trials, each as (how the doctor NAMES it) → (the topic of that trial's answer).
 // When a query names exactly ONE of these, we lead with that trial's approved answer so the RIGHT
@@ -71,6 +220,17 @@ const TRIAL_TOPICS: { name: string; query: RegExp; topic: RegExp }[] = [
   { name: "af", query: /\batrial\b|\bAF\b|fibrillation|flutter/i, topic: /atrial|\bAF\b/i },
   { name: "acs", query: /\bACS\b|acute coronary|coronary syndrome/i, topic: /acute coronary|\bACS\b/i },
 ];
+
+function namedTrialTopics(text: string): typeof TRIAL_TOPICS {
+  const clean = text.toLowerCase().replace(/[‐‑‒–—-]/g, " ");
+  const words = new Set(clean.match(/[a-z0-9]+/g) ?? []);
+  return TRIAL_TOPICS.filter((trial) => {
+    if (trial.name === "stroke") return /\blibrexia\s+stroke\b/.test(clean) || words.has("stroke") || words.has("strokes") || words.has("tia") || /transient\s+ischemic/.test(clean);
+    if (trial.name === "af") return /\blibrexia\s+af\b/.test(clean) || words.has("af") || words.has("atrial") || words.has("fibrillation") || words.has("flutter");
+    if (trial.name === "acs") return /\blibrexia\s+acs\b/.test(clean) || words.has("acs") || /acute\s+coronary|coronary\s+syndrome/.test(clean);
+    return trial.query.test(text);
+  });
+}
 
 /**
  * When the exact ISI block is appended, do not also repeat standalone safety/disclosure
@@ -153,13 +313,13 @@ export function stripSpeechMarkdown(text: string): string {
     .replace(/\s+([,.;:!?])/g, "$1"); // tidy any stray space before punctuation
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, ms: number, label = "timeout"): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("composer_timeout")), ms);
+        timer = setTimeout(() => reject(new Error(label)), ms);
       }),
     ]);
   } finally {
@@ -214,6 +374,16 @@ export class TurnOrchestrator {
       /** Rehearsal/coaching preview: still classifies, retrieves, composes, grounds and gates
        *  exactly like a live turn, but creates NO follow-up (rehearsal must not enqueue CRM work). */
       preview?: boolean;
+      /** Realtime voice can set tight budgets: if the LLM misses them, fail safe to deterministic. */
+      classificationTimeoutMs?: number;
+      composerTimeoutMs?: number;
+      composerMaxTokens?: number;
+      /** Start a low-risk grounded compose while classification finishes; final gate still decides. */
+      speculativeCompose?: boolean;
+      /** Live mic/video path: no extra LLM repair wait after a slow or invalid draft. */
+      liveVoice?: boolean;
+      /** Avoid optional second-slide offers for live voice; they lengthen speech and create queues. */
+      suppressRelatedSlide?: boolean;
     },
   ): Promise<TurnOutput> {
     const turnStarted = Date.now();
@@ -226,7 +396,7 @@ export class TurnOrchestrator {
       FOLLOWUP_RE.test(ctx.text) && ctx.text.split(/\s+/).filter(Boolean).length <= 9
         ? this.contextualRetrievalText(ctx)
         : Promise.resolve(ctx.text);
-    const retrievalPromise = retrievalTextPromise
+    const retrievalPromise: Promise<RetrievalSettled> = retrievalTextPromise
       .then((text) =>
         this.retrieval
           .retrieveApproved({
@@ -241,12 +411,39 @@ export class TurnOrchestrator {
             (error: unknown) => ({ error, latencyMs: Date.now() - retrievalStarted }),
           ),
       );
+    const overrideComposer = opts?.composer;
+    const activeComposer = overrideComposer !== undefined ? overrideComposer : this.composer;
+    const composerTimeoutMs = opts?.composerTimeoutMs ?? COMPOSER_TIMEOUT_MS;
+    const blockedTopicsForTurn = opts?.steering?.blockedTopics ?? [];
+    const fastContextFollowup = canFastClassifyContextFollowup(ctx.text, blockedTopicsForTurn);
+    const fastLivePublicInfo = Boolean(opts?.speculativeCompose && !opts?.classify && canFastClassifyLivePublicInfo(ctx.text, blockedTopicsForTurn));
+    const speculativeComposePromise =
+      opts?.speculativeCompose && activeComposer?.available() && canSpeculativelyCompose(ctx.text, blockedTopicsForTurn)
+        ? this.speculativeCompose(ctx, retrievalPromise, activeComposer, opts, composerTimeoutMs)
+        : undefined;
     const classificationStarted = Date.now();
-    const classification = await (opts?.classify ?? this.classifier)(ctx.text);
+    let classifierFallback: string | undefined;
+    let classification: RiskClassification;
+    try {
+      if (fastContextFollowup && !opts?.classify) {
+        classification = classify(ctx.text);
+      } else if (fastLivePublicInfo) {
+        classification = classify(ctx.text);
+      } else {
+        const classifyPromise = (opts?.classify ?? this.classifier)(ctx.text);
+        classification = opts?.classificationTimeoutMs ? await withTimeout(classifyPromise, opts.classificationTimeoutMs, "classification_timeout") : await classifyPromise;
+      }
+    } catch (error) {
+      classifierFallback = error instanceof Error ? error.message : "classifier_error";
+      classification = classify(ctx.text);
+    }
     await this.audit.record(ctx.sessionId, "classification", {
       ...classification,
       latencyMs: Date.now() - classificationStarted,
       turnElapsedMs: Date.now() - turnStarted,
+      ...(fastContextFollowup && !opts?.classify ? { fastPath: "context_followup" } : {}),
+      ...(fastLivePublicInfo ? { fastPath: "live_public_info" } : {}),
+      ...(classifierFallback ? { fallback: classifierFallback } : {}),
     });
 
     let r = route(classification);
@@ -259,7 +456,7 @@ export class TurnOrchestrator {
     // has trained the rep to NOT discuss a topic, route it to Medical Information rather
     // than answering. Purely RESTRICTIVE — it can only narrow what the rep says, never
     // widen it — so it cannot weaken the compliance gate.
-    const blockedTopics = opts?.steering?.blockedTopics ?? [];
+    const blockedTopics = blockedTopicsForTurn;
     if (r === "approved_answer" && blockedTopics.some((t) => matchesTopic(ctx.text, t))) {
       const hit = blockedTopics.find((t) => matchesTopic(ctx.text, t));
       await this.audit.record(ctx.sessionId, "coaching_rule_applied", { rule: "blocked_topic", topic: hit });
@@ -276,6 +473,7 @@ export class TurnOrchestrator {
     let detailAidSlideId: string | undefined;
     let followUpType: FollowUpType | undefined;
     let gateClassification = classification;
+    let followUpSuggestion: FollowUpSuggestion | undefined;
 
     if (r === "approved_answer") {
       const retrievalSettled = await retrievalPromise;
@@ -296,46 +494,62 @@ export class TurnOrchestrator {
       // Coaching steering (active ordering / hcp_pointer rules): if the rep was trained
       // to lead with a topic, and an approved answer for it is among the candidates, move
       // it to the front. Additive only — it re-ranks approved content, never adds any.
-      const leadTopics = opts?.steering?.leadTopics ?? [];
-      if (leadTopics.length && result.answers.length > 1) {
-        const led = result.answers.filter((a) => leadTopics.some((t) => matchesTopic(`${a.topic} ${a.text}`, t)));
-        if (led.length) {
-          const rest = result.answers.filter((a) => !led.includes(a));
-          result.answers = [...led, ...rest];
-          await this.audit.record(ctx.sessionId, "coaching_rule_applied", { rule: "conversation_ordering", led: led.map((a) => a.id) });
-        }
-      }
       // Trial specificity: when the doctor names ONE specific trial (stroke / AF / ACS), lead with
-      // THAT trial's answer instead of the general LIBREXIA-program answer — so the stroke question
-      // shows the stroke slide (not the program slide), and the stroke topic (its sourceId) anchors
-      // the next bare follow-up ("Yeah, sure." → more stroke). Uses the text actually retrieved on
-      // (context-biased for follow-ups). Only reorders when exactly one trial is named and its answer
-      // is already a candidate — it never adds content, just promotes an already-retrieved block.
+      // THAT trial's answer instead of the general LIBREXIA-program answer — so the named-trial
+      // question shows the named-trial slide, and that topic anchors the next bare follow-up. If
+      // semantic retrieval missed the exact named trial but the active KB has it, add that approved
+      // block before ranking; this is a controlled exact-trial recovery, not free-form generation.
       // The named-trial signal comes from the query AND the coaching — so "actually use the LIBREXIA
       // stroke slide" (a coaching note) promotes the stroke answer + slide, not just the raw question.
       const specificityText = [
-        ("retrievalText" in retrievalSettled && retrievalSettled.retrievalText) || ctx.text,
+        ctx.text,
         ...(opts?.coaching ?? []),
       ].join(" ");
-      const namedTrials = TRIAL_TOPICS.filter((t) => t.query.test(specificityText));
-      if (namedTrials.length === 1 && result.answers.length > 1) {
-        const idx = result.answers.findIndex((a) => namedTrials[0]!.topic.test(a.topic));
-        if (idx > 0) {
-          const [specific] = result.answers.splice(idx, 1);
-          result.answers.unshift(specific!);
-          await this.audit.record(ctx.sessionId, "retrieval", { action: "trial_specificity_promoted", answer: specific!.id, trial: namedTrials[0]!.name });
-        }
+      const exactTrial = addNamedTrialAnswerIfMissing(result.answers, specificityText, await this.content.listAnswers());
+      result.answers = exactTrial.answers;
+      if (exactTrial.added) {
+        await this.audit.record(ctx.sessionId, "retrieval", { action: "trial_specificity_added", answer: exactTrial.added.id, trial: exactTrial.trial });
+      }
+      const ranked = rankAnswersForTurn(result.answers, specificityText, opts?.steering?.leadTopics ?? []);
+      result.answers = ranked.answers;
+      if (ranked.led.length) {
+        await this.audit.record(ctx.sessionId, "coaching_rule_applied", { rule: "conversation_ordering", led: ranked.led.map((a) => a.id) });
+      }
+      if (ranked.promoted) {
+        await this.audit.record(ctx.sessionId, "retrieval", { action: "trial_specificity_promoted", answer: ranked.promoted.answer.id, trial: ranked.promoted.trial });
       }
       const top = result.answers[0];
       if (!top) {
         // No approved block → fail safe to fallback (content gap signal).
         return this.finalize(ctx, "fallback", classification, SAFE_FALLBACK, [], false, undefined, undefined, undefined, opts?.preview ?? false);
       }
+      // Live Tavus voice should not hand the LLM the whole adjacent retrieval bundle unless the
+      // HCP really asked multiple things. Extra blocks make the answer longer, then Tavus queues
+      // TTS for many seconds after our gated text is ready. Keep a small context window (top two)
+      // so the answer can still feel natural and informed, without becoming a mini deck recap.
+      const answerBlocks = opts?.suppressRelatedSlide && !asksMultipleDistinctQuestions(ctx.text)
+        ? result.answers.slice(0, 2)
+        : result.answers;
+      const actualRetrievalText = ("retrievalText" in retrievalSettled && retrievalSettled.retrievalText) || ctx.text;
+      if (shouldSafeFallbackLowSignal(ctx.text, actualRetrievalText, result.answers)) {
+        await this.audit.record(ctx.sessionId, "response_validation", {
+          action: "low_signal_query_safe_fallback",
+          text: ctx.text,
+          topAnswer: String(top.id),
+        });
+        return this.finalize(ctx, "fallback", classification, SAFE_FALLBACK, [], false, undefined, undefined, undefined, opts?.preview ?? false);
+      }
       // Resolve the on-screen slide titles so the rep can reference the detail aid the way a
       // person does ("you can see this on the … slide") and gesture at a SECOND relevant slide —
       // so the whole deck gets used across a conversation, not just the first page.
       const topSlide = top.detailAidSlideId ? await this.content.getSlide(top.detailAidSlideId) : null;
-      const relatedAns = result.answers.find((a, i) => i > 0 && a.detailAidSlideId && a.detailAidSlideId !== top.detailAidSlideId);
+      // Offer a second slide for broad overview/program answers, but keep trial-specific answers
+      // focused. Otherwise a stroke/AF/ACS answer can immediately offer the generic program slide,
+      // and a bare "yeah sure" drags the doctor away from the specific trial they just asked about.
+      const canOfferRelated = !opts?.suppressRelatedSlide && (!/\btrial\b/i.test(top.topic) || /\bprogram\b/i.test(top.topic));
+      const relatedAns = canOfferRelated
+        ? result.answers.find((a, i) => i > 0 && a.detailAidSlideId && a.detailAidSlideId !== top.detailAidSlideId)
+        : undefined;
       const relatedSlide = relatedAns?.detailAidSlideId ? await this.content.getSlide(relatedAns.detailAidSlideId) : null;
       const slideTitle = topSlide?.title ?? topSlide?.label;
       const relatedTitle = relatedSlide?.title ?? relatedSlide?.label;
@@ -351,14 +565,12 @@ export class TurnOrchestrator {
       // it; the first answer may repeat it). Re-stating it on every reply reads as canned —
       // once any answer has gone out, disclosure guidance is dropped and the composer is
       // told not to restate it.
-      const disclosureGiven = priorEvents.some((e) => e.type === "response_output" && typeof e.payload.text === "string" && (e.payload.text as string).trim().length > 0);
+      const disclosureGiven = disclosureAlreadyGiven(priorEvents);
       // The on-screen slide is offered to the composer as a HINT so it can weave a BRIEF, varied
       // reference itself (and drop it when asked to be terse) — instead of a fixed bolt-on sentence
       // that read repetitively. Rehearsal + active persona_style coaching also flow in as guidance.
       // None of this can override grounding or the gate.
-      const slideHint = slideTitle
-        ? [`A detail-aid slide titled "${slideTitle}" is being shown on the doctor's screen${relatedTitle ? ` (a "${relatedTitle}" slide is also available)` : ""}. Briefly NAME the slide you're showing in one short, natural clause (e.g. "you can see this on the ${slideTitle} slide") so the doctor knows what's on screen — vary the wording and keep it to a short clause, but don't omit it unless you were explicitly asked to be terse.`]
-        : [];
+      const slideHint = slideGuidance(slideTitle, relatedTitle);
       const steeringGuidance = (opts?.steering?.styleGuidance ?? []).filter(
         (g) => !disclosureGiven || !/disclos|investigational|not fda/i.test(g),
       );
@@ -366,42 +578,59 @@ export class TurnOrchestrator {
       // composer EVERYTHING it has already told this doctor so it answers with genuinely new
       // information or a fresh angle instead of re-stating the same few blocks. Deduped + capped so
       // the prompt stays lean. Advisory only (never overrides grounding/gate); deterministic ignores it.
-      const priorReplies = priorEvents
-        .filter((e) => e.type === "response_output" && typeof e.payload.text === "string")
-        .map((e) => (e.payload.text as string).split(/\n\nImportant Safety Information:/)[0]!.trim())
-        .filter((t) => t.length > 20);
-      const covered = [...new Set(priorReplies)].slice(-8); // recent, de-duplicated
-      const antiRepeat = covered.length
-        ? [
-            `Earlier in THIS conversation you already said:\n${covered
-              .map((t, i) => `(${i + 1}) ${t.slice(0, 180)}`)
-              .join("\n")}\nDon't sound repetitive: do NOT repeat an earlier answer word-for-word or open with the same phrase, and don't pad a reply with background that isn't what was asked. Restating an important or directly-relevant point is fine, but say it in DIFFERENT words and framing and lead with something new. When the approved content genuinely has nothing new to add, say so briefly and offer to go deeper rather than repeating an earlier answer verbatim.`,
-          ]
-        : [];
+      const antiRepeat = antiRepeatGuidance(priorEvents);
       const guidance = [...(opts?.coaching ?? []), ...steeringGuidance, ...slideHint, ...antiRepeat];
-      const overrideComposer = opts?.composer;
-      const activeComposer = overrideComposer !== undefined ? overrideComposer : this.composer;
       const composeFn = activeComposer?.available()
-        ? (q: string, b: ApprovedAnswer[]) => activeComposer.compose({ question: q, blocks: b, guidance, safety: isi?.text, alreadyDisclosed: disclosureGiven })
+        ? (q: string, b: ApprovedAnswer[], extraGuidance: string[] = [], maxTokens = opts?.composerMaxTokens) => activeComposer.compose({
+            question: q,
+            blocks: b,
+            guidance: extraGuidance.length ? [...guidance, ...extraGuidance] : guidance,
+            safety: isi?.text,
+            alreadyDisclosed: disclosureGiven,
+            maxTokens,
+          })
         : undefined;
       // Deterministic fallback (no LLM) speaks approved text + one brief slide cue; it cannot weave,
       // so the ISI is appended verbatim below.
       const responseSeed = `${ctx.sessionId}:${ctx.text}:${priorEvents.length}:${top.id}`;
-      const deterministic = () => buildApprovedResponse(result.answers, { includeIsi: false, slideTitle, seed: responseSeed })?.text ?? top.text;
+      const deterministic = () => buildApprovedResponse(answerBlocks, { includeIsi: false, slideTitle, seed: responseSeed })?.text ?? top.text;
       let body: string;
       if (composeFn) {
         try {
           // Deterministic backstop: whatever the model wove in, an embedded ISI copy is
           // removed — the platform alone decides when the exact ISI is appended.
           const composerStarted = Date.now();
-          const composeResult = await withTimeout(composeFn(ctx.text, result.answers), COMPOSER_TIMEOUT_MS);
-          const composerWallMs = Date.now() - composerStarted;
+          const speculative = speculativeComposePromise ? await speculativeComposePromise : undefined;
+          let usedRepair = false;
+          if (speculative?.ok === false && speculative.reason !== "composer_output_truncated") {
+            throw new Error(`speculative_${speculative.reason}`);
+          }
+          const useSpeculative =
+            speculative?.ok === true &&
+            speculative.topId === String(top.id);
+          let composeResult = useSpeculative
+            ? { text: speculative.text, latencyMs: speculative.latencyMs, truncated: false }
+            : speculative?.ok === false && speculative.reason === "composer_output_truncated"
+              ? opts?.liveVoice
+                ? (() => { throw new Error("composer_output_truncated"); })()
+                : await withTimeout(composeFn(ctx.text, answerBlocks, [COMPOSER_REPAIR_GUIDANCE], Math.max(120, Math.min(opts?.composerMaxTokens ?? 180, 180))), Math.min(1800, composerTimeoutMs), "composer_repair_timeout")
+              : await withTimeout(composeFn(ctx.text, answerBlocks), composerTimeoutMs, "composer_timeout");
+          if (!useSpeculative && speculative?.ok === false && speculative.reason === "composer_output_truncated") usedRepair = !opts?.liveVoice;
+          if (!useSpeculative && composeResult.truncated) {
+            if (opts?.liveVoice) throw new Error("composer_output_truncated");
+            composeResult = await withTimeout(composeFn(ctx.text, answerBlocks, [COMPOSER_REPAIR_GUIDANCE], Math.max(120, Math.min(opts?.composerMaxTokens ?? 180, 180))), Math.min(1800, composerTimeoutMs), "composer_repair_timeout");
+            usedRepair = true;
+            if (composeResult.truncated) throw new Error("composer_output_truncated");
+          }
+          const composerWallMs = useSpeculative ? speculative.wallMs : Date.now() - composerStarted;
           await this.audit.record(ctx.sessionId, "response_validation", {
             action: "composer_success",
             composer: activeComposer?.name,
             latencyMs: composeResult.latencyMs,
             wallMs: composerWallMs,
-            timeoutMs: COMPOSER_TIMEOUT_MS,
+            speculative: useSpeculative,
+            repair: usedRepair,
+            timeoutMs: composerTimeoutMs,
             turnElapsedMs: Date.now() - turnStarted,
           });
           const composed = stripSpeechMarkdown(stripEmbeddedIsi(composeResult.text.trim(), isiStatement?.text ?? ""));
@@ -411,26 +640,46 @@ export class TurnOrchestrator {
             // Grounding is checked against approved answer blocks only. The exact ISI is appended
             // after composition, so a model-generated safety paraphrase is not needed and cannot
             // be used to satisfy the gate.
-            const groundBlocks = result.answers.map((a) => a.text);
+            const groundBlocks = answerBlocks.map((a) => a.text);
             const grounding = validateGrounding({ answer: composed, blocks: groundBlocks });
             if (grounding.grounded) {
               body = composed; // the composer may weave the slide reference; approved ISI is appended below.
             } else {
+              const repair = opts?.liveVoice || usedRepair
+                ? null
+                : await withTimeout(composeFn(ctx.text, answerBlocks, [COMPOSER_REPAIR_GUIDANCE], Math.max(120, Math.min(opts?.composerMaxTokens ?? 180, 180))), Math.min(1800, composerTimeoutMs), "composer_repair_timeout")
+                    .catch(() => null);
+              const repaired = repair?.truncated ? "" : stripSpeechMarkdown(stripEmbeddedIsi((repair?.text ?? "").trim(), isiStatement?.text ?? ""));
+              const repairGrounding = repaired ? validateGrounding({ answer: repaired, blocks: groundBlocks }) : null;
+              if (repairGrounding?.grounded) {
+                await this.audit.record(ctx.sessionId, "response_validation", {
+                  action: "composer_repair_success",
+                  composer: activeComposer?.name,
+                  latencyMs: repair?.latencyMs,
+                  reason: "initial_grounding_failed",
+                  turnElapsedMs: Date.now() - turnStarted,
+                });
+                body = repaired;
+              } else {
               await this.audit.record(ctx.sessionId, "response_validation", {
                 grounded: false,
                 coverage: grounding.coverage,
                 ungroundedNumbers: grounding.ungroundedNumbers,
                 novelTokens: grounding.novelTokens.slice(0, 12),
-                action: "fallback_to_approved_text",
+                repairTried: Boolean(repair),
+                repairTruncated: Boolean(repair?.truncated),
+                repairGrounded: Boolean(repairGrounding?.grounded),
+                action: opts?.liveVoice ? "live_voice_fallback_to_approved_text" : "fallback_to_approved_text",
               });
               body = deterministic();
+              }
             }
           }
         } catch (error) {
           await this.audit.record(ctx.sessionId, "response_validation", {
             action: "composer_fallback",
             reason: error instanceof Error ? error.message : "error_or_timeout",
-            timeoutMs: COMPOSER_TIMEOUT_MS,
+            timeoutMs: composerTimeoutMs,
             turnElapsedMs: Date.now() - turnStarted,
           });
           body = deterministic();
@@ -462,7 +711,9 @@ export class TurnOrchestrator {
         });
       }
       responseText = body;
-      sourceIds = result.answers.map((a) => a.id);
+      sourceIds = answerBlocks.map((a) => a.id);
+      followUpSuggestion =
+        relatedAns?.id ? { sourceId: String(relatedAns.id), slideId: relatedAns.detailAidSlideId ? String(relatedAns.detailAidSlideId) : undefined } : undefined;
       // Only switch the deck when the answer actually CUES the slide — otherwise a silent switch
       // draws no attention. The client times the switch to when the cue is spoken (slideCueDelay).
       detailAidSlideId = cuesASlide(body) ? top.detailAidSlideId : undefined;
@@ -506,7 +757,79 @@ For anything beyond this, I can connect you with our medical information team.`;
       responseText = SAFE_FALLBACK;
     }
 
-    return this.finalize(ctx, r, gateClassification, responseText, sourceIds, isiAttached, requiredSafetyText, followUpType, detailAidSlideId, opts?.preview ?? false);
+    return this.finalize(ctx, r, gateClassification, responseText, sourceIds, isiAttached, requiredSafetyText, followUpType, detailAidSlideId, opts?.preview ?? false, followUpSuggestion);
+  }
+
+  private async speculativeCompose(
+    ctx: TurnContext,
+    retrievalPromise: Promise<RetrievalSettled>,
+    activeComposer: GroundedComposer,
+    opts: {
+      coaching?: string[];
+      steering?: RuleSteering;
+      suppressRelatedSlide?: boolean;
+      composerMaxTokens?: number;
+    } | undefined,
+    composerTimeoutMs: number,
+  ): Promise<SpeculativeComposeResult> {
+    try {
+      const retrievalSettled = await retrievalPromise;
+      if ("error" in retrievalSettled) return { ok: false, reason: "retrieval_error" };
+      const specificityText = [ctx.text, ...(opts?.coaching ?? [])].join(" ");
+      const exactTrial = addNamedTrialAnswerIfMissing(retrievalSettled.result.answers, specificityText, await this.content.listAnswers());
+      const ranked = rankAnswersForTurn(exactTrial.answers, specificityText, opts?.steering?.leadTopics ?? []);
+      const top = ranked.answers[0];
+      if (!top) return { ok: false, reason: "no_approved_answer" };
+      const answerBlocks = opts?.suppressRelatedSlide && !asksMultipleDistinctQuestions(ctx.text)
+        ? ranked.answers.slice(0, 2)
+        : ranked.answers;
+      if (shouldSafeFallbackLowSignal(ctx.text, retrievalSettled.retrievalText, ranked.answers)) {
+        return { ok: false, reason: "low_signal" };
+      }
+
+      const topSlide = top.detailAidSlideId ? await this.content.getSlide(top.detailAidSlideId) : null;
+      const canOfferRelated = !opts?.suppressRelatedSlide && (!/\btrial\b/i.test(top.topic) || /\bprogram\b/i.test(top.topic));
+      const relatedAns = canOfferRelated
+        ? ranked.answers.find((a, i) => i > 0 && a.detailAidSlideId && a.detailAidSlideId !== top.detailAidSlideId)
+        : undefined;
+      const relatedSlide = relatedAns?.detailAidSlideId ? await this.content.getSlide(relatedAns.detailAidSlideId) : null;
+      const slideTitle = topSlide?.title ?? topSlide?.label;
+      const relatedTitle = relatedSlide?.title ?? relatedSlide?.label;
+      const priorEvents = await this.audit.forSession(ctx.sessionId);
+      const disclosureGiven = disclosureAlreadyGiven(priorEvents);
+      const steeringGuidance = (opts?.steering?.styleGuidance ?? []).filter(
+        (g) => !disclosureGiven || !/disclos|investigational|not fda/i.test(g),
+      );
+      const guidance = [
+        ...(opts?.coaching ?? []),
+        ...steeringGuidance,
+        ...slideGuidance(slideTitle, relatedTitle),
+        ...antiRepeatGuidance(priorEvents),
+      ];
+      const started = Date.now();
+      const result = await withTimeout(
+        activeComposer.compose({
+          question: ctx.text,
+          blocks: answerBlocks,
+          guidance,
+          alreadyDisclosed: disclosureGiven,
+          maxTokens: opts?.composerMaxTokens,
+        }),
+        composerTimeoutMs,
+        "composer_timeout",
+      );
+      if (result.truncated) return { ok: false, reason: "composer_output_truncated" };
+      return {
+        ok: true,
+        text: result.text,
+        latencyMs: result.latencyMs,
+        wallMs: Date.now() - started,
+        answerIds: answerBlocks.map((a) => String(a.id)),
+        topId: String(top.id),
+      };
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : "speculative_compose_error" };
+    }
   }
 
   private async finalize(
@@ -520,6 +843,7 @@ For anything beyond this, I can connect you with our medical information team.`;
     followUpType: FollowUpType | undefined,
     detailAidSlideId: string | undefined,
     preview: boolean,
+    followUpSuggestion?: FollowUpSuggestion,
   ): Promise<TurnOutput> {
     const decision = complianceGate({
       responseText,
@@ -533,7 +857,13 @@ For anything beyond this, I can connect you with our medical information team.`;
 
     // Fail safe: a blocked response is never spoken; the HCP gets the fallback.
     const finalText = decision.decision === "approved" ? responseText : SAFE_FALLBACK;
-    await this.audit.record(ctx.sessionId, "response_output", { route: r, text: finalText, sourceIds });
+    await this.audit.record(ctx.sessionId, "response_output", {
+      route: r,
+      text: finalText,
+      sourceIds,
+      ...(decision.decision === "approved" && followUpSuggestion?.sourceId ? { suggestedFollowUpSourceId: followUpSuggestion.sourceId } : {}),
+      ...(decision.decision === "approved" && followUpSuggestion?.slideId ? { suggestedFollowUpSlideId: followUpSuggestion.slideId } : {}),
+    });
 
     // Rehearsal/coaching preview never enqueues real follow-up / CRM work.
     if (followUpType && !preview) {
@@ -574,6 +904,13 @@ For anything beyond this, I can connect you with our medical information team.`;
       // rep answered "connect with a person" once, every short follow-up ("yeah sure", "show me the
       // slides") re-biased to contact and it never recovered — a self-reinforcing loop.
       const isRouting = (topic: string) => /contact|medical information|connect with|handoff/i.test(topic);
+      if (isPureAcceptance(ctx.text)) {
+        for (const e of answered) {
+          const offeredId = typeof e.payload.suggestedFollowUpSourceId === "string" ? e.payload.suggestedFollowUpSourceId : undefined;
+          const answer = offeredId ? await this.content.getAnswer(asId<"approved_answer_id">(offeredId) as ApprovedAnswerId) : null;
+          if (answer && !isRouting(answer.topic)) return `${answer.topic} ${ctx.text}`;
+        }
+      }
       let topic: string | undefined;
       for (const e of answered) {
         const id = (e.payload.sourceIds as string[])[0];

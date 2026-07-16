@@ -29,7 +29,7 @@ export async function classifyWith(name: string, text: string): Promise<RiskClas
   const c = getClassifier(name);
   if (!c || c.name === "keyword" || !c.available()) return classify(text);
   try {
-    return mergeWithKeywordSignals((await c.classify(text)).result, classify(text));
+    return mergeWithKeywordSignals((await c.classify(text)).result, classify(text), text);
   } catch {
     return classify(text);
   }
@@ -71,7 +71,7 @@ export function resolveClassifier(): (text: string) => Promise<RiskClassificatio
     const keyword = classify(text);
     if (!chosen || chosen.name === "keyword" || !chosen.available()) return keyword;
     try {
-      return mergeWithKeywordSignals((await chosen.classify(text)).result, keyword);
+      return mergeWithKeywordSignals((await chosen.classify(text)).result, keyword, text);
     } catch (e) {
       console.warn(`[classifier] ${chosen.name} failed, falling back to keyword:`, e);
       return keyword;
@@ -94,7 +94,7 @@ function hasHighSafetyRisk(c: RiskClassification): boolean {
  * always merge deterministic risk scores and recover obvious product-info /
  * human-handoff intents when no safety risk is present.
  */
-export function mergeWithKeywordSignals(llm: RiskClassification, keyword: RiskClassification): RiskClassification {
+export function mergeWithKeywordSignals(llm: RiskClassification, keyword: RiskClassification, text = ""): RiskClassification {
   const merged: RiskClassification = {
     ...llm,
     offLabelRisk: Math.max(llm.offLabelRisk, keyword.offLabelRisk),
@@ -105,6 +105,37 @@ export function mergeWithKeywordSignals(llm: RiskClassification, keyword: RiskCl
     isiRequired: llm.isiRequired || keyword.isiRequired,
   };
 
+  if (keyword.intent === "product_info" && keyword.confidence >= 0.7 && isMechanismRationaleQuestion(text)) {
+    return {
+      ...merged,
+      medicalInfoRisk: Math.min(merged.medicalInfoRisk, 0.3),
+      comparativeClaimRisk: Math.min(keyword.comparativeClaimRisk, 0.3),
+      intent: "product_info",
+      confidence: Math.max(merged.confidence, keyword.confidence),
+      isiRequired: true,
+    };
+  }
+
+  if (keyword.medicalInfoRisk >= 0.6 && isPatientUseQuestion(text)) {
+    return {
+      ...merged,
+      intent: keyword.intent,
+      confidence: Math.max(merged.confidence, keyword.confidence),
+      medicalInfoRisk: Math.max(merged.medicalInfoRisk, keyword.medicalInfoRisk),
+      isiRequired: keyword.isiRequired || merged.isiRequired,
+    };
+  }
+
+  if (keyword.medicalInfoRisk >= 0.6 && isDeepTrialResultsQuestion(text)) {
+    return {
+      ...merged,
+      intent: keyword.intent,
+      confidence: Math.max(merged.confidence, keyword.confidence),
+      medicalInfoRisk: Math.max(merged.medicalInfoRisk, keyword.medicalInfoRisk),
+      isiRequired: keyword.isiRequired || merged.isiRequired,
+    };
+  }
+
   if (!hasHighSafetyRisk(merged) && keyword.intent === "human_request") {
     return { ...merged, intent: "human_request", confidence: Math.max(merged.confidence, keyword.confidence), isiRequired: false };
   }
@@ -114,6 +145,9 @@ export function mergeWithKeywordSignals(llm: RiskClassification, keyword: RiskCl
     // lexicon recognizing the drug name must never lower a CONFIDENT LLM's deliberate
     // medical-information escalation, or deep clinical questions get answered directly
     // instead of routed to Medical Information.
+    // Short live-voice turns like "Program." often get a high-confidence LLM "other"
+    // because they are fragmentary. A confident "other" is still not a deliberate
+    // medical escalation, so keep the deterministic product/program signal.
     const llmUnreliable = merged.intent === "other" || merged.confidence < 0.6;
     if (llmUnreliable) {
       return { ...merged, medicalInfoRisk: Math.min(merged.medicalInfoRisk, 0.3), intent: "product_info", confidence: Math.max(merged.confidence, keyword.confidence), isiRequired: true };
@@ -122,4 +156,22 @@ export function mergeWithKeywordSignals(llm: RiskClassification, keyword: RiskCl
   }
 
   return merged;
+}
+
+function isPatientUseQuestion(text: string): boolean {
+  return /\b(?:should|can|could|would)\s+(?:i|we)\s+(?:prescribe|use|give|start|recommend)\b|\bprescribe\s+(?:it|this|milvexian)\b|\bfor\s+my\s+patients?\b|\b(?:use|start|recommend)\s+it\s+for\s+my\s+patients?\b/i.test(text);
+}
+
+function isDeepTrialResultsQuestion(text: string): boolean {
+  return /\b(?:latest|published|efficacy|endpoint|outcomes?|results?|clinical\s+data|data\s+readout|topline)\b/i.test(text);
+}
+
+function isMechanismRationaleQuestion(text: string): boolean {
+  const normalized = text.toLowerCase();
+  if (!normalized) return false;
+  const mechanismSignal = /\b(?:mechanism|moa|factor\s*(?:xia|xi|11a)|fxia|clotting|coagulation|cascade|pathway|thrombin|hemostasis)\b/i.test(normalized);
+  const rationaleSignal = /\b(?:why|how|rationale|reason|focus|target|approach|designed|work|works)\b/i.test(normalized);
+  if (!mechanismSignal || !rationaleSignal) return false;
+  // Still route true clinical specifics/comparisons safely.
+  return !/\b(?:dose|dosing|titration|mg|patient case|should\s+i\s+use|recommend|eliquis|apixaban|warfarin|xarelto|pradaxa|better|safer|superior|versus|vs|compared?\s+to|results?|efficacy|bleeding|side effects?)\b/i.test(normalized);
 }

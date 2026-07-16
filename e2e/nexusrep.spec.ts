@@ -150,6 +150,81 @@ test.describe("Studio — Train / coach / rules (self-serve)", () => {
     await expect(page.getByText(/Do not raise/i).first()).toBeVisible({ timeout: 10_000 });
   });
 
+  test("Training push-to-talk applies ASR correction before routing preview answers", async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.addInitScript(() => {
+      window.localStorage.clear();
+      type MockSpeechItem = { alternatives?: string[]; text?: string };
+      const w = window as typeof window & { __mockSpeechQueue?: MockSpeechItem[] };
+      w.__mockSpeechQueue = [];
+      class MockSpeechRecognition {
+        lang = "en-US";
+        interimResults = true;
+        continuous = false;
+        maxAlternatives = 4;
+        onresult: ((e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null = null;
+        onend: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        start() {
+          window.setTimeout(() => {
+            const item = w.__mockSpeechQueue?.shift() ?? { text: "" };
+            const alternatives = (item.alternatives?.length ? item.alternatives : [item.text ?? ""]).filter(Boolean);
+            const result = alternatives.map((transcript) => ({ transcript })) as ArrayLike<{ transcript: string }> & { isFinal: boolean };
+            result.isFinal = true;
+            this.onresult?.({ resultIndex: 0, results: [result] });
+            window.setTimeout(() => this.onend?.(), 10);
+          }, 30);
+        }
+        stop() { window.setTimeout(() => this.onend?.(), 0); }
+        abort() { window.setTimeout(() => this.onend?.(), 0); }
+      }
+      Object.defineProperty(window, "SpeechRecognition", { configurable: true, value: MockSpeechRecognition });
+      Object.defineProperty(window, "webkitSpeechRecognition", { configurable: true, value: MockSpeechRecognition });
+    });
+
+    const speak = async (alternatives: string[]) => {
+      await page.evaluate((alts) => {
+        const w = window as typeof window & { __mockSpeechQueue?: { alternatives: string[] }[] };
+        w.__mockSpeechQueue ??= [];
+        w.__mockSpeechQueue.push({ alternatives: alts });
+      }, alternatives);
+      await page.getByRole("button", { name: "Talk to the rep" }).click();
+    };
+
+    await page.goto("/");
+    await page.waitForFunction(() => {
+      const text = document.body?.innerText ?? "";
+      return text.includes("SIGN IN TO CONTINUE") || text.includes("Command Center") || text.includes("AI Rep");
+    }, null, { timeout: 45_000 });
+    if (await page.getByText("SIGN IN TO CONTINUE").isVisible({ timeout: 5_000 }).catch(() => false)) {
+      await page.locator("input").nth(0).fill("mahek");
+      await page.locator("input").nth(1).fill("mahek123");
+      await page.getByRole("button", { name: /Sign In/i }).click();
+      await expect(page.locator("aside").getByText("AI Rep", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+    }
+    await nav(page, "AI Rep").click();
+    await page.getByText("Training", { exact: true }).click();
+    await expect(page.getByText("Coach the rep").first()).toBeVisible({ timeout: 10_000 });
+
+    await speak(["How does the new vaccine work?", "How does Milvexian work?"]);
+    await expect(page.getByText("How does Milvexian work?", { exact: true })).toBeVisible({ timeout: 45_000 });
+    await expect(page.locator("body")).not.toContainText("How does the new vaccine work?");
+    await expect(page.getByText(/Factor XIa|mechanism of action/i).first()).toBeVisible({ timeout: 45_000 });
+
+    await speak(["What is the LEBIREXIA program?", "What is the LIBREXIA program?"]);
+    await expect(page.getByText("What is the LIBREXIA program?", { exact: true })).toBeVisible({ timeout: 45_000 });
+    await expect(page.locator("body")).not.toContainText("LEBIREXIA");
+    await expect(page.getByText(/Phase 3|50,000|event-driven/i).first()).toBeVisible({ timeout: 45_000 });
+
+    await speak(["How does it compare to apixaban?"]);
+    await expect(page.getByText(/How does it compare to apixaban\??/i).last()).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByText(/medical information|Medical Science Liaison/i).first()).toBeVisible({ timeout: 45_000 });
+
+    await speak(["A patient had bleeding while taking the study drug."]);
+    await expect(page.getByText("A patient had bleeding while taking the study drug.", { exact: true })).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByText(/pharmacovigilance|safety team|adverse event/i).first()).toBeVisible({ timeout: 45_000 });
+  });
+
   test("Rules screen shows locked compliance guardrails", async ({ page }) => {
     await page.goto("/");
     await nav(page, "AI Rep").click();

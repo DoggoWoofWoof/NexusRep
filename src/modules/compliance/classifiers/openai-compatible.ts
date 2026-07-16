@@ -16,6 +16,12 @@ interface CompatConfig {
   model: () => string;
 }
 
+function maxTokens(): number {
+  const raw = process.env.NEXUSREP_CLASSIFIER_MAX_TOKENS;
+  const n = Number(raw);
+  return Number.isFinite(n) && raw !== undefined && raw !== "" ? Math.max(80, Math.min(512, n)) : 180;
+}
+
 export function makeOpenAiCompatible(cfg: CompatConfig): LlmClassifier {
   return {
     name: cfg.name,
@@ -39,6 +45,7 @@ export function makeOpenAiCompatible(cfg: CompatConfig): LlmClassifier {
             { role: "user", content: text },
           ],
           response_format: { type: "json_object" },
+          max_tokens: maxTokens(),
         }),
       });
       const latencyMs = Date.now() - t0;

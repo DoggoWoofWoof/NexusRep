@@ -370,6 +370,14 @@ function Launch({ app }: { app: AppState }) {
   }, []);
   // The actual per-doctor invite: the shareable doctor link carrying the HCP's identity.
   const inviteLink = (id: string) => `${typeof window !== "undefined" ? window.location.origin : ""}/hcp?hcp=${encodeURIComponent(id)}`;
+  const previewHcpId = rows[0]?.id ?? listIds[0] ?? app.sessionHcpId ?? "";
+  const previewDoctorView = () => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams();
+    if (previewHcpId) params.set("hcp", previewHcpId);
+    params.set("preview", "launch");
+    window.location.assign(`/hcp?${params.toString()}`);
+  };
   const sendInvites = async () => {
     setConfirm(false);
     setLaunchErr("");
@@ -432,7 +440,7 @@ function Launch({ app }: { app: AppState }) {
           <div style={{ ...card, padding: "18px 20px" }}>
             <div style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)", marginBottom: 13 }}>Send</div>
             <button onClick={() => !launched && app.activation.length && setConfirm(true)} disabled={launched} style={{ ...btnPrimary, width: "100%", padding: 12, opacity: launched || app.activation.length ? 1 : 0.5, background: launched ? "var(--dn-success)" : "var(--dn-brand-base)", cursor: launched ? "default" : "pointer" }}>{launched ? `Launched ✓ · ${activation?.hcpIds.length} invite links live` : `Launch ${app.activation.length} invitations`}</button>
-            <button onClick={() => app.setMode("hcp")} style={{ width: "100%", marginTop: 9, padding: 11, background: "#fff", color: "var(--dn-brand-base)", border: "1px solid var(--dn-border)", borderRadius: 9, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Preview doctor view ↗</button>
+            <button onClick={previewDoctorView} style={{ width: "100%", marginTop: 9, padding: 11, background: "#fff", color: "var(--dn-brand-base)", border: "1px solid var(--dn-border)", borderRadius: 9, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Preview doctor view ↗</button>
             {launchErr && <div style={{ marginTop: 11, padding: "9px 12px", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, font: "500 11.5px/1.4 var(--dn-font-sans)", color: "#991b1b" }}>{launchErr}</div>}
             {launched && <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 13, padding: "11px 13px", background: "var(--dn-accent-green-bg)", borderRadius: 9 }}><span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: "50%", background: "#166534", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>✓</span><span style={{ font: "500 11.5px/1.4 var(--dn-font-sans)", color: "#166534" }}>Each doctor&apos;s personal link is live — copy it from the list. Track responses in <strong style={{ cursor: "pointer" }} onClick={() => app.setNav("sessions")}>Sessions</strong>.</span></div>}
           </div>
@@ -463,6 +471,7 @@ type SessionRow = {
   questions: number | string;
   comp: string;
   compTone: "green" | "yellow" | "pink" | "red";
+  hasRecording?: boolean;
   followup: string;
 };
 
@@ -510,8 +519,13 @@ function Sessions({ app }: { app: AppState }) {
             <span><span style={compStyle(s.compTone)}>{s.comp}</span></span>
             <span style={{ font: "500 12px/1.3 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>{s.followup}</span>
             <span style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              <span data-testid="review-session" onClick={() => { app.setSelectedSessionId(String(s.id)); app.setNav("audit"); }} style={{ padding: "6px 9px", background: "rgba(6,73,172,.08)", color: "var(--dn-brand-base)", borderRadius: 7, font: "600 11px/1 var(--dn-font-sans)", cursor: "pointer" }}>Review</span>
-              <span onClick={() => { app.setStudioMode("train"); app.setNav("studio"); }} style={{ padding: "6px 9px", background: "#fff", border: "1px solid var(--dn-border)", color: "var(--dn-fg-muted)", borderRadius: 7, font: "600 11px/1 var(--dn-font-sans)", cursor: "pointer" }}>Coach</span>
+              <button type="button" data-testid="review-session" data-session-id={String(s.id)} onClick={() => { app.setSelectedSessionId(String(s.id)); app.setNav("audit"); }} style={{ padding: "6px 9px", background: "rgba(6,73,172,.08)", color: "var(--dn-brand-base)", border: "none", borderRadius: 7, font: "600 11px/1 var(--dn-font-sans)", cursor: "pointer" }}>Review</button>
+              <span onClick={() => {
+                app.setSelectedSessionId(String(s.id));
+                try { window.localStorage.setItem(TRAIN_SEED_KEY, JSON.stringify({ mode: "session", sessionId: String(s.id) })); } catch { /* storage disabled — Training still opens */ }
+                app.setStudioMode("train");
+                app.setNav("studio");
+              }} style={{ padding: "6px 9px", background: "#fff", border: "1px solid var(--dn-border)", color: "var(--dn-fg-muted)", borderRadius: 7, font: "600 11px/1 var(--dn-font-sans)", cursor: "pointer" }}>Coach</span>
             </span>
           </div>
         ))}
@@ -607,7 +621,7 @@ function Analytics() {
 
 /* ===================== SESSION DETAIL ===================== */
 type SessionDetailData = {
-  session: { hcp: string; startedAt: string; durationSeconds: number; questionCount: number; complianceStatus: string; recordingUrl?: string | null };
+  session: { hcp: string; startedAt: string; durationSeconds: number; questionCount: number; complianceStatus: string; recordingUrl?: string | null; timelineSource?: "recorded" | null };
   turns: { speaker: "hcp" | "rep"; text: string; sourceIds: string[]; detailAidSlideId?: string | null; at?: string | null }[];
   audit: { seq: number; type: string; payload: Record<string, unknown> }[];
   hasTurnDetail: boolean;
@@ -620,7 +634,11 @@ const REVIEW_SLIDE_CUE_DELAY_SEC = 1.1;
 function SessionDetail({ app }: { app: AppState }) {
   const [sel, setSel] = useState(0);
   const [detail, setDetail] = useState<SessionDetailData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
+  const metadataFixingRef = useRef(false);
+  const pendingSeekRef = useRef<number | null>(null);
   const [nowSec, setNowSec] = useState(0);
   // Real recording length once the video's metadata resolves — used to scale the transcript/slide
   // timeline to the video so they track it end-to-end (0 until known / no recording).
@@ -628,14 +646,34 @@ function SessionDetail({ app }: { app: AppState }) {
   useEffect(() => {
     let alive = true;
     setDetail(null); setSel(0); setNowSec(0); setVidDur(0);
-    if (!app.selectedSessionId) return;
+    setLoading(true);
+    setLoadError("");
+    const openLatestReviewable = async () => {
+      const res = await fetch("/api/sessions");
+      if (!res.ok) throw new Error("sessions unavailable");
+      const json = (await res.json()) as { rows?: SessionRow[] };
+      const latest = json.rows?.[0];
+      if (alive && latest?.id) app.setSelectedSessionId(String(latest.id));
+      else if (alive) setLoadError("No reviewable sessions yet.");
+    };
     (async () => {
       try {
+        if (!app.selectedSessionId) {
+          await openLatestReviewable();
+          return;
+        }
         const res = await fetch(`/api/sessions/${encodeURIComponent(app.selectedSessionId!)}`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          await openLatestReviewable();
+          return;
+        }
         const json = (await res.json()) as SessionDetailData;
         if (alive) setDetail(json);
-      } catch { /* fall back to illustrative */ }
+      } catch {
+        if (alive) setLoadError("Couldn't load this session review.");
+      } finally {
+        if (alive) setLoading(false);
+      }
     })();
     return () => { alive = false; };
   }, [app.selectedSessionId]);
@@ -685,9 +723,9 @@ function SessionDetail({ app }: { app: AppState }) {
       { label: "Sources cited", value: String(sourcesCited), color: "var(--dn-brand-base)" },
       { label: "Compliance", value: COMP_LABEL[s.complianceStatus] ?? s.complianceStatus, color: "var(--dn-fg)" },
     ];
-    // Align the timeline to the FIRST turn — the recording starts at the replica's
-    // first live frame (~the greeting), not the session-created timestamp — so the
-    // transcript + slide changes track the video.
+    // Align the timeline to session.startedAt. For recorded showcase sessions the local recorder
+    // resequences startedAt to the MediaRecorder start, and each turn.at to the actual caption/audio
+    // offset. That preserves a real pre-speech join gap instead of forcing the greeting to 00:00.
     // Replay timeline. Turn `at` timestamps are stamped at API-call time, so a burst of turns (a
     // deck walkthrough, or several Tavus replies logged back-to-back) collapses to the same second —
     // which made every line show ~00:18 and the slide jump to the last turn and freeze. Instead we
@@ -695,25 +733,43 @@ function SessionDetail({ app }: { app: AppState }) {
     // speaking time, while a real pause (a larger `at` gap) is preserved. When a recording exists we
     // scale the whole timeline to its true length so the transcript + slide track the video.
     type Turn = (typeof turns)[number];
-    const startMs = turns[0]?.at ? Date.parse(turns[0]!.at!) : Date.parse(s.startedAt);
+    const parsedSessionStart = Date.parse(s.startedAt);
+    const startMs = Number.isFinite(parsedSessionStart)
+      ? parsedSessionStart
+      : turns[0]?.at ? Date.parse(turns[0]!.at!) : 0;
     const estDur = (t: Turn) => Math.min(32, Math.max(2.5, (t.text ?? "").trim().split(/\s+/).filter(Boolean).length * 0.42)); // ~140 wpm, clamped
+    const recordedTimeline = s.timelineSource === "recorded";
     const rawOffsets: number[] = [];
     for (let i = 0; i < turns.length; i++) {
       const at = turns[i]!.at ? Math.max(0, (Date.parse(turns[i]!.at!) - startMs) / 1000) : 0;
-      rawOffsets[i] = i === 0 ? 0 : Math.max(at, rawOffsets[i - 1]! + estDur(turns[i - 1]!));
+      rawOffsets[i] = recordedTimeline
+        ? Math.max(i === 0 ? 0 : rawOffsets[i - 1]!, at)
+        : i === 0 ? 0 : Math.max(at, rawOffsets[i - 1]! + estDur(turns[i - 1]!));
     }
     const estTotal = (rawOffsets[turns.length - 1] ?? 0) + (turns.length ? estDur(turns[turns.length - 1]!) : 0);
-    const recordingShort = vidDur > 1 && estTotal > vidDur + 8;
-    const scale = vidDur > 1 && estTotal > 0 && !recordingShort ? vidDur / estTotal : 1;
+    const timelineDuration = vidDur > 1 ? vidDur : s.durationSeconds || 0;
+    const recordingShort = !recordedTimeline && vidDur > 1 && estTotal > vidDur + 8;
+    const scale = !recordedTimeline && timelineDuration > 1 && estTotal > 0 && !recordingShort ? timelineDuration / estTotal : 1;
     const offsets = rawOffsets.map((o) => o * scale);
     const offsetOf = (t: Turn) => { const i = turns.indexOf(t); return i >= 0 ? offsets[i]! : 0; };
     // Duration: the real recording length if known; else the recorded seconds; else the estimated
     // transcript span — so the header shows a real length, never "00:00" for a live/Tavus session.
-    const effectiveDuration = Math.round(Math.max(s.durationSeconds || 0, estTotal, recordingShort ? vidDur : 0));
+    const effectiveDuration = Math.round(timelineDuration || estTotal);
     const seekTo = (off: number, i: number) => {
       setSel(i);
       const v = videoRef.current;
-      if (v) { try { v.currentTime = off; void v.play?.(); } catch { /* noop */ } }
+      const clickedTurn = turns[i];
+      const seekAt = clickedTurn?.speaker === "rep" && clickedTurn.detailAidSlideId
+        ? off + REVIEW_SLIDE_CUE_DELAY_SEC + 0.05
+        : off;
+      pendingSeekRef.current = seekAt;
+      if (v) {
+        try {
+          v.currentTime = seekAt;
+          const play = v.play?.();
+          if (play && typeof play.catch === "function") void play.catch(() => {});
+        } catch { /* noop */ }
+      }
     };
     const selTurn = turns[Math.min(sel, turns.length - 1)]!;
     // The turn currently PLAYING (by video position); the detail-aid slide follows it
@@ -768,13 +824,29 @@ function SessionDetail({ app }: { app: AppState }) {
               <video
                 ref={videoRef}
                 controls
+                preload="metadata"
                 src={s.recordingUrl}
                 onTimeUpdate={(e) => setNowSec(e.currentTarget.currentTime)}
                 onDurationChange={(e) => { const d = e.currentTarget.duration; if (isFinite(d) && d > 0) setVidDur(d); }}
                 // MediaRecorder webm has no duration header (duration === Infinity), which
                 // breaks the scrubber + click-to-seek; force a seek to the end so the browser
-                // computes the real duration, then snap back to the start.
-                onLoadedMetadata={(e) => { const v = e.currentTarget; if (!isFinite(v.duration)) { const fix = () => { v.removeEventListener("seeked", fix); v.currentTime = 0; }; v.addEventListener("seeked", fix); v.currentTime = 1e7; } }}
+                // computes the real duration. If the user clicks a transcript row while this fix
+                // is in flight, restore that requested seek instead of snapping back to 00:00.
+                onLoadedMetadata={(e) => {
+                  const v = e.currentTarget;
+                  if (!isFinite(v.duration) && !metadataFixingRef.current) {
+                    metadataFixingRef.current = true;
+                    const fix = () => {
+                      v.removeEventListener("seeked", fix);
+                      metadataFixingRef.current = false;
+                      const restore = pendingSeekRef.current;
+                      pendingSeekRef.current = null;
+                      v.currentTime = restore ?? 0;
+                    };
+                    v.addEventListener("seeked", fix);
+                    v.currentTime = 1e7;
+                  }
+                }}
                 style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", background: "#000" }}
               />
             ) : (
@@ -791,26 +863,19 @@ function SessionDetail({ app }: { app: AppState }) {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 2 }}>
               <span style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)" }}>Turn evidence</span>
               {(() => {
-                // "Coach this exchange": jump to Training with the doctor's question from THIS
-                // exchange pre-asked, so the reviewer coaches the exact line that needed work.
-                // Before the first HCP line (e.g. the greeting), fall back to the session's
-                // first doctor question — still a real line from this conversation.
-                const idx = turns.indexOf(activeTurn);
-                let q = "";
-                for (let j = idx; j >= 0; j--) if (turns[j]!.speaker === "hcp") { q = turns[j]!.text; break; }
-                if (!q) q = turns.find((t) => t.speaker === "hcp")?.text ?? "";
-                if (!q) return null;
+                const sessionId = app.selectedSessionId;
+                if (!sessionId) return null;
                 return (
                   <span
                     data-testid="coach-exchange"
                     onClick={() => {
-                      try { window.localStorage.setItem(TRAIN_SEED_KEY, JSON.stringify({ q, from: app.selectedSessionId })); } catch { /* storage disabled — Train still opens */ }
+                      try { window.localStorage.setItem(TRAIN_SEED_KEY, JSON.stringify({ mode: "session", sessionId })); } catch { /* storage disabled — Training still opens */ }
                       app.setStudioMode("train");
                       app.setNav("studio");
                     }}
                     style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer", whiteSpace: "nowrap" }}
                   >
-                    ✎ Coach this exchange →
+                    ✎ Coach this session →
                   </span>
                 );
               })()}
@@ -837,7 +902,7 @@ function SessionDetail({ app }: { app: AppState }) {
                 const playing = !!s.recordingUrl && nowSec >= off && nowSec < next;
                 const isSel = sel === i;
                 return (
-                  <div key={`${t.at ?? ""}:${t.speaker}:${i}`} onClick={() => seekTo(off, i)} style={{ display: "grid", gridTemplateColumns: "46px 1fr", gap: 10, padding: "9px 16px", borderBottom: "1px solid var(--dn-surface-2)", cursor: "pointer", background: isSel ? "rgba(6,73,172,.06)" : playing ? "var(--dn-surface-2)" : "transparent", borderLeft: `3px solid ${playing ? "var(--dn-brand-base)" : "transparent"}` }}>
+                  <div key={`${t.at ?? ""}:${t.speaker}:${i}`} data-testid="session-transcript-turn" data-turn-index={i} onClick={() => seekTo(off, i)} style={{ display: "grid", gridTemplateColumns: "46px 1fr", gap: 10, padding: "9px 16px", borderBottom: "1px solid var(--dn-surface-2)", cursor: "pointer", background: isSel ? "rgba(6,73,172,.06)" : playing ? "var(--dn-surface-2)" : "transparent", borderLeft: `3px solid ${playing ? "var(--dn-brand-base)" : "transparent"}` }}>
                     <span style={{ fontFamily: "var(--dn-font-mono)", fontSize: 11, color: "var(--dn-brand-light)", paddingTop: 2 }}>{mmss(Math.round(off))}</span>
                     <span>
                       <span style={{ display: "block", font: "700 9px/1 var(--dn-font-sans)", letterSpacing: ".06em", textTransform: "uppercase", color: t.speaker === "hcp" ? "var(--dn-fg-subtle)" : "var(--dn-brand-base)", marginBottom: 3 }}>{t.speaker === "hcp" ? "HCP" : "AI rep"}</span>
@@ -865,7 +930,9 @@ function SessionDetail({ app }: { app: AppState }) {
       <div style={eyebrow}>Session Detail</div>
       <h1 style={{ ...h1, marginBottom: 6 }}>{detail?.session.hcp ?? "Session"} — session review</h1>
       <div style={{ ...card, padding: "26px 24px", maxWidth: 760, marginBottom: 14, font: "400 13px/1.6 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>
-        No recorded turns yet — start a conversation in <strong style={{ color: "var(--dn-fg)" }}>Preview HCP experience</strong>. Every turn logs here with its sources and compliance decision.
+        {loading
+          ? "Loading the latest real session review..."
+          : loadError || <>No recorded turns yet — start a conversation in <strong style={{ color: "var(--dn-fg)" }}>Preview HCP experience</strong>. Every turn logs here with its sources and compliance decision.</>}
       </div>
       <div style={{ ...card, overflow: "hidden", maxWidth: 760 }}>{traceBox}</div>
     </div>

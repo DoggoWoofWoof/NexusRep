@@ -13,6 +13,8 @@ export interface VideoTransportEvents {
   onTrack: (kind: "video" | "audio", stream: MediaStream) => void;
   /** A finalized utterance from either side of the call, in canonical speakers. */
   onUtterance: (u: { speaker: "rep" | "hcp"; text: string }) => void;
+  /** Local doctor-mic state as reported by the WebRTC transport. */
+  onMicState?: (s: { desired: boolean; localAudio: boolean; reason: string; level?: number }) => void;
   /** Raw vendor events, for QA visibility only (vendor vocabulary allowed here). */
   onRawEvent?: (e: { type: string; role: string; text: string }) => void;
 }
@@ -26,9 +28,11 @@ export interface VideoCallTransport {
    *  greeting on join, where there's nothing to interrupt and an interrupt could disrupt Tavus). */
   speak(text: string, bargeIn?: boolean): boolean;
   /** Send typed doctor text into the PAL as user input, so Tavus runs its fast response path. */
-  respond(text: string): boolean;
+  respond(text: string, interrupt?: boolean): boolean;
+  /** Stop currently queued/playing agent speech. Used only after a user turn is finalized. */
+  stopAgentSpeech(): boolean;
   /** Enable/disable the doctor's microphone on the call (push-to-mute). */
-  setMicEnabled(on: boolean): void;
+  setMicEnabled(on: boolean): boolean;
   leave(): void;
 }
 
@@ -39,8 +43,8 @@ interface TransportOptions {
 
 /**
  * Tavus CVI transport: a Daily/WebRTC room plus Tavus "conversation.*" app-messages.
- * The interrupt-then-echo beat makes a barge-in read like a person pausing to pick
- * up the new question rather than an abrupt splice. This file is the ONLY client
+ * Echo/respond can send an interrupt for typed/scripted barge-in, but microphone
+ * barge-in is handled by Tavus native turn-taking. This file is the ONLY client
  * code that knows Tavus's protocol (echo/interrupt/utterance, the "replica" role).
  */
 function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
@@ -48,17 +52,57 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
     join: (o: { url: string; token?: string }) => Promise<unknown>;
     leave: () => void;
     destroy: () => Promise<void> | void;
-    setLocalAudio: (on: boolean) => void;
+    localAudio: () => boolean;
+    setLocalAudio: (on: boolean, options?: { forceDiscardTrack: boolean }) => void;
     sendAppMessage: (data: unknown, to?: string) => void;
     on: (event: string, cb: (ev: unknown) => void) => void;
+    startLocalAudioLevelObserver?: (interval?: number) => Promise<void>;
+    stopLocalAudioLevelObserver?: () => void;
+    isLocalAudioLevelObserverRunning?: () => boolean;
   };
   let call: CallObj | null = null;
+  let localMicTrack: MediaStreamTrack | null = null;
+  let rawMicStream: MediaStream | null = null;
+  let gatedMicTrack: MediaStreamTrack | null = null;
+  let micGateCtx: AudioContext | null = null;
+  let micGate: GainNode | null = null;
+  let usingSilentGate = false;
+  let desiredMicOn = false;
+  let currentEvents: VideoTransportEvents | null = null;
   const conversationId = (() => {
     try { return new URL(opts.conversationUrl).pathname.split("/").filter(Boolean).pop() || ""; } catch { return ""; }
   })();
+  const dailyAudioLive = () => {
+    try { return call?.localAudio() === true; } catch { return false; }
+  };
+  const localAudio = () => {
+    if (usingSilentGate) return desiredMicOn && dailyAudioLive();
+    return dailyAudioLive();
+  };
+  const emitMicState = (reason: string, level?: number) => {
+    currentEvents?.onMicState?.({ desired: desiredMicOn, localAudio: localAudio(), reason, ...(typeof level === "number" ? { level } : {}) });
+  };
+  const ensureLocalLevelObserver = () => {
+    try {
+      if (!call?.startLocalAudioLevelObserver || call.isLocalAudioLevelObserverRunning?.()) return;
+      void call.startLocalAudioLevelObserver(100).catch(() => undefined);
+    } catch {
+      /* observer is diagnostics only */
+    }
+  };
+  const sendInterrupt = (): boolean => {
+    if (!call) return false;
+    try {
+      call.sendAppMessage({ message_type: "conversation", event_type: "conversation.interrupt", conversation_id: conversationId }, "*");
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   return {
     async join(events: VideoTransportEvents): Promise<void> {
+      currentEvents = events;
       const Daily = (await import("@daily-co/daily-js")).default;
       // Daily allows ONE call object per page. A previous call whose async destroy hasn't
       // finished (closing and reopening the video quickly, a hot reload, an errored start)
@@ -67,12 +111,45 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
       if (existing) {
         try { await existing.destroy(); } catch { /* already gone */ }
       }
-      // Doctor mic starts OFF but must be re-enableable by the red mic button. We ACQUIRE the mic
-      // (audioSource:true) yet JOIN MUTED (setLocalAudio(false) below) — so clicking the mic simply
-      // unmutes an existing track. Creating with audioSource:false leaves NO track, and then
-      // setLocalAudio(true) can't turn the mic on at all (the doctor's voice never reaches Tavus →
-      // no ASR, no turn, no logs — the "voice mode doesn't work" regression).
-      call = Daily.createCallObject({ audioSource: true, videoSource: false }) as unknown as CallObj;
+      // Doctor mic starts OFF but must become live immediately when the red mic button is clicked.
+      // Pre-acquire the local audio track and give it to Daily, then join muted. That avoids the
+      // click-and-speak race where Daily is still creating the sender while the HCP's first words
+      // are already gone. The track is not sent until setLocalAudio(true).
+      try {
+        rawMicStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: false,
+        });
+        const rawTrack = rawMicStream.getAudioTracks()[0] ?? null;
+        const AudioContextCtor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (rawMicStream && rawTrack && AudioContextCtor) {
+          micGateCtx = new AudioContextCtor();
+          const src = micGateCtx.createMediaStreamSource(rawMicStream);
+          const gate = micGateCtx.createGain();
+          gate.gain.value = 0;
+          const dest = micGateCtx.createMediaStreamDestination();
+          src.connect(gate);
+          gate.connect(dest);
+          micGate = gate;
+          gatedMicTrack = dest.stream.getAudioTracks()[0] ?? null;
+          usingSilentGate = Boolean(gatedMicTrack);
+          localMicTrack = gatedMicTrack ?? rawTrack;
+        } else {
+          localMicTrack = rawTrack;
+        }
+      } catch {
+        rawMicStream = null;
+        localMicTrack = null;
+      }
+      call = Daily.createCallObject({
+        audioSource: localMicTrack ?? true,
+        videoSource: false,
+        // With a gated mic, Daily stays audio-on but receives digital silence while
+        // the UI is red/off. Opening the gate is instant, so the first syllable after
+        // a click is not lost to Daily's setLocalAudio warm-up.
+        startAudioOff: !usingSilentGate,
+      }) as unknown as CallObj;
+      emitMicState("call_object_created");
       call.on("track-started", (raw) => {
         const ev = raw as { participant?: { local?: boolean }; track?: MediaStreamTrack };
         if (ev?.participant?.local || !ev?.track) return;
@@ -100,8 +177,18 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
         const speaker = role.includes("replica") ? "rep" : role.includes("user") ? "hcp" : null;
         if (speaker) events.onUtterance({ speaker, text });
       });
+      call.on("participant-updated", (raw) => {
+        const ev = raw as { participant?: { local?: boolean } };
+        if (ev?.participant?.local) emitMicState("participant_updated");
+      });
+      call.on("local-audio-level", (raw) => {
+        const ev = raw as { audioLevel?: number; audio_level?: number; level?: number };
+        const level = Number(ev.audioLevel ?? ev.audio_level ?? ev.level ?? 0);
+        if (desiredMicOn) emitMicState("local_audio_level", Number.isFinite(level) ? level : 0);
+      });
       await call.join({ url: opts.conversationUrl, ...(opts.token ? { token: opts.token } : {}) });
-      try { call.setLocalAudio(false); } catch { /* keep default mic-off best-effort */ }
+      try { call.setLocalAudio(usingSilentGate, { forceDiscardTrack: false }); } catch { /* keep default mic-off best-effort */ }
+      emitMicState(usingSilentGate ? "join_silent_gate" : "join_muted");
     },
 
     speak(text: string, bargeIn = true): boolean {
@@ -116,13 +203,13 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
       if (!bargeIn) { echo(); return true; }
       try {
         // Gently stop any in-progress speech, then a short natural beat before the new answer.
-        c.sendAppMessage({ message_type: "conversation", event_type: "conversation.interrupt", conversation_id: conversationId }, "*");
+        sendInterrupt();
         setTimeout(echo, 220);
       } catch { echo(); }
       return true;
     },
 
-    respond(text: string): boolean {
+    respond(text: string, interrupt = false): boolean {
       const t = (text || "").trim();
       if (!call || !t) return false;
       const c = call;
@@ -138,10 +225,15 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
           /* not connected */
         }
       };
+      if (!interrupt) {
+        respond();
+        return true;
+      }
       try {
-        // For typed barge-in, stop any in-progress answer and let Tavus process the text
-        // as if the doctor had just spoken it. This avoids the slow app-fetch-then-echo path.
-        c.sendAppMessage({ message_type: "conversation", event_type: "conversation.interrupt", conversation_id: conversationId }, "*");
+        // For typed barge-in, stop an in-progress answer and let Tavus process the text as if the
+        // doctor had just spoken it. Idle typed turns skip this interrupt entirely; sending a stop
+        // command when nothing is speaking can reset Tavus turn-taking and add avoidable latency.
+        sendInterrupt();
         setTimeout(respond, 90);
       } catch {
         respond();
@@ -149,14 +241,64 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
       return true;
     },
 
-    setMicEnabled(on: boolean): void {
-      try { call?.setLocalAudio(on); } catch { /* not connected */ }
+    stopAgentSpeech(): boolean {
+      return sendInterrupt();
+    },
+
+    setMicEnabled(on: boolean): boolean {
+      desiredMicOn = on;
+      const c = call;
+      if (!c) {
+        emitMicState(on ? "set_before_join" : "off_before_join");
+        return false;
+      }
+      const apply = (reason: string) => {
+        try {
+          if (usingSilentGate) {
+            void micGateCtx?.resume().catch(() => undefined);
+            if (micGate && micGateCtx) micGate.gain.setValueAtTime(on ? 1 : 0, micGateCtx.currentTime);
+            // Keep the WebRTC sender hot. The gate, not Daily mute, is the user-facing mic state.
+            c.setLocalAudio(true, { forceDiscardTrack: false });
+          } else {
+            c.setLocalAudio(on, { forceDiscardTrack: false });
+          }
+          if (on) ensureLocalLevelObserver();
+        } catch {
+          /* not connected */
+        }
+        emitMicState(reason);
+      };
+      apply(on ? "set_local_audio_on" : "set_local_audio_off");
+      if (on) {
+        for (const delay of [80, 220, 520, 950]) {
+          window.setTimeout(() => {
+            if (!call || !desiredMicOn || localAudio()) return;
+            apply(`set_local_audio_on_retry_${delay}`);
+          }, delay);
+        }
+      }
+      return localAudio();
     },
 
     leave(): void {
       // destroy() is async — the join-side singleton guard handles a fast re-open racing it.
-      if (call) { try { call.leave(); void call.destroy(); } catch { /* noop */ } }
+      const c = call;
+      if (c) {
+        try { c.stopLocalAudioLevelObserver?.(); } catch { /* noop */ }
+        try { c.leave(); void c.destroy(); } catch { /* noop */ }
+      }
       call = null;
+      currentEvents = null;
+      desiredMicOn = false;
+      try { gatedMicTrack?.stop(); } catch { /* noop */ }
+      try { rawMicStream?.getTracks().forEach((track) => track.stop()); } catch { /* noop */ }
+      try { void micGateCtx?.close(); } catch { /* noop */ }
+      rawMicStream = null;
+      gatedMicTrack = null;
+      micGateCtx = null;
+      micGate = null;
+      usingSilentGate = false;
+      localMicTrack = null;
     },
   };
 }
