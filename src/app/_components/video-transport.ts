@@ -67,6 +67,10 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
   let micGateCtx: AudioContext | null = null;
   let micGate: GainNode | null = null;
   let usingSilentGate = false;
+  // Set once the local-audio-level observer reports a frame after the mic is turned on — proof the
+  // track is actually producing/sending audio (not merely toggled on). Reset on each turn-on so we
+  // re-confirm capture rather than trusting a stale flag.
+  let micLevelSeen = false;
   let desiredMicOn = false;
   let currentEvents: VideoTransportEvents | null = null;
   const conversationId = (() => {
@@ -75,12 +79,18 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
   const dailyAudioLive = () => {
     try { return call?.localAudio() === true; } catch { return false; }
   };
-  const localAudio = () => {
-    if (usingSilentGate) return desiredMicOn && dailyAudioLive();
-    return dailyAudioLive();
+  // "Capturing" = audio is ACTUALLY flowing to Tavus, not just the track toggled on. The UI's green
+  // "mic on" reflects THIS, so the doctor waits through the warm-up (amber) instead of speaking into a
+  // mic that isn't sending yet — the "first few seconds get dropped" bug. Needs: mic desired-on, the
+  // track live, a level frame observed since turn-on (the track is producing), and — with the silent
+  // gate — the AudioContext running (it starts SUSPENDED until a user gesture resumes it, during which
+  // the gated track is pure silence even with the gain open).
+  const capturing = () => {
+    if (!desiredMicOn || !dailyAudioLive() || !micLevelSeen) return false;
+    return usingSilentGate ? micGateCtx?.state === "running" : true;
   };
   const emitMicState = (reason: string, level?: number) => {
-    currentEvents?.onMicState?.({ desired: desiredMicOn, localAudio: localAudio(), reason, ...(typeof level === "number" ? { level } : {}) });
+    currentEvents?.onMicState?.({ desired: desiredMicOn, localAudio: capturing(), reason, ...(typeof level === "number" ? { level } : {}) });
   };
   const ensureLocalLevelObserver = () => {
     try {
@@ -184,10 +194,14 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
       call.on("local-audio-level", (raw) => {
         const ev = raw as { audioLevel?: number; audio_level?: number; level?: number };
         const level = Number(ev.audioLevel ?? ev.audio_level ?? ev.level ?? 0);
-        if (desiredMicOn) emitMicState("local_audio_level", Number.isFinite(level) ? level : 0);
+        // A level frame while the mic is on = the track is producing audio → capture confirmed.
+        if (desiredMicOn) { micLevelSeen = true; emitMicState("local_audio_level", Number.isFinite(level) ? level : 0); }
       });
       await call.join({ url: opts.conversationUrl, ...(opts.token ? { token: opts.token } : {}) });
       try { call.setLocalAudio(usingSilentGate, { forceDiscardTrack: false }); } catch { /* keep default mic-off best-effort */ }
+      // Start the level observer + nudge the gate's AudioContext toward running now (join follows the
+      // "Video rep" click, so we're still near a user gesture) — shortens the first-click warm-up.
+      if (usingSilentGate) { ensureLocalLevelObserver(); void micGateCtx?.resume().catch(() => undefined); }
       emitMicState(usingSilentGate ? "join_silent_gate" : "join_muted");
     },
 
@@ -247,6 +261,7 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
 
     setMicEnabled(on: boolean): boolean {
       desiredMicOn = on;
+      if (on) micLevelSeen = false; // re-confirm real capture after each turn-on (don't trust a stale flag)
       const c = call;
       if (!c) {
         emitMicState(on ? "set_before_join" : "off_before_join");
@@ -255,7 +270,9 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
       const apply = (reason: string) => {
         try {
           if (usingSilentGate) {
-            void micGateCtx?.resume().catch(() => undefined);
+            // Resume the (suspended-at-join) gate context on this click, and re-emit once it's RUNNING
+            // so the UI flips from "starting" (amber) to "on" (green) exactly when audio can flow.
+            if (on) micGateCtx?.resume().then(() => emitMicState("gate_ctx_resumed")).catch(() => undefined);
             if (micGate && micGateCtx) micGate.gain.setValueAtTime(on ? 1 : 0, micGateCtx.currentTime);
             // Keep the WebRTC sender hot. The gate, not Daily mute, is the user-facing mic state.
             c.setLocalAudio(true, { forceDiscardTrack: false });
@@ -270,14 +287,25 @@ function createTavusCviTransport(opts: TransportOptions): VideoCallTransport {
       };
       apply(on ? "set_local_audio_on" : "set_local_audio_off");
       if (on) {
+        // Retry until the TRACK is live (dailyAudioLive), not until fully capturing — capture is
+        // confirmed separately by the level observer + resumed context (see capturing()).
         for (const delay of [80, 220, 520, 950]) {
           window.setTimeout(() => {
-            if (!call || !desiredMicOn || localAudio()) return;
+            if (!call || !desiredMicOn || dailyAudioLive()) return;
             apply(`set_local_audio_on_retry_${delay}`);
           }, delay);
         }
+        // Fallback so the mic still confirms "on" (green) within ~1.1s on a browser without the
+        // level observer: if the track is live (+ gate running) but no level frame arrived, treat the
+        // warm-up as done. The observer path confirms faster when available.
+        window.setTimeout(() => {
+          if (call && desiredMicOn && !micLevelSeen && dailyAudioLive() && (!usingSilentGate || micGateCtx?.state === "running")) {
+            micLevelSeen = true;
+            emitMicState("capture_warmup_fallback");
+          }
+        }, 1100);
       }
-      return localAudio();
+      return capturing();
     },
 
     leave(): void {

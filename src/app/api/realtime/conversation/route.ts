@@ -213,30 +213,18 @@ async function startConversation(body: { hcpId?: unknown }, ownerUserId: string 
     session = await provider.startSession(startArgs);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // Self-heal the concurrent-conversation cap: previews that closed without ending (a
-    // tab shut mid-call, a process restart) leave live conversations that pile up to
-    // Tavus's limit. End the stale ones and retry ONCE before giving up.
-    if (/maximum concurrent conversations/i.test(message)) {
-      const ended = await provider.endActiveConversations();
-      if (ended > 0) {
-        try {
-          session = await provider.startSession(startArgs);
-        } catch (retryError) {
-          return {
-            provider: provider.name, configured: false, conversationUrl: null, token: null, sessionId: hist.id,
-            reachableLlm: !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl),
-            note: `The DocNexus Agent could not start: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
-          };
-        }
-      }
-    }
-    if (!session) {
-      return {
-        provider: provider.name, configured: false, conversationUrl: null, token: null, sessionId: hist.id,
-        reachableLlm: !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl),
-        note: `The DocNexus Agent could not start: ${message}`,
-      };
-    }
+    // At the concurrent-conversation cap (now 3 slots), REPORT it — do NOT force-evict. The old
+    // endActiveConversations() ended EVERY live conversation to free a slot, which would kill a
+    // colleague's in-progress call. A closed preview already ends its own conversation, so the cap
+    // is only hit by genuine concurrent use; the honest answer is "busy", not hijacking someone.
+    const atCapacity = /maximum concurrent conversations/i.test(message);
+    return {
+      provider: provider.name, configured: false, conversationUrl: null, token: null, sessionId: hist.id,
+      reachableLlm: !/localhost|127\.0\.0\.1/.test(env.publicBaseUrl),
+      note: atCapacity
+        ? "All video-rep lines are busy right now (up to 3 at once). Please close an open preview or try again in a moment."
+        : `The DocNexus Agent could not start: ${message}`,
+    };
   }
 
   // Link the Tavus conversation id to our per-call session, so the recording_ready
