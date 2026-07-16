@@ -124,11 +124,15 @@ async function startConversation(body: { hcpId?: unknown }, ownerUserId: string 
   const agentId = studioSnap?.appearance?.agentId || (await resolveDefaultAgentId());
 
   // Identity: honor the invite link's hcpId only when it resolves to a real cohort member.
-  const hcpId = typeof body.hcpId === "string" && c.targeting.has(body.hcpId) ? asId<"hcp_id">(body.hcpId) : c.demo.hcpId;
+  // No real cohort member → this is a BRAND-USER PREVIEW (we use /hcp for preview since Launch/invite
+  // isn't wired), so mark it: the session shows as "Preview", never a doctor's name, and an empty one
+  // can be pruned as stray clutter.
+  const isRealHcp = typeof body.hcpId === "string" && c.targeting.has(body.hcpId);
+  const hcpId = isRealHcp ? asId<"hcp_id">(body.hcpId as string) : c.demo.hcpId;
   // Each video call is its own reviewable session, so its transcript is exactly
   // that call (not pooled into the shared demo session). The recording attaches
   // to it via the recording_ready webhook (keyed by the Tavus conversation id).
-  const hist = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId });
+  const hist = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId, preview: !isRealHcp });
   // Mark this as the active call so /api/tavus/llm logs the authoritative transcript here (with
   // slideIds), and log the opening greeting once server-side (Tavus speaks it directly, not via
   // the LLM endpoint, so the endpoint never sees it).

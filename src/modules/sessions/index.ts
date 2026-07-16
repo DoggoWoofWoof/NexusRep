@@ -47,6 +47,9 @@ export interface ConversationSession {
   recordingUrl?: string;
   /** Review timeline source. "recorded" means turn.at is already synced to the playback recording. */
   timelineSource?: "recorded";
+  /** True when this is a BRAND-USER PREVIEW (opened /hcp to try the rep) rather than a real invited
+   *  HCP. Drives the "Preview" label (never a doctor's name) and lets stray empty previews be pruned. */
+  preview?: boolean;
 }
 
 /** Severity ordering so a session's status reflects its worst turn. */
@@ -121,7 +124,7 @@ export class SessionService {
   }
 
   /** Open a session. `startedAt`/`seed` are injectable so tests stay deterministic. */
-  async start(input: { aiRepId: AiRepId; hcpId: HcpId; startedAt?: string; seed?: string }): Promise<ConversationSession> {
+  async start(input: { aiRepId: AiRepId; hcpId: HcpId; startedAt?: string; seed?: string; preview?: boolean }): Promise<ConversationSession> {
     return this.sessions.insert({
       id: newId<"session_id">("session", input.seed) as SessionId,
       aiRepId: input.aiRepId,
@@ -131,7 +134,29 @@ export class SessionService {
       questionCount: 0,
       complianceStatus: "approved",
       turns: [],
+      ...(input.preview ? { preview: true } : {}),
     });
+  }
+
+  /**
+   * Delete STRAY preview sessions: a brand-user preview that produced NO recording and NO real Q&A
+   * (just the greeting). NEVER removes a session with a recording, real questions, the live call, or
+   * one still recent (may be in use in another tab) — `endedSessionId` is the one the caller just
+   * ended, eligible even if recent because the user ended it. Returns the ids removed.
+   */
+  async pruneStrayPreviews(opts: { activeSessionId?: string | null; endedSessionId?: string | null; graceMs?: number } = {}): Promise<string[]> {
+    const grace = opts.graceMs ?? 10 * 60_000;
+    const now = Date.now();
+    const removed: string[] = [];
+    for (const s of await this.sessions.list()) {
+      if (!s.preview || s.recordingUrl || s.questionCount > 0) continue; // keep recorded / real-Q&A / non-preview
+      if (String(s.id) === String(opts.activeSessionId ?? "")) continue; // never the live call
+      const startedMs = Date.parse(s.startedAt);
+      const recent = Number.isFinite(startedMs) && now - startedMs < grace;
+      if (recent && String(s.id) !== String(opts.endedSessionId ?? "")) continue; // spare a possibly in-use recent one
+      if (await this.sessions.delete(String(s.id))) removed.push(String(s.id));
+    }
+    return removed;
   }
 
   async appendTurn(
@@ -219,6 +244,13 @@ export class SessionService {
     const [match] = await this.sessions.list({ where: { vendorConversationId } });
     if (!match) return null;
     return this.sessions.update(match.id, { recordingUrl });
+  }
+
+  /** Attach a playback recording URL directly by session id — used by the client-side capture
+   *  upload (the browser knows its own session id), independent of any vendor conversation id. */
+  async setRecordingUrl(sessionId: SessionId, recordingUrl: string): Promise<ConversationSession | null> {
+    if (!(await this.sessions.get(sessionId))) return null;
+    return this.sessions.update(sessionId, { recordingUrl });
   }
 
   async get(sessionId: SessionId): Promise<ConversationSession | null> {

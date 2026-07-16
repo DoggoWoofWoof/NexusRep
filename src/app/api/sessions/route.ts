@@ -43,7 +43,8 @@ export async function GET(): Promise<NextResponse> {
     const fu = sessionFollowups[0];
     return {
       id: s.id,
-      hcp: c.targeting.get(String(s.hcpId))?.name ?? hcpNameOf(s.hcpId), // live cohort first (DocNexus ids)
+      // A brand-user preview (opened /hcp to try the rep) is never a real doctor — show "Preview".
+      hcp: s.preview ? "Preview (you)" : c.targeting.get(String(s.hcpId))?.name ?? hcpNameOf(s.hcpId),
       date: s.startedAt.replace("T", " ").slice(0, 16),
       duration: mmss(deriveSessionDurationSeconds(s)),
       questions: s.questionCount,

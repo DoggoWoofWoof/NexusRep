@@ -37,8 +37,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   return NextResponse.json({
     session: {
       id: session.id,
-      // Live cohort first (canonical ids from the claims source), demo-seed names as fallback.
-      hcp: c.targeting.get(String(session.hcpId))?.name ?? hcpNameOf(session.hcpId),
+      // A brand-user preview (opened /hcp to try the rep) is never a real doctor — show "Preview".
+      // Otherwise live cohort first (canonical ids from the claims source), demo-seed names as fallback.
+      hcp: session.preview ? "Preview (you)" : c.targeting.get(String(session.hcpId))?.name ?? hcpNameOf(session.hcpId),
       startedAt: session.startedAt,
       durationSeconds: deriveSessionDurationSeconds(session),
       questionCount: session.questionCount,

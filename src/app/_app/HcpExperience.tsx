@@ -384,7 +384,22 @@ export function HcpExperience({ app }: { app?: AppState }) {
       (interim) => { lastInterimAt = nowMs(); if (interim) setInput(interim); }, // live text + finalize timing
     );
   }
-  function toggleVideoMode() {
+  // Leaving a video preview: capture the recording (idempotent — the End-video button may already
+  // have), then prune the session if it was an empty stray preview. Safe from every exit path; the
+  // server prune never touches an active/recorded/real-Q&A session.
+  async function endVideoSession() {
+    const sid = videoSessionRef.current?.sessionId ?? null;
+    try { await videoAgentRef.current?.finalizeRecording(); } catch { /* best effort */ }
+    try {
+      await fetch("/api/sessions/prune", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sid ? { endedSessionId: sid } : {}),
+      });
+    } catch { /* best effort */ }
+  }
+  async function toggleVideoMode() {
+    if (videoOn) await endVideoSession(); // turning the video OFF → finalize the clip + prune if stray
     interruptPlayback();
     setVideoOn((v) => !v);
     setVideoMuted(false);
@@ -528,7 +543,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
               {/* LEFT — the rep (live Tavus video OR the 3D/2D avatar) + one ask bar */}
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {videoOn
-                  ? <VideoAgentStage onMutedChange={setVideoMuted} onMicReadyChange={(ready) => { setVideoMicReady(ready); if (!ready) { setCallMicOn(false); setVideoMicActive(false); } }} onDoctorMicActiveChange={setVideoMicActive} onSessionReady={setActiveVideoSession} onHcpUtterance={addSpokenHcpTurn} normalizeHcpUtterance={correctSpokenHcpText} ref={videoAgentRef} onClose={() => { setVideoOn(false); setActiveVideoSession(null); setVideoMicReady(false); setVideoMicActive(false); setCallMicOn(false); }} onRepTurn={syncVideoRepTurn} onRepAudioStart={onRepAudioStart} onHcpSpeechStart={cancelSlideCue} hcpId={inviteHcpId || undefined} />
+                  ? <VideoAgentStage recordSession onMutedChange={setVideoMuted} onMicReadyChange={(ready) => { setVideoMicReady(ready); if (!ready) { setCallMicOn(false); setVideoMicActive(false); } }} onDoctorMicActiveChange={setVideoMicActive} onSessionReady={setActiveVideoSession} onHcpUtterance={addSpokenHcpTurn} normalizeHcpUtterance={correctSpokenHcpText} ref={videoAgentRef} onClose={() => { void endVideoSession(); setVideoOn(false); setActiveVideoSession(null); setVideoMicReady(false); setVideoMicActive(false); setCallMicOn(false); }} onRepTurn={syncVideoRepTurn} onRepAudioStart={onRepAudioStart} onHcpSpeechStart={cancelSlideCue} hcpId={inviteHcpId || undefined} />
                   : <LiveAvatar ref={liveRef} enabled={threeD} speaking={speaking} fallbackStream={null} fallbackStatus={listening ? "Listening…" : speaking ? "Speaking…" : "Ready"} height={300} />}
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "15px 16px", boxShadow: "var(--dn-shadow-card)" }}>{hintsCard}{askBar("Ask")}{tryChips}</div>
                 <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, padding: "12px 14px", boxShadow: "var(--dn-shadow-card)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -553,7 +568,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
                     // (speaker), never the doctor's mic. "Muted" alone reads as mic-muted.
                     style={{ ...ghostMd, minWidth: 126, textAlign: "center", ...((videoOn ? !videoMuted : voiceOn) ? {} : { background: "#fee2e2", color: "#b91c1c", border: "1px solid #fecaca" }) }}
                   >{(videoOn ? !videoMuted : voiceOn) ? "🔊 Rep voice on" : "🔇 Rep voice off"}</button>
-                  <button onClick={() => setScr("complete")} style={{ marginLeft: "auto", padding: "10px 16px", background: "var(--dn-brand-dark)", color: "#fff", border: "none", borderRadius: 9, font: "600 12px/1 var(--dn-font-sans)", cursor: "pointer" }}>End session →</button>
+                  <button onClick={async () => { if (videoOn) await endVideoSession(); setScr("complete"); }} style={{ marginLeft: "auto", padding: "10px 16px", background: "var(--dn-brand-dark)", color: "#fff", border: "none", borderRadius: 9, font: "600 12px/1 var(--dn-font-sans)", cursor: "pointer" }}>End session →</button>
                 </div>
               </div>
               {/* RIGHT — the approved slides ON TOP, captions BELOW (swapped) */}
@@ -586,7 +601,7 @@ export function HcpExperience({ app }: { app?: AppState }) {
             <div style={{ width: 56, height: 56, borderRadius: "50%", background: "var(--dn-accent-green-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 26, color: "#166534" }}>✓</div>
             <h1 style={{ font: "600 21px/1.25 var(--dn-font-sans)", margin: 0, color: "var(--dn-fg)" }}>Thanks for your time</h1>
             <p style={{ font: "400 13px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "10px 0 20px" }}>Request a follow-up and we&apos;ll send approved {displayName} information or connect you with our team.</p>
-            <button onClick={() => { cancelSlideCue(); setScr("invite"); setMsgs([]); setNotice(""); setDeckFocus(""); setVideoOn(false); setActiveVideoSession(null); chatSessionRef.current = null; }} style={{ width: "100%", padding: 12, background: "var(--dn-surface-2)", color: "var(--dn-fg-muted)", border: "1px solid var(--dn-border)", borderRadius: 10, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Close session</button>
+            <button onClick={async () => { if (videoOn) await endVideoSession(); cancelSlideCue(); setScr("invite"); setMsgs([]); setNotice(""); setDeckFocus(""); setVideoOn(false); setActiveVideoSession(null); chatSessionRef.current = null; }} style={{ width: "100%", padding: 12, background: "var(--dn-surface-2)", color: "var(--dn-fg-muted)", border: "1px solid var(--dn-border)", borderRadius: 10, font: "600 12.5px/1 var(--dn-font-sans)", cursor: "pointer" }}>Close session</button>
           </div>
         </div>
       )}

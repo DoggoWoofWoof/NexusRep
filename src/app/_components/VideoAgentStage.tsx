@@ -36,6 +36,10 @@ export interface VideoAgentStageHandle {
   setMuted: (muted: boolean) => void;
   /** Enable/disable the doctor's own microphone on the call. */
   setMicEnabled: (on: boolean) => void;
+  /** Stop the client-side recording and upload it to the session (idempotent). Awaited by the
+   *  "end session" flows so the replica clip is attached before the call tears down. No-op unless
+   *  recordSession captured a clip. */
+  finalizeRecording: () => Promise<void>;
 }
 
 type RepTurnNotice = { text: string; detailAidSlideId?: string | null; sourceIds?: string[] };
@@ -55,6 +59,9 @@ type VideoAgentStageProps = {
   onMicReadyChange?: (ready: boolean) => void;
   onDoctorMicActiveChange?: (active: boolean) => void;
   onSessionReady?: (session: VideoSessionNotice | null) => void;
+  /** Record the replica clip during a normal doctor session and upload it on end (Tavus's own
+   *  recording is off on our account, so we capture it ourselves). Independent of bare/bot mode. */
+  recordSession?: boolean;
 };
 
 function estimateReplicaSpeechMs(text: string): number {
@@ -77,7 +84,7 @@ function isRepRawEvent(e: { type: string; role: string }): boolean {
     /(?:^|[._-])(?:replica|assistant|agent|pal|face)(?:[._-]|$)/.test(type);
 }
 
-export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStageProps>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, normalizeHcpUtterance, hcpId, onMutedChange, onRepAudioStart, onHcpSpeechStart, onMicReadyChange, onDoctorMicActiveChange, onSessionReady }, ref) {
+export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStageProps>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, normalizeHcpUtterance, hcpId, onMutedChange, onRepAudioStart, onHcpSpeechStart, onMicReadyChange, onDoctorMicActiveChange, onSessionReady, recordSession = false }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const transportRef = useRef<VideoCallTransport | null>(null);
@@ -85,6 +92,12 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
   const sessionIdRef = useRef<string | null>(null);
   const convIdRef = useRef<string>("");
   const lastUtterRef = useRef<string>("");
+  // Client-side session recording: the live recorder's chunks/mime + a stop fn, so the "end session"
+  // flow can stop it and upload the replica clip. recordSession is read via a ref so the (run-once)
+  // join effect sees the current value. recordingDoneRef makes finalizeRecording idempotent.
+  const recorderRef = useRef<{ stop: () => void; chunks: BlobPart[]; mime: string } | null>(null);
+  const recordingDoneRef = useRef(false);
+  const recordSessionRef = useRef(recordSession);
   const onRepTurnRef = useRef<typeof onRepTurn>(onRepTurn);
   // Fires when the replica's AUDIO starts (vendor_started_speaking), so the parent anchors the
   // detail-aid slide switch to when the rep actually begins speaking — then times the cue offset
@@ -147,8 +160,33 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
     return true;
   };
   const applyMuted = (m: boolean) => { setMuted(m); onMutedChange?.(m); };
+  // Stop the client-side replica recording and upload it to this session, then attach it. Idempotent
+  // (the "End video" button AND the parent's end-session flow may both call it). We record the clip
+  // ourselves because Tavus's own recording is off on this account — see /api/sessions/recording.
+  const finalizeRecording = async (): Promise<void> => {
+    if (recordingDoneRef.current) return;
+    const r = recorderRef.current;
+    const sid = sessionIdRef.current;
+    if (!r || !sid) return;
+    recordingDoneRef.current = true;
+    try {
+      r.stop();
+      await new Promise((resolve) => window.setTimeout(resolve, 1200)); // let the final MediaRecorder chunk land
+      const blob = new Blob(r.chunks, { type: r.mime });
+      if (!blob.size) { recordingDoneRef.current = false; return; }
+      const res = await fetch("/api/sessions/recording", {
+        method: "POST",
+        headers: { "Content-Type": r.mime, "x-nexusrep-session-id": sid },
+        body: blob,
+      });
+      recordTiming({ type: "recording_uploaded", reason: res.ok ? `${blob.size}B` : `http_${res.status}` });
+    } catch {
+      recordingDoneRef.current = false; // let a later end trigger retry
+    }
+  };
   useImperativeHandle(ref, () => ({
     speak: (text: string, detailAidSlideId?: string | null) => speakAgent(text, detailAidSlideId),
+    finalizeRecording,
     respond: (text: string) => {
       // A typed/scripted video turn should prevent the scheduled greeting from firing after the
       // doctor has already asked something. If the greeting is merely pending, cancel it locally;
@@ -189,7 +227,8 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
     onDoctorMicActiveChangeRef.current = onDoctorMicActiveChange;
     onSessionReadyRef.current = onSessionReady;
     normalizeHcpUtteranceRef.current = normalizeHcpUtterance;
-  }, [onRepTurn, onRepAudioStart, onHcpSpeechStart, onMicReadyChange, onDoctorMicActiveChange, onSessionReady, normalizeHcpUtterance]);
+    recordSessionRef.current = recordSession;
+  }, [onRepTurn, onRepAudioStart, onHcpSpeechStart, onMicReadyChange, onDoctorMicActiveChange, onSessionReady, normalizeHcpUtterance, recordSession]);
 
   function setDoctorMicActive(active: boolean, reason: string) {
     if (doctorMicActiveRef.current === active) return;
@@ -667,7 +706,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
         let recStarted = false;
         let recReadyResolve: (() => void) | null = null;
         const recReady = new Promise<void>((resolve) => { recReadyResolve = resolve; });
-        const recWanted = () => bare || (window as unknown as { __nexusrepRecord?: boolean }).__nexusrepRecord === true;
+        const recWanted = () => bare || recordSessionRef.current || (window as unknown as { __nexusrepRecord?: boolean }).__nexusrepRecord === true;
         const waitForRecReady = async (timeoutMs: number) => {
           if (!recWanted() || recStarted) return;
           await Promise.race([
@@ -693,6 +732,8 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
             const startedAt = Date.now();
             rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
             rec.start(1000);
+            // Hold the live recorder so finalizeRecording() can stop + upload it when the call ends.
+            recorderRef.current = { chunks, mime, stop: () => { try { if (rec.state !== "inactive") { rec.requestData(); rec.stop(); } } catch { /* already stopped */ } } };
             recordTiming({ type: "recording_started", reason: hasAudio ? "media_tracks" : "video_only_fallback" });
             (window as unknown as { __nexusrepRec?: unknown }).__nexusrepRec = {
               mimeType: mime,
@@ -961,6 +1002,9 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
       // Flush (not drop) any held caption so the LAST answer the rep spoke still lands in the
       // transcript when the doctor ends the call before its release fired. Synchronous (skipHydrate).
       void notifyPendingRepEcho("unmount", true);
+      // Best-effort: capture the recording if the call is torn down without the End button (nav away).
+      // The reliable path is the End button, which awaits this before closing.
+      void finalizeRecording();
       transportRef.current?.leave();
       transportRef.current = null;
       onSessionReadyRef.current?.(null);
@@ -1016,7 +1060,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
           {/* No overlay controls on the pane besides End video: agent audio is the header
               Sound button, and your microphone is the ask-bar mic button (both proxy to
               the stage handle). */}
-          <button onClick={onClose} style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>End video</button>
+          <button onClick={() => { void finalizeRecording().finally(onClose); }} style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", borderRadius: 8, padding: "5px 10px", fontSize: 12, cursor: "pointer" }}>End video</button>
         </div>
       )}
     </div>

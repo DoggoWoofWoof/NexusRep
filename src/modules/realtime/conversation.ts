@@ -86,7 +86,7 @@ function sameTurnText(a: string, b: string): boolean {
 export class ConversationService {
   constructor(private readonly deps: ConversationDeps) {}
 
-  async start(input: { aiRepId: AiRepId; hcpId: TurnContext["hcpId"]; startedAt?: string; seed?: string }): Promise<ConversationSession> {
+  async start(input: { aiRepId: AiRepId; hcpId: TurnContext["hcpId"]; startedAt?: string; seed?: string; preview?: boolean }): Promise<ConversationSession> {
     return this.deps.sessions.start(input);
   }
 
