@@ -38,6 +38,9 @@ next-env.d.ts
 # recordings are generated demo artifacts; keep the folder, not the videos
 /public/recordings/*
 !/public/recordings/.gitkeep
+# ...except one committed sample clip, so the seeded "Preview (you)" session has a playable
+# video on Render (runtime-captured clips live only on the machine that recorded them).
+!/public/recordings/demo-preview.webm
 
 # misc
 .DS_Store

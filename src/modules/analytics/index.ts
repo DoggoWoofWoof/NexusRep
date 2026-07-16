@@ -115,13 +115,16 @@ export class AnalyticsService {
 
   /** Compute all tabs at once (single pass over the stores). */
   async all(): Promise<Record<AnalyticsTab, Metric[]>> {
-    const [sessions, followups, crm, answers, cc] = await Promise.all([
+    const [allSessions, followups, crm, answers, cc] = await Promise.all([
       this.deps.sessions.list(),
       this.deps.followups.list(),
       this.deps.crm.list(),
       this.deps.content.listAnswers(),
       this.complianceCounts(),
     ]);
+    // Engagement measures REAL HCP details — exclude brand-user preview sessions (the operator
+    // trying their own rep), which otherwise inflate session/question counts with self-tests.
+    const sessions = allSessions.filter((s) => !s.preview);
     // Measured compliance rates — "—" until there's a turn to measure, so the gate's
     // guarantee is shown as a real number, never an unbacked "100%".
     const groundedDen = cc.grounded + cc.ungroundedBlocked;
@@ -256,11 +259,13 @@ export class AnalyticsService {
     statusBreakdown: { label: string; count: number; tone: Metric["tone"] }[];
     topicMix: { total: number; slices: TopicSlice[] };
   }> {
-    const [sessions, followups, topicMix] = await Promise.all([
+    const [allSessions, followups, topicMix] = await Promise.all([
       this.deps.sessions.list(),
       this.deps.followups.list(),
       this.topicDistribution(),
     ]);
+    // Same as all(): the funnel counts real HCP details, not brand-user preview self-tests.
+    const sessions = allSessions.filter((s) => !s.preview);
     const target = this.deps.targeting.cohortSize();
     const started = sessions.length;
     const completed = sessions.filter((s) => s.durationSeconds > 0).length;

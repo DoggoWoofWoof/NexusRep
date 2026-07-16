@@ -50,18 +50,21 @@ function openerFor(seed: string): string {
 }
 
 /**
- * Natural, CLAIM-FREE ways a human rep points at the detail aid MID-answer ("you can see
- * this on the … slide"). They carry NO medical/efficacy/safety content — they are controlled
- * framing that references the on-screen slide, NOT a generated claim — so they pass the gate
- * exactly like the openers do. Placed AFTER the approved body so the slide changes as the rep
- * gets to it (not on the first word). Deterministic pick keeps transcripts reproducible.
+ * Natural, CLAIM-FREE ways a human rep points at the detail aid UP FRONT ("I've pulled up the …
+ * slide"). They carry NO medical/efficacy/safety content — they are controlled framing that
+ * references the on-screen slide, NOT a generated claim — so they pass the gate exactly like the
+ * openers do. Placed EARLY (right after the opener, before the approved body) so the deck switches
+ * as the rep BEGINS the answer, not after they've already said everything — a rep puts the slide up
+ * and then talks to it. (This was the "slide only moved at the very end" bug: the cue trailed the
+ * whole answer, and the client times the switch to the spoken cue.) Deterministic pick keeps
+ * transcripts reproducible.
  */
 const SLIDE_CUES = [
   "You can see this on the {slide} slide I've put up on your screen.",
-  "You can look at the {slide} slide here, where the same approved points are laid out.",
+  "I'm showing the {slide} slide here, where the same approved points are laid out.",
   "I've pulled up the {slide} slide here so you can follow along.",
-  "That's all laid out on the {slide} slide on your screen now.",
-  "Take a look at the {slide} slide I'm showing — it walks through the same points.",
+  "I've put the {slide} slide up on your screen for this.",
+  "Take a look at the {slide} slide I'm showing as I walk through this.",
 ];
 
 /** How a rep gestures at a SECOND relevant slide — using more of the deck, not just page one. */
@@ -96,6 +99,21 @@ export function slideReference(opts: { seed: string; slideTitle?: string; relate
   return ` ${lead}${rel}`;
 }
 
+/**
+ * Weave a slide cue in EARLY — right after the opening sentence — so the rep points at the slide up
+ * front and the deck switches as they BEGIN the answer, not after everything has been said. If the
+ * body is a single sentence (no opener to sit behind), lead with the cue. Used by both the
+ * deterministic builder and the orchestrator's always-mention fallback so placement is identical.
+ */
+export function weaveSlideCueEarly(body: string, cue: string): string {
+  const c = cue.trim();
+  if (!c) return body;
+  const b = body.trim();
+  const m = /^(.+?[.!?])\s+(\S[\s\S]*)$/.exec(b); // first sentence, then the rest
+  if (m && m[2]) return `${m[1]} ${c} ${m[2]}`;
+  return `${c} ${b}`;
+}
+
 export function buildApprovedResponse(
   answers: ApprovedAnswer[],
   opts: { isi?: SafetyStatement; includeIsi: boolean; slideTitle?: string; relatedTitle?: string; seed?: string },
@@ -105,7 +123,9 @@ export function buildApprovedResponse(
 
   const seed = opts.seed ?? String(top.id);
   const ref = slideReference({ seed, slideTitle: opts.slideTitle, relatedTitle: opts.relatedTitle });
-  let text = `${openerFor(seed)} ${top.text}${ref}`;
+  // Cue goes EARLY (after the opener, before the medical body) so the deck switches as the rep
+  // starts, not after the whole answer is spoken. ISI (below) always stays last.
+  let text = weaveSlideCueEarly(`${openerFor(seed)} ${top.text}`, ref);
   let isiAppended = false;
   if (opts.includeIsi && opts.isi) {
     text = `${text}\n\nImportant Safety Information: ${opts.isi.text}`;

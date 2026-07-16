@@ -41,12 +41,27 @@ export async function POST(req: Request): Promise<NextResponse> {
   const c = await getContainer();
   const sessionId = asId<"session_id">(sessionIdRaw);
   if (!(await c.sessions.get(sessionId))) {
+    console.warn(`[recording] upload rejected: session ${sessionIdRaw} not in this account's container`);
     return NextResponse.json({ ok: false, error: "no such session in this account" }, { status: 404 });
   }
 
-  const { url } = await getRecordingStore().save({ sessionId: sessionIdRaw, bytes, contentType });
+  // Diagnostics: on Render this is how we confirm a clip actually saved + attached (the "video pane
+  // shows but nothing loads" report). One [recording] line per step, greppable in the host logs.
+  const store = getRecordingStore();
+  console.info(`[recording] upload: session=${sessionIdRaw} bytes=${bytes.byteLength} type=${contentType} store=${store.name}`);
+  let url: string;
+  try {
+    ({ url } = await store.save({ sessionId: sessionIdRaw, bytes, contentType }));
+  } catch (e) {
+    console.error(`[recording] SAVE FAILED for ${sessionIdRaw}:`, e);
+    return NextResponse.json({ ok: false, error: "could not persist recording" }, { status: 500 });
+  }
   const attached = await c.sessions.setRecordingUrl(sessionId, url);
-  if (!attached) return NextResponse.json({ ok: false, error: "could not attach recording" }, { status: 500 });
+  if (!attached) {
+    console.error(`[recording] attach FAILED for ${sessionIdRaw} (saved to ${url})`);
+    return NextResponse.json({ ok: false, error: "could not attach recording" }, { status: 500 });
+  }
+  console.info(`[recording] saved + attached: session=${sessionIdRaw} url=${url}`);
 
   await c.audit.record(sessionId, "response_output", { recording: url, bytes: bytes.byteLength, source: "client_capture" });
   return NextResponse.json({ ok: true, url });

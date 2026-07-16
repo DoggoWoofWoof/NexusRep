@@ -228,9 +228,11 @@ export function HcpExperience({ app }: { app?: AppState }) {
   async function ask(q: string) {
     const text = correctSpokenHcpText(q.trim());
     if (!text) return;
-    // Barge-in: a new question interrupts whatever the rep is still saying.
+    // Barge-in: a new question interrupts whatever the rep is still saying — including an in-progress
+    // guided overview walk (so the doctor's question stops the walk instead of talking over it).
     const gen = ++playGenRef.current;
     voiceRef.current?.cancel();
+    videoAgentRef.current?.cancelOverview();
     cancelSlideCue();
     setSpeaking(false);
     setInput("");
@@ -244,6 +246,34 @@ export function HcpExperience({ app }: { app?: AppState }) {
     const sessionId = videoSessionId ?? chatSessionRef.current ?? undefined;
     setPending(true);
     try {
+      // Guided overview walks the WHOLE deck from the start — several approved segments, one slide
+      // each. This runs for BOTH video and off-video (before the single-turn video path below), so
+      // "Start overview" on the video preview actually walks the deck instead of asking one question.
+      if (isOverviewPrompt(text, { productTerms: brand?.productTerms ?? [] })) {
+        setMsgs((m) => [...m, { role: "hcp", text }]);
+        const res = await fetch("/api/presentation/overview", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, sessionId, newSession: openNew, hcpId: inviteHcpId || undefined }),
+        });
+        const data = (await res.json()) as { sessionId?: string; segments?: OverviewSegment[] };
+        if (playGenRef.current !== gen) return;
+        if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
+        finishPending(gen); // input is live again — the walk below is interruptible (cancelOverview)
+        const segments = data.segments ?? [];
+        if (videoOn) {
+          // The live replica speaks each approved segment in order, switching the deck per segment,
+          // paced on it actually finishing each one. Canceled by the next question (barge-in above).
+          await videoAgentRef.current?.presentOverview(
+            segments.map((s) => ({ text: s.response, detailAidSlideId: s.detailAidSlideId ?? null })),
+          );
+        } else {
+          for (const segment of segments) {
+            if (playGenRef.current !== gen) return; // superseded by a newer question
+            await deliverRep(segment.response, segment.detailAidSlideId, gen);
+          }
+        }
+        return;
+      }
       // Session routing: video → the live Tavus session (its own greeting + turns come via the
       // replica's utterances). Text/voice → this chat's own session, created on the first message.
       // No greeting is sent off-video: the doctor never heard one, so the transcript starts with
@@ -269,21 +299,6 @@ export function HcpExperience({ app }: { app?: AppState }) {
         return;
       }
       setMsgs((m) => [...m, { role: "hcp", text }]);
-      if (isOverviewPrompt(text, { productTerms: brand?.productTerms ?? [] })) {
-        const res = await fetch("/api/presentation/overview", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, sessionId, newSession: openNew, hcpId: inviteHcpId || undefined }),
-        });
-        const data = (await res.json()) as { sessionId?: string; segments?: OverviewSegment[] };
-        if (playGenRef.current !== gen) return;
-        if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
-        finishPending(gen); // input is live again — playback below is interruptible
-        for (const segment of data.segments ?? []) {
-          if (playGenRef.current !== gen) return; // superseded by a newer question
-          await deliverRep(segment.response, segment.detailAidSlideId, gen);
-        }
-        return;
-      }
       const res = await fetch("/api/conversation/turn", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, sessionId, newSession: openNew, hcpId: inviteHcpId || undefined }),
@@ -301,9 +316,10 @@ export function HcpExperience({ app }: { app?: AppState }) {
 
   async function deckStep(action: "start" | "next" | "previous" | "jump", query?: string, displayText?: string) {
     if (pending) return;
-    // Same barge-in as ask(): a deck command interrupts whatever is still being spoken.
+    // Same barge-in as ask(): a deck command interrupts whatever is still being spoken (incl. an overview walk).
     const gen = ++playGenRef.current;
     voiceRef.current?.cancel();
+    videoAgentRef.current?.cancelOverview();
     cancelSlideCue();
     setSpeaking(false);
     const label = displayText?.trim() || (action === "next" ? "Please keep going." : action === "previous" ? "Can you go back to the prior point?" : action === "jump" && query ? `Can you talk about ${query}?` : "Can you walk me through the approved information?");

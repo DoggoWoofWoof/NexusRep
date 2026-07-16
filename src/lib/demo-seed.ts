@@ -124,6 +124,47 @@ export async function seedDemoHistory(deps: SeedDeps): Promise<void> {
   await deps.sessions.appendTurn(first, { speaker: "hcp", text: "What's the program?", seed: "sx4471_t3", at: t(30) });
   await deps.sessions.appendTurn(first, { speaker: "rep", text: "Good question. It is being evaluated in the Phase 3 LIBREXIA program across three indications under study.", sourceIds: ["ans_program"], detailAidSlideId: "slide_program", seed: "sx4471_t4", at: t(33) });
 
+  // One PERMANENT "Preview (you)" session WITH a playable video, so Session review demonstrates video
+  // playback AND transcript-to-video sync on every deploy (incl. Render). Runtime-captured clips live
+  // only on the machine that recorded them and are gitignored, so they never reach Render — this
+  // points at the one sample clip committed to the repo (public/recordings/demo-preview.webm), served
+  // via /api/recordings/<file>. The transcript below is the EXACT turn set captured WITH that clip
+  // (from its .session.json), so every turn's `at` lands at the right point in the 80s video —
+  // timelineSource:"recorded" tells Session review to scrub the transcript against the recording.
+  // It walks the full compliance story: approved answer + ISI → program → medical-info routing →
+  // off-label refusal → adverse-event capture. Verified by tests/seed-recording.test.ts.
+  const previewId = asId<"session_id">("session_previewdemo1") as SessionId;
+  await deps.sessions.seed({
+    id: previewId,
+    aiRepId: deps.aiRepId,
+    hcpId: h("hcp_sharma"),
+    startedAt: "2026-07-15T14:39:31.365Z",
+    durationSeconds: 81,
+    questionCount: 5,
+    complianceStatus: "ae_routed",
+    turns: [],
+    preview: true,
+    recordingUrl: "/api/recordings/demo-preview.webm",
+    timelineSource: "recorded",
+  });
+  // Verbatim transcript of the committed clip (from its .session.json), timestamps included — the
+  // last turn lands at ~58s inside the 81s video, so the review scrubber stays in sync. Text is left
+  // EXACTLY as the replica spoke it (incl. the recorded slide-cue phrasings) so caption == audio.
+  const previewTurns: { speaker: "hcp" | "rep"; text: string; sourceIds?: string[]; detailAidSlideId?: string; seed: string; at: string }[] = [
+    { speaker: "rep", at: "2026-07-15T14:39:32.665Z", seed: "preview_t0", text: "Hello, doctor. I'm an AI representative for Milvexian, an investigational compound from J&J. I can share publicly-available information and connect you with Medical Information for anything clinical." },
+    { speaker: "hcp", at: "2026-07-15T14:39:36.365Z", seed: "preview_t1", text: "What is Milvexian and how does it work?" },
+    { speaker: "rep", at: "2026-07-15T14:39:44.465Z", seed: "preview_t2", detailAidSlideId: "slide_moa", sourceIds: ["ans_moa"], text: "Milvexian is an investigational oral Factor XIa inhibitor being developed by Johnson & Johnson in collaboration with Bristol Myers Squibb as an anticoagulant. As you can see on the Mechanism of action slide, it works by inhibiting Factor XIa, a clotting factor involved in the coagulation cascade.\n\nImportant Safety Information: Milvexian is an investigational compound not approved by the FDA or any regulatory authority; its safety and efficacy have not been established. This information is non-promotional and intended for healthcare professionals. Clinical questions can be directed to Medical Information." },
+    { speaker: "hcp", at: "2026-07-15T14:39:50.165Z", seed: "preview_t3", text: "What should I know about the LIBREXIA program?" },
+    { speaker: "rep", at: "2026-07-15T14:39:57.265Z", seed: "preview_t4", detailAidSlideId: "slide_program", sourceIds: ["ans_program"], text: "Happy to walk you through this. The Phase 3 LIBREXIA program is described as the most comprehensive Factor XIa clinical development program to date, enrolling roughly 50,000 participants across three event-driven trials, LIBREXIA STROKE, LIBREXIA ACS, and LIBREXIA AF. It is being conducted by Johnson & Johnson in collaboration with Bristol Myers Squibb. You can look at the LIBREXIA phase 3 program slide here, where the same approved points are laid out." },
+    { speaker: "hcp", at: "2026-07-15T14:40:02.965Z", seed: "preview_t5", text: "What dose should I use and how often should patients take it?" },
+    { speaker: "rep", at: "2026-07-15T14:40:07.865Z", seed: "preview_t6", text: "That's a detailed medical question. I can connect you with our medical information team." },
+    { speaker: "hcp", at: "2026-07-15T14:40:13.965Z", seed: "preview_t7", text: "Can I use it off-label in pediatric patients?" },
+    { speaker: "rep", at: "2026-07-15T14:40:19.165Z", seed: "preview_t8", text: "That use falls outside the approved information I can discuss. I can arrange medical follow-up on this question." },
+    { speaker: "hcp", at: "2026-07-15T14:40:25.765Z", seed: "preview_t9", text: "My patient had a serious bleeding event after receiving the study drug." },
+    { speaker: "rep", at: "2026-07-15T14:40:29.565Z", seed: "preview_t10", text: "Thank you for reporting that. I'm logging this so our safety team can follow up. Can you share any additional detail?" },
+  ];
+  for (const turn of previewTurns) await deps.sessions.appendTurn(previewId, turn);
+
   // Record REAL audit events for the seeded conversations (idempotent) so the Overview
   // question mix + compliance rates are measured from the classifier/gate, not hand-typed.
   const alreadySeeded = (await deps.audit.allOfType("classification")).length > 0;

@@ -32,6 +32,16 @@ type TimingEvent = {
 export interface VideoAgentStageHandle {
   speak: (text: string, detailAidSlideId?: string | null) => boolean;
   respond: (text: string) => boolean;
+  /** Deliver a rep-led guided overview: speak each approved segment in order (switching the deck per
+   *  segment), paced on the replica actually finishing each one. Resolves when the walk completes.
+   *  Slides + captions ride the onRepTurn callback, so wire onRepTurn when using this. */
+  presentOverview: (segments: { text: string; detailAidSlideId?: string | null }[]) => Promise<void>;
+  /** Stop an in-progress guided overview (a new question barged in). Safe to call when none is running. */
+  cancelOverview: () => void;
+  /** Echo one gated segment and resolve when the replica finishes it (event-driven pacing, with a
+   *  hard cap so it never hangs). For callers that drive their own deck/transcript (the Studio
+   *  rehearsal) and just need robust one-after-another pacing. bargeIn interrupts what's in progress. */
+  speakAndWait: (text: string, detailAidSlideId?: string | null, bargeIn?: boolean) => Promise<void>;
   /** Mute/unmute the AGENT's audio (what the doctor hears). */
   setMuted: (muted: boolean) => void;
   /** Enable/disable the doctor's own microphone on the call. */
@@ -149,15 +159,60 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
     startNonceRef.current = globalThis.crypto?.randomUUID?.() ?? `video_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   }
 
-  // Make the agent speak our (already gated) text verbatim, via the transport.
-  const speakAgent = (text: string, detailAidSlideId?: string | null): boolean => {
+  // Make the agent speak our (already gated) text verbatim, via the transport. bargeIn defaults to
+  // true (a typed ask cuts in over any in-progress speech); the guided-overview walk passes false for
+  // each paced segment so one segment doesn't interrupt the tail of the previous.
+  const speakAgent = (text: string, detailAidSlideId?: string | null, bargeIn = true): boolean => {
     const t = text.trim();
     if (!t) return false;
-    const ok = transportRef.current?.speak(t) ?? false;
+    const ok = transportRef.current?.speak(t, bargeIn) ?? false;
     if (!ok) return false;
     recordTiming({ type: "echo_queued", text: t, detailAidSlideId: detailAidSlideId ?? null });
     armRepCaption({ text: t, detailAidSlideId: detailAidSlideId ?? null, kind: "answer" });
     return true;
+  };
+
+  // Guided-overview pacing: resolvers waiting for the replica to FINISH the segment it's speaking, so
+  // the walk echoes the next segment only after the current one lands (event-driven, not a guess).
+  // markRepAudioStart flags them "started"; markRepAudioStop (or the estimated-end fallback) resolves
+  // them. A per-call hard cap in speakSegmentAndWait guarantees the walk never hangs if events go missing.
+  const repDoneWaitersRef = useRef<{ started: boolean; done: () => void }[]>([]);
+  const flushRepDoneWaiters = () => {
+    const waiters = repDoneWaitersRef.current;
+    repDoneWaitersRef.current = waiters.filter((w) => !w.started);
+    waiters.filter((w) => w.started).forEach((w) => w.done());
+  };
+  // Echo one gated segment and resolve when the replica finishes it. bargeIn defaults to false (a
+  // paced segment shouldn't cut the tail of the previous); the first segment of a walk passes true
+  // to interrupt whatever was in progress (e.g. the greeting).
+  const speakSegmentAndWait = (text: string, detailAidSlideId?: string | null, bargeIn = false): Promise<void> =>
+    new Promise<void>((resolve) => {
+      const ok = speakAgent(text, detailAidSlideId, bargeIn);
+      if (!ok) { resolve(); return; }
+      let settled = false;
+      const finish = () => { if (settled) return; settled = true; window.clearTimeout(cap); resolve(); };
+      const cap = window.setTimeout(() => {
+        repDoneWaitersRef.current = repDoneWaitersRef.current.filter((w) => w !== waiter);
+        finish();
+      }, estimateReplicaSpeechMs(text) + 3_000);
+      const waiter = { started: false, done: finish };
+      repDoneWaitersRef.current.push(waiter);
+    });
+  // Deliver a rep-led guided overview: interrupt anything in progress, then speak each approved
+  // segment in order, switching the deck per segment. Runs here (not in the parent) because pacing
+  // needs the replica's own speaking-state machine. Cancelable — a new question (or explicit cancel)
+  // bumps the gen so the walk stops between segments instead of talking over the doctor.
+  const overviewGenRef = useRef(0);
+  const cancelOverview = () => { overviewGenRef.current += 1; };
+  const presentOverview = async (segments: { text: string; detailAidSlideId?: string | null }[]): Promise<void> => {
+    const myGen = ++overviewGenRef.current;
+    cancelPendingGreeting("overview_start");
+    if (shouldInterruptDoctorInput()) cancelCurrentRepForBargeIn("overview_start");
+    for (const seg of segments) {
+      if (overviewGenRef.current !== myGen) return; // barged in / superseded
+      if (!seg.text?.trim()) continue;
+      await speakSegmentAndWait(seg.text, seg.detailAidSlideId ?? null);
+    }
   };
   const applyMuted = (m: boolean) => { setMuted(m); onMutedChange?.(m); };
   // Stop the client-side replica recording and upload it to this session, then attach it. Idempotent
@@ -203,6 +258,9 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
   };
   useImperativeHandle(ref, () => ({
     speak: (text: string, detailAidSlideId?: string | null) => speakAgent(text, detailAidSlideId),
+    presentOverview,
+    cancelOverview,
+    speakAndWait: (text: string, detailAidSlideId?: string | null, bargeIn = false) => speakSegmentAndWait(text, detailAidSlideId, bargeIn),
     finalizeRecording,
     respond: (text: string) => {
       // A typed/scripted video turn should prevent the scheduled greeting from firing after the
@@ -321,6 +379,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
     const pending = pendingRepEchoRef.current;
     const spoken = speechText ?? pending?.text ?? "";
     repSpeakingRef.current = true;
+    repDoneWaitersRef.current.forEach((w) => { w.started = true; }); // this echo is now audibly playing
     if (repStopFallbackRef.current) window.clearTimeout(repStopFallbackRef.current);
     const fallbackUntil = markRepLikelySpeaking(spoken);
     recordTiming({ type: "vendor_started_speaking", reason, text: spoken, detailAidSlideId: pending?.detailAidSlideId ?? null, captionKind: pending?.kind });
@@ -334,6 +393,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
       repSpeakingRef.current = false;
       if (repLikelySpeakingUntilRef.current <= fallbackUntil + 100) repLikelySpeakingUntilRef.current = 0;
       recordTiming({ type: "vendor_stopped_speaking", reason: "estimated_audio_end" });
+      flushRepDoneWaiters(); // estimated end also advances a paced overview walk
     }, fallbackMs);
   }
 
@@ -345,6 +405,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
       repStopFallbackRef.current = null;
     }
     recordTiming({ type: "vendor_stopped_speaking", reason });
+    flushRepDoneWaiters(); // advance a paced overview walk to the next segment
   }
 
   function cancelCurrentRepForBargeIn(reason: string) {

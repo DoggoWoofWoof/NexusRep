@@ -22,24 +22,25 @@ describe("slideCueDelayMs — lands the switch AS the rep reaches the cue, not s
     expect(slideCueDelayMs("You can see this on the mechanism slide.")).toBeLessThan(1000);
   });
 
-  it("a LATE cue in a long answer waits many seconds — the old 1.8s cap is gone", () => {
-    // ~45 words before the cue → well past the old 1800ms ceiling.
+  it("a LATE cue is CAPPED so the slide still switches up front, never at the very end", () => {
+    // A stray answer that trails the cue ~45 words in. The answer weaves cues EARLY now, but if one
+    // ever trails, the switch is capped (4s) — the doctor never waits out the whole answer.
     const long =
       "LIBREXIA AF is a Phase 3 randomized double-blind active-controlled trial comparing milvexian " +
       "to apixaban in roughly fifteen thousand five hundred participants with atrial fibrillation or " +
       "atrial flutter, with topline data expected soon, and you can see the trial design on the AF slide.";
     const delay = slideCueDelayMs(long);
-    expect(delay).toBeGreaterThan(6000); // late cue → late switch (was capped at 1800)
-    expect(delay).toBeLessThan(20001); // still clamped to something sane
+    expect(delay).toBeLessThanOrEqual(4000);
+    expect(delay).toBeGreaterThanOrEqual(450);
   });
 
-  it("scales with cue position — a later cue waits longer than an earlier one", () => {
+  it("scales with cue position below the cap — a later cue waits a bit longer than an earlier one", () => {
     const early = slideCueDelayMs("You can see this on the mechanism slide as I explain the enzyme.");
-    const late = slideCueDelayMs(
-      "Milvexian is a selective Factor XIa inhibitor that blocks a key enzyme in the coagulation " +
-        "cascade to reduce abnormal clot formation, and you can see this on the mechanism slide.",
+    const mid = slideCueDelayMs(
+      "Milvexian blocks a key enzyme in the cascade, and you can see this on the mechanism slide.",
     );
-    expect(late).toBeGreaterThan(early);
+    expect(mid).toBeGreaterThan(early);
+    expect(mid).toBeLessThanOrEqual(4000);
   });
 });
 

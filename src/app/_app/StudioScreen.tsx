@@ -1604,10 +1604,17 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
       // slide on a spoken cue, so no cue → no switch. The error fallback is never read aloud.
       if (a.route !== "error") {
         if (a.segments?.length) {
-          for (const seg of a.segments) {
+          for (const [i, seg] of a.segments.entries()) {
             cueSlide(seg.detailAidSlideId, seg.response, showVideo);
-            speakAnswer(seg.response);
-            await wait(estimateSpeechMs(seg.response));
+            // On video, pace on the replica actually FINISHING each segment (not a guess), so a long
+            // segment isn't cut off by the next — the "keep going properly through the whole deck"
+            // fix. The first segment interrupts the greeting; the rest are paced pure echoes.
+            if (showVideo && videoRef.current) {
+              await videoRef.current.speakAndWait(seg.response, seg.detailAidSlideId, i === 0);
+            } else {
+              speakAnswer(seg.response);
+              await wait(estimateSpeechMs(seg.response));
+            }
           }
         } else {
           cueSlide(a.detailAidSlideId, a.text, showVideo);

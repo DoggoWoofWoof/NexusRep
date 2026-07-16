@@ -48,9 +48,16 @@ const WORD_MS = 370;
 // Switch a hair before the rep actually says the cue, so the slide is already up as they gesture at it.
 const CUE_LEAD_MS = 350;
 
+// The answer now weaves the slide cue EARLY (right after the opener — see responseBuilder), so a
+// well-formed answer cues within the first sentence and this delay is small. The upper cap is a
+// backstop for the LLM path if it ever trails the cue anyway: the slide is for the WHOLE answer
+// (the switch is gated on the answer actually being about it), so showing it a few seconds before
+// the rep verbally points at it is exactly right — never make the doctor wait until the very end.
+const MAX_CUE_DELAY_MS = 4000;
+
 /** Milliseconds to wait (from when the rep STARTS speaking the answer) before switching the deck to
- *  the cued slide, so the switch lands just as the rep reaches the cue. UNCAPPED at the top (a cue
- *  40 words in is ~15s in) — capping it was what made late cues switch far too early. */
+ *  the cued slide. Small for the normal early cue; capped so a stray late cue still switches up front
+ *  rather than after the whole answer has been spoken. */
 export function slideCueDelayMs(text?: string): number {
   const body = text?.trim();
   if (!body) return SLIDE_CUE_DELAY_MS;
@@ -61,5 +68,5 @@ export function slideCueDelayMs(text?: string): number {
     .sort((a, b) => a - b)[0];
   if (idx == null) return SLIDE_CUE_DELAY_MS;
   const wordsBefore = body.slice(0, idx).split(/\s+/).filter(Boolean).length;
-  return Math.max(450, Math.min(20000, wordsBefore * WORD_MS - CUE_LEAD_MS));
+  return Math.max(450, Math.min(MAX_CUE_DELAY_MS, wordsBefore * WORD_MS - CUE_LEAD_MS));
 }

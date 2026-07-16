@@ -10,7 +10,55 @@
 
 ## 1. Current build status
 
-### Latest: Per-user live-video isolation + mic warm-up window (2026-07-16)
+### Latest: Slide cue lands early, overview walks the deck on video, permanent demo recording (2026-07-16)
+
+Four fixes, all tested:
+
+- **Slide cue now leads the answer instead of trailing it.** Both the deterministic builder and the
+  orchestrator's always-mention fallback wove the "…on the X slide" cue AFTER the whole approved body,
+  so — since the deck switch is timed to the spoken cue — the slide only moved at the very end, once
+  all the info was already said. New `weaveSlideCueEarly()` inserts the cue right after the opener
+  (before the medical body), the LLM composer is told to name the slide in its first sentence, and the
+  client cue-delay is capped (4s) so a stray late cue still switches up front. `responseBuilder.ts`,
+  `orchestrator.ts`, `slide-cue.ts`; `tests/response-builder.test.ts` + `tests/slide-cue.test.ts`.
+- **"Start overview" walks the whole deck on the video preview.** It used to early-return to a single
+  Tavus turn on video (one question, one slide). Now the overview branch runs for video too: the
+  endpoint's 9 approved segments are spoken by the replica in order via a new `presentOverview()` on
+  the video stage, switching the deck per segment and paced on the replica actually FINISHING each one
+  (event-driven, cap-guarded) — not a guess that could cut a segment off. A new question cancels the
+  walk (`cancelOverview`). The Studio rehearsal walk uses the same `speakAndWait` pacing.
+  `VideoAgentStage.tsx`, `HcpExperience.tsx`, `StudioScreen.tsx`.
+- **Recording diagnostics.** The upload route logs `[recording] upload/saved+attached` (and a clear
+  error if the disk write fails, which was previously an unlogged 500); the serve route logs
+  `[recording] serve/404`. Greppable in Render logs to confirm a clip actually saved + served.
+- **Permanent "Preview (you)" demo session with a real, in-sync video.** One sample clip
+  (`public/recordings/demo-preview.webm`, un-gitignored so it deploys) with the EXACT transcript +
+  timestamps captured with it (81s video, last turn ~58s, `timelineSource:"recorded"`) — so Session
+  review plays the video AND scrubs the transcript in sync on every deploy. It walks the full
+  compliance story (approved + ISI → program → medical-info routing → off-label refusal → AE capture).
+  Preview sessions are now excluded from engagement analytics (brand self-tests aren't HCP details).
+  `demo-seed.ts`, `analytics/index.ts`; `tests/seed-recording.test.ts` verifies every turn lands
+  within the video, monotonically. Full suite **452 pass**.
+
+**Why the confirmed local recording wasn't on Render:** it was captured on the local machine and
+written to `public/recordings/*` (gitignored → never in the deploy), and the session itself lived in
+the local dev container. Render builds from git and has its own store, so neither the file nor the
+session existed there. The committed sample clip + seeded session fix that.
+
+### Recordings play on Render (served via API route) (2026-07-16)
+
+Session-review showed the video pane but loaded nothing on Render: a client-captured clip is written
+AT RUNTIME to `public/recordings`, and `next start` doesn't reliably serve runtime-written public/
+files, so `/recordings/<file>` 404'd. Fix: the recording store returns an **`/api/recordings/<file>`**
+URL and a streaming route serves it from disk (Range-enabled so `<video>` can seek) — an API route
+always runs, so the clip plays as soon as it's uploaded. Also dropped the seeded session's
+`recordingUrl` (it pointed at a local-only sample that never deploys → its own broken pane); seeded
+sessions are transcript-only. `recording-store.ts`, new `api/recordings/[file]/route.ts`, `demo-seed.ts`,
+`tests/session-recording.test.ts` (upload → serve round-trips the bytes). Full suite **446 pass**.
+Still local-disk (lost on Render redeploy — the documented blob-store-later tradeoff); this fixes
+serving WITHIN a deploy, which is what showed nothing.
+
+### Per-user live-video isolation + mic warm-up window (2026-07-16)
 
 - **Concurrent-user isolation (the real one):** two accounts on video at once could cross-write —
   the cookie-less Tavus custom-LLM path resolved the owner from a single process-global `active-call`,

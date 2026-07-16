@@ -19,14 +19,21 @@ function contentType(file: string): string {
 export async function GET(req: Request, ctx: { params: Promise<{ file: string }> }): Promise<Response> {
   const { file } = await ctx.params;
   const path = localRecordingPath(file);
-  if (!path) return NextResponse.json({ error: "bad recording name" }, { status: 400 });
+  if (!path) {
+    console.warn(`[recording] serve rejected bad name: ${file}`);
+    return NextResponse.json({ error: "bad recording name" }, { status: 400 });
+  }
 
   let size: number;
   try {
     size = (await stat(path)).size;
   } catch {
+    // Greppable on Render: the <video> requested a clip that isn't on this instance's disk (e.g. it
+    // was written on a previous deploy — recordings are local-disk until the S3/R2 adapter lands).
+    console.warn(`[recording] serve 404: ${file} not on disk at ${path}`);
     return NextResponse.json({ error: "recording not found" }, { status: 404 });
   }
+  console.info(`[recording] serve: ${file} size=${size}${req.headers.get("range") ? " (range)" : ""}`);
   const type = contentType(file);
   const range = req.headers.get("range");
 
