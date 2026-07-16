@@ -36,9 +36,12 @@ type ConversationStartPayload = {
 const inFlightStarts = new Map<string, Promise<ConversationStartPayload>>();
 const recentStarts = new Map<string, { at: number; payload: ConversationStartPayload }>();
 
-function tavusLlmBaseUrl(): string {
+// Per-OWNER custom-LLM URL. Tavus calls this cookie-less, so the owner in the path is how the
+// endpoint knows which account's container the turn belongs to — the concurrent-safe alternative to
+// a single global. Public doctor links (no owner) use the plain endpoint (default container).
+function tavusLlmBaseUrl(ownerUserId: string | null): string {
   const base = env.publicBaseUrl.replace(/\/$/, "");
-  return `${base}/api/tavus/llm`;
+  return ownerUserId ? `${base}/api/tavus/llm/o/${encodeURIComponent(ownerUserId)}` : `${base}/api/tavus/llm`;
 }
 
 async function probePublicLlmReachability(): Promise<boolean> {
@@ -181,17 +184,19 @@ async function startConversation(body: { hcpId?: unknown }, ownerUserId: string 
       record: true,
       callbackUrl: `${env.publicBaseUrl}/api/tavus/webhook${cbParams.toString() ? `?${cbParams.toString()}` : ""}`,
       sessionId: hist.id,
-      // The Tavus adapter intentionally keeps one stable PAL and patches it in place, rather
-      // than creating a new PAL for each session or tunnel URL.
-      personaCacheKey: c.brand.brandId,
+      // One PAL per (brand, OWNER): each account's persona carries its own per-owner custom-LLM URL
+      // so a cookie-less Tavus turn resolves to the right account's container. Still reused across
+      // that owner's sessions (patched in place), not spun up per call. Public links (no owner) share
+      // the brand's default PAL.
+      personaCacheKey: ownerUserId ? `${c.brand.brandId}:${ownerUserId}` : c.brand.brandId,
       systemPrompt: persona.systemPrompt,
       customGreeting: persona.customGreeting,
       context: persona.context,
       customLlm: {
-        // Keep the reusable PAL's LLM URL stable. The live call's NexusRep session is bound through
-        // the active-call/session map; putting a per-session URL on a global PAL races when React dev
-        // double-starts preview or a stale Tavus conversation is still shutting down.
-        baseUrl: tavusLlmBaseUrl(),
+        // Per-OWNER URL (stable across that owner's sessions). The session within the owner's
+        // container is bound via the active-call map; the URL only encodes WHICH account, so a
+        // cookie-less turn lands in the right container even with another account on video at once.
+        baseUrl: tavusLlmBaseUrl(ownerUserId),
         apiKey: env.tavusLlmKey || undefined,
         model: "nexusrep-compliance",
       },

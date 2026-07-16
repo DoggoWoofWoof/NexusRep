@@ -4,19 +4,26 @@
  * container by user id. If it used the DEFAULT container (no cookie), the session wasn't found and
  * every turn started a fresh session — re-delivering the ISI on each reply.
  *
- * These lock in the two facts the fix depends on: (1) the active-call slot carries the owning
- * userId, and (2) a session created in getContainerForUser(X) is found in getContainerForUser(X)
- * again — and NOT in the default container. So the callback MUST reload the recorded owner.
+ * These lock in the two facts the fix depends on: (1) the active-call map carries the owning userId
+ * and is keyed BY that owner (so a second account can't supersede the first), and (2) a session
+ * created in getContainerForUser(X) is found in getContainerForUser(X) again — and NOT in the
+ * default container. So the callback MUST reload the recorded owner.
  */
 
 import { describe, expect, it } from "vitest";
 import { getContainerForUser } from "@lib/container";
 import { setActiveCall, getActiveCall } from "@lib/active-call";
 
-describe("active-call slot carries the container owner", () => {
-  it("round-trips { sessionId, userId }", () => {
+describe("active-call map carries the container owner, keyed by owner", () => {
+  it("round-trips { sessionId, userId } under that owner's key", () => {
     setActiveCall({ sessionId: "session_abc", userId: "mahek" });
-    expect(getActiveCall()).toEqual({ sessionId: "session_abc", userId: "mahek" });
+    expect(getActiveCall("mahek")).toEqual({ sessionId: "session_abc", userId: "mahek" });
+  });
+  it("a second owner's call does not supersede the first (no cross-user clobber)", () => {
+    setActiveCall({ sessionId: "session_one", userId: "acc_one" });
+    setActiveCall({ sessionId: "session_two", userId: "acc_two" });
+    expect(getActiveCall("acc_one")?.sessionId).toBe("session_one");
+    expect(getActiveCall("acc_two")?.sessionId).toBe("session_two");
   });
 });
 

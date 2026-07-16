@@ -1,36 +1,32 @@
 /**
- * Tracks the most-recently-started live video call: its NexusRep session id AND the user whose
- * container owns that session. The realtime vendor's servers call our compliance endpoint
- * (/api/tavus/llm) WITHOUT the browser's auth cookie, so that endpoint can't resolve the
- * signed-in user on its own — and the call's session lives in that user's per-user container.
- * Recording BOTH here lets the vendor callback load the SAME container and the SAME session, so
- * every turn threads one session (ISI once, disclosure once, slides continue). Without the userId,
- * the callback fell back to the default container, never found the session, and started a FRESH
- * session per turn — which re-delivered the ISI on every reply.
+ * Tracks each live video call's NexusRep session + the user whose container owns it. The realtime
+ * vendor's servers call our compliance endpoint (/api/tavus/llm) WITHOUT the browser's auth cookie,
+ * so that endpoint can't resolve the signed-in user on its own — and the call's session lives in that
+ * user's per-user container. Recording it here lets the callback reload the SAME container + session,
+ * so every turn threads one session (ISI once, disclosure once, slides continue).
  *
- * Vendor-neutral: any provider's callback reads the same slot. Scope: one active call at a time
- * (the demo). A multi-tenant deployment would key this off the vendor conversation id via a
- * per-conversation callback URL instead of a single global.
+ * Keyed BY OWNER (not a single slot) so two accounts can run video at once without the second call
+ * superseding the first and steering its turns into the wrong container — the cross-user leak. The
+ * cookie-less callback resolves the owner from its per-user LLM URL (/api/tavus/llm/o/<owner>) and
+ * looks up THAT owner's active call here.
  */
 
 export interface ActiveCall {
   sessionId: string;
   /** Container owner (signed-in user), or null for the shared/default container (auth off, or a
-   *  public doctor link with no cookie). The vendor callback must resolve the SAME one. */
+   *  public doctor link with no cookie). The vendor callback resolves the SAME one from its URL. */
   userId: string | null;
 }
 
-let activeCall: ActiveCall | null = null;
+const keyOf = (userId: string | null | undefined): string => userId ?? "__default__";
+const activeCalls = new Map<string, ActiveCall>();
 
 export function setActiveCall(call: ActiveCall): void {
-  if (activeCall && activeCall.sessionId !== call.sessionId) {
-    // Known single-slot limitation: a second concurrent call supersedes the first — its replies
-    // would then log to the NEW session. Loudly visible on purpose (one video call per process).
-    console.warn(`[realtime] active call superseded: ${activeCall.sessionId} → ${call.sessionId} (one concurrent video call per process)`);
-  }
-  activeCall = call;
+  // Overwrites only THIS owner's entry — a different owner's concurrent call is a different key, so
+  // it can't supersede this one (that superseding was the cross-user data leak).
+  activeCalls.set(keyOf(call.userId), call);
 }
 
-export function getActiveCall(): ActiveCall | null {
-  return activeCall;
+export function getActiveCall(userId: string | null = null): ActiveCall | null {
+  return activeCalls.get(keyOf(userId)) ?? null;
 }

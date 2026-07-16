@@ -198,9 +198,10 @@ export async function POST(req: Request): Promise<Response> {
     reply = "Connection confirmed.";
   } else {
     // The live call recorded WHICH per-user container owns its session. Tavus calls us without a
-    // cookie, so we can't resolve the user here — we MUST use the recorded owner, or we'd load the
-    // default container, miss the session, and start a fresh one every turn (the ISI-repeat bug).
-    const activeCall = boundCall ?? getActiveCall();
+    // cookie, so we resolve the owner from the per-user LLM URL (/o/<owner> → x-nexusrep-user-id) and
+    // look up THAT owner's active call — never a single global, so a concurrent second account's call
+    // can't steer this turn into the wrong container.
+    const activeCall = boundCall ?? getActiveCall(boundUserId || null);
     const sessionKey = activeCall?.sessionId ?? boundSessionId ?? "__default__";
     if (shouldIgnoreTrailingRecoveredFragment(sessionKey, text)) {
       // Tavus can call the LLM once for the recovered fragment ("What is the liberation,")

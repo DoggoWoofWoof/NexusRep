@@ -9,7 +9,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { getContainer } from "@lib/container";
+import { getContainer, currentUserId } from "@lib/container";
 import { getActiveCall } from "@lib/active-call";
 
 export const dynamic = "force-dynamic";
@@ -18,8 +18,9 @@ export async function POST(req: Request): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as { endedSessionId?: unknown };
   const endedSessionId = typeof body.endedSessionId === "string" ? body.endedSessionId : undefined;
   const c = await getContainer();
-  // Never prune the live call's session (guards concurrent use — a call in progress is the active one).
-  const active = getActiveCall();
+  // Never prune THIS owner's live call (their active call is keyed by their own id). Only the caller's
+  // container is swept (getContainer → their namespace), so this can't touch another account's data.
+  const active = getActiveCall(await currentUserId());
   const removed = await c.sessions.pruneStrayPreviews({ activeSessionId: active?.sessionId, endedSessionId });
   return NextResponse.json({ ok: true, removed: removed.length });
 }
