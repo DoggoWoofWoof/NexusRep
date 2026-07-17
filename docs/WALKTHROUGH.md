@@ -10,7 +10,30 @@
 
 ## 1. Current build status
 
-### Latest: Training — coaching doesn't jump to the bottom + coached rules are compact (2026-07-17)
+### Latest: Architecture cleanup — shared modules + BrandScreens split (2026-07-17)
+
+A staged, behavior-preserving cleanup pass (from a full read-only audit). Each stage: typecheck +
+full suite (459) + build green, committed separately.
+
+- **Stage 1 — shared modules + boundary fix.** New `src/app/_app/ui.ts` (shared `card`/`eyebrow`/
+  `h1`/`cell`/`ghost*` — were copy-pasted across screens) and `src/lib/format.ts` (`mmss`, `initials`
+  — were duplicated in 3-5 places). Removed the `overviewPrompt.ts` shim; consumers import the
+  client-safe leaf `@modules/content/overviewPrompt` directly. **Real bug caught by the build:** the
+  `@modules/content` barrel re-exports server-only parsers (node:fs/path via pptx/pdf/ingest), so a
+  client importing `isOverviewPrompt` through the barrel breaks the browser bundle — documented in
+  `content/index.ts`; clients use the leaf.
+- **Stage 2 — BrandScreens split.** `BrandScreens.tsx` went from **1100 LOC → a ~30-line nav
+  dispatcher**; each governance screen is now its own file (`Audience` + `HcpDrawer` +
+  `HcpEngagementPanel`, `Launch`, `Sessions`, `Analytics`, `SessionDetail`, `FollowUps`, `Admin`),
+  with shared audience logic in `useAudience.ts`. Pure extraction, no behavior change.
+
+**Still open (deliberately deferred for review):** extract `StudioScreen`'s `useOverviewPlan` hook +
+form primitives (low risk); pull `VideoAgentStage`'s pure event helpers into `video-events.ts` (low
+risk). **Higher-risk (need a focused pass with their tests):** unify the duplicated overview/preview
+compliance gate-loop into one service; extract the Tavus fragment/utterance state machine into
+`@modules/realtime`; consolidate the OpenAI-compatible LLM client into one `@modules/vendors` adapter.
+
+### Training — coaching doesn't jump to the bottom + coached rules are compact (2026-07-17)
 
 Two Training-tab fixes:
 
