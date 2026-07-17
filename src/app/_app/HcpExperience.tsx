@@ -9,7 +9,7 @@ import { LiveAvatar, type LiveAvatarHandle } from "../_components/LiveAvatar";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { SlideView } from "../_components/SlideView";
 import { useBrand } from "../_components/useBrand";
-import { isOverviewPrompt } from "./overviewPrompt";
+import { isOverviewPrompt } from "@modules/content/overviewPrompt";
 import { appendTurn, type TranscriptMsg } from "@lib/transcript";
 import { useCuedSlide } from "../_components/useCuedSlide";
 import { isSameLiveTurnText } from "@lib/live-turn-guard";

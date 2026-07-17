@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { getContainer } from "@lib/container";
 import { hcpNameOf } from "@lib/demo-seed";
+import { mmss } from "@lib/format";
 import { deriveSessionDurationSeconds, type SessionComplianceStatus } from "@modules/sessions";
 import type { FollowUpType } from "@modules/followups";
 
@@ -26,11 +27,6 @@ const FOLLOWUP_LABEL: Record<FollowUpType, string> = {
   human_rep: "Rep follow-up",
 };
 
-function mmss(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
 
 export async function GET(): Promise<NextResponse> {
   const c = await getContainer();

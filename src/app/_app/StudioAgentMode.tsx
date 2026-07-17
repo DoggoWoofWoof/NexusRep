@@ -15,8 +15,9 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useAgents, setAgentsCache, type AgentInfo, type AgentsPayload } from "../_components/useAgents";
 import { OpenAiVoiceProvider } from "@lib/browser-speech";
 import { previewScript, voiceForName, PREVIEW_VOICES, DEFAULT_VOICE } from "@lib/agent-preview";
+import { card } from "./ui";
+import { initials as initialsOf } from "@lib/format";
 
-const card: React.CSSProperties = { background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)" };
 const cardHead: React.CSSProperties = { padding: "12px 14px 10px", borderBottom: "1px solid var(--dn-border)", font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" };
 const hint: React.CSSProperties = { font: "400 10.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" };
 const input: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "8px 10px", border: "1px solid var(--dn-border)", borderRadius: 8, font: "400 12px/1.3 var(--dn-font-sans)", color: "var(--dn-fg)", background: "#fff" };
@@ -67,7 +68,7 @@ const AgentThumb = memo(function AgentThumb({ agent }: { agent: AgentInfo }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const hoveringRef = useRef(false);
-  const initials = agent.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+  const initials = initialsOf(agent.name);
 
   useEffect(() => {
     const el = wrapRef.current;

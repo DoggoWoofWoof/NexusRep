@@ -5,7 +5,7 @@ import type { AppState } from "./NexusRepApp";
 import { btnGhost, btnPrimary } from "./NexusRepApp";
 import { streamArena } from "@lib/arena-client";
 import { DEFAULT_RULES, KNOWLEDGE_ASSETS, TRAIN_SEED_KEY, setupTopicsFor, firstSetupGapIndex } from "./data";
-import { isOverviewPrompt } from "./overviewPrompt";
+import { isOverviewPrompt } from "@modules/content/overviewPrompt";
 import { SlideView } from "../_components/SlideView";
 import { VideoAgentStage, type VideoAgentStageHandle } from "../_components/VideoAgentStage";
 import { StudioAgentMode } from "./StudioAgentMode";

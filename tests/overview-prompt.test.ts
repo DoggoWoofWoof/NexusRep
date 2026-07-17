@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isOverviewPrompt } from "../src/app/_app/overviewPrompt";
+import { isOverviewPrompt } from "@modules/content/overviewPrompt";
 
 describe("HCP overview prompt detector", () => {
   it("starts the rep-led deck overview from natural broad questions", () => {

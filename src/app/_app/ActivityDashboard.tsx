@@ -10,6 +10,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ActivityEvent, ActivitySummary } from "@modules/activity";
+import { card } from "./ui";
+import { initials } from "@lib/format";
 
 const POLL_MS = 2000;
 
@@ -34,6 +36,7 @@ const CAT_COLOR: Record<string, { bg: string; fg: string }> = {
 const catColor = (c: string) => CAT_COLOR[c] ?? CAT_COLOR.system!;
 
 const SEV_DOT: Record<string, string> = { info: "transparent", notice: "#3b82f6", warn: "#f59e0b", error: "#ef4444" };
+/* card style + `initials` are shared — see ./ui and @lib/format. */
 
 function relTime(iso: string, now: number): string {
   const t = Date.parse(iso);
@@ -47,8 +50,6 @@ function relTime(iso: string, now: number): string {
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
 }
-
-const card: React.CSSProperties = { background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)" };
 
 interface Filters {
   q: string;
@@ -284,11 +285,6 @@ function userColor(u: string): string {
   let h = 0;
   for (let i = 0; i < u.length; i += 1) h = (h * 31 + u.charCodeAt(i)) % 360;
   return `hsl(${h} 52% 42%)`;
-}
-function initials(u: string): string {
-  const parts = u.replace(/[._-]/g, " ").trim().split(/\s+/).filter(Boolean);
-  const two = ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase();
-  return two || u.slice(0, 2).toUpperCase() || "?";
 }
 
 function Tile({ label, value, tone }: { label: string; value: number; tone?: "error" }) {

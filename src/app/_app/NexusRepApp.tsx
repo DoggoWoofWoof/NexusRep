@@ -19,6 +19,7 @@ import { StudioScreen } from "./StudioScreen";
 import { HcpExperience } from "./HcpExperience";
 import { useBrand, invalidateBrandCache } from "../_components/useBrand";
 import { installActivityCapture, logNavigation } from "@lib/activity-client";
+import { initials } from "@lib/format";
 
 export type Screen =
   | "overview"
@@ -246,7 +247,7 @@ function AuthedConsole({ name, authEnabled, onLogout }: { name: string | null; a
     setActivation((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
 
   const account = name
-    ? { initials: name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "U", name, role: "Brand user" }
+    ? { initials: initials(name), name, role: "Brand user" }
     : { initials: DEMO_USER.initials, name: DEMO_USER.shortName, role: DEMO_USER.role };
 
   const app: AppState = {
