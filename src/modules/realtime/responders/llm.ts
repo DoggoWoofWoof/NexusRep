@@ -6,11 +6,8 @@
  */
 
 import { env } from "@lib/env";
+import { OPENAI_PROVIDER, THINKING_MACHINES_PROVIDER, anthropicModel, type OpenAiCompatibleProvider } from "@lib/llm-config";
 import { RESPONDER_SYSTEM, type Responder } from "./types";
-
-function anthropicModel(): string {
-  return process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";
-}
 
 export const claudeResponder: Responder = {
   name: "claude",
@@ -39,13 +36,7 @@ export const claudeResponder: Responder = {
   },
 };
 
-interface CompatCfg {
-  name: string;
-  label: string;
-  baseUrl: () => string | undefined;
-  apiKey: () => string | undefined;
-  model: () => string;
-}
+type CompatCfg = OpenAiCompatibleProvider & { label: string };
 
 function makeOpenAiCompatibleResponder(cfg: CompatCfg): Responder {
   return {
@@ -102,18 +93,9 @@ function makeOpenAiCompatibleResponder(cfg: CompatCfg): Responder {
   };
 }
 
-export const openaiResponder = makeOpenAiCompatibleResponder({
-  name: "openai",
-  label: "OpenAI (chat, streaming)",
-  baseUrl: () => process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
-  apiKey: () => process.env.OPENAI_API_KEY,
-  model: () => process.env.OPENAI_MODEL || "gpt-4o-mini",
-});
+export const openaiResponder = makeOpenAiCompatibleResponder({ ...OPENAI_PROVIDER, label: "OpenAI (chat, streaming)" });
 
 export const thinkingMachinesResponder = makeOpenAiCompatibleResponder({
-  name: "thinking-machines",
+  ...THINKING_MACHINES_PROVIDER,
   label: "Thinking Machines (OpenAI-compatible endpoint, streaming)",
-  baseUrl: () => process.env.THINKING_MACHINES_BASE_URL,
-  apiKey: () => process.env.THINKING_MACHINES_API_KEY,
-  model: () => process.env.THINKING_MACHINES_MODEL || "default",
 });

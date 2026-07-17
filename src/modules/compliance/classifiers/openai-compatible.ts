@@ -5,22 +5,11 @@
  * extra SDK dependency.
  */
 
-import { CLASSIFIER_SYSTEM, parseClassification } from "./shared";
+import { CLASSIFIER_SYSTEM, classifierMaxTokens, parseClassification } from "./shared";
 import type { LlmClassifier } from "./types";
+import { OPENAI_PROVIDER, THINKING_MACHINES_PROVIDER, type OpenAiCompatibleProvider } from "@lib/llm-config";
 
-interface CompatConfig {
-  name: string;
-  label: string;
-  baseUrl: () => string | undefined;
-  apiKey: () => string | undefined;
-  model: () => string;
-}
-
-function maxTokens(): number {
-  const raw = process.env.NEXUSREP_CLASSIFIER_MAX_TOKENS;
-  const n = Number(raw);
-  return Number.isFinite(n) && raw !== undefined && raw !== "" ? Math.max(80, Math.min(512, n)) : 180;
-}
+type CompatConfig = OpenAiCompatibleProvider & { label: string };
 
 export function makeOpenAiCompatible(cfg: CompatConfig): LlmClassifier {
   return {
@@ -45,7 +34,7 @@ export function makeOpenAiCompatible(cfg: CompatConfig): LlmClassifier {
             { role: "user", content: text },
           ],
           response_format: { type: "json_object" },
-          max_tokens: maxTokens(),
+          max_tokens: classifierMaxTokens(),
         }),
       });
       const latencyMs = Date.now() - t0;
@@ -65,21 +54,9 @@ export function makeOpenAiCompatible(cfg: CompatConfig): LlmClassifier {
   };
 }
 
-export const openaiClassifier = makeOpenAiCompatible({
-  name: "openai",
-  label: "OpenAI (chat)",
-  baseUrl: () => process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
-  apiKey: () => process.env.OPENAI_API_KEY,
-  model: () => process.env.OPENAI_MODEL || "gpt-4o-mini",
-});
+export const openaiClassifier = makeOpenAiCompatible({ ...OPENAI_PROVIDER, label: "OpenAI (chat)" });
 
-// Thinking Machines interaction models: no confirmed public LLM API (see
-// docs/VENDOR_EVAL.md). If their runtime exposes an OpenAI-compatible endpoint,
-// point THINKING_MACHINES_BASE_URL + _API_KEY at it and this lights up.
 export const thinkingMachinesClassifier = makeOpenAiCompatible({
-  name: "thinking-machines",
+  ...THINKING_MACHINES_PROVIDER,
   label: "Thinking Machines (OpenAI-compatible endpoint)",
-  baseUrl: () => process.env.THINKING_MACHINES_BASE_URL,
-  apiKey: () => process.env.THINKING_MACHINES_API_KEY,
-  model: () => process.env.THINKING_MACHINES_MODEL || "default",
 });

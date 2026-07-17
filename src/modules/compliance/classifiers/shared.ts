@@ -43,6 +43,14 @@ const INTENTS: Intent[] = [
   "human_request", "off_label", "adverse_event", "comparative", "other",
 ];
 
+/** Max output tokens for a classification (shared by every LLM classifier). Clamped to a sane band;
+ *  NEXUSREP_CLASSIFIER_MAX_TOKENS overrides within [80, 512]. */
+export function classifierMaxTokens(): number {
+  const raw = process.env.NEXUSREP_CLASSIFIER_MAX_TOKENS;
+  const n = Number(raw);
+  return Number.isFinite(n) && raw !== undefined && raw !== "" ? Math.max(80, Math.min(512, n)) : 180;
+}
+
 function clamp01(n: unknown): number {
   const v = typeof n === "number" ? n : Number(n);
   if (!Number.isFinite(v)) return 0;

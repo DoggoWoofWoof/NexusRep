@@ -5,18 +5,9 @@
  * larger model only when you intentionally accept slower turn-taking.
  */
 
-import { CLASSIFIER_SYSTEM, parseClassification } from "./shared";
+import { CLASSIFIER_SYSTEM, classifierMaxTokens, parseClassification } from "./shared";
 import type { LlmClassifier } from "./types";
-
-function model(): string {
-  return process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";
-}
-
-function maxTokens(): number {
-  const raw = process.env.NEXUSREP_CLASSIFIER_MAX_TOKENS;
-  const n = Number(raw);
-  return Number.isFinite(n) && raw !== undefined && raw !== "" ? Math.max(80, Math.min(512, n)) : 180;
-}
+import { anthropicModel as model } from "@lib/llm-config";
 
 export const claudeClassifier: LlmClassifier = {
   name: "claude",
@@ -30,7 +21,7 @@ export const claudeClassifier: LlmClassifier = {
     const t0 = Date.now();
     const res = await client.messages.create({
       model: model(),
-      max_tokens: maxTokens(),
+      max_tokens: classifierMaxTokens(),
       system: CLASSIFIER_SYSTEM,
       messages: [
         { role: "user", content: text?.trim() || "(no message)" },
