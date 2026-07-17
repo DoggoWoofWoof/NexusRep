@@ -10,7 +10,33 @@
 
 ## 1. Current build status
 
-### Latest: Guided deck is button step-through (no auto-walk) (2026-07-17)
+### Latest: Admin → Activity monitor — every click/connection/event, live (2026-07-17)
+
+A new in-app observability surface so an operator can watch what any user did/does WITHOUT the host
+console. New sidebar row **Activity log** (INTERNAL, next to Platform Admin; the doctor never sees the
+sidebar). Screen id `activity` (`admin` was already Platform Admin).
+
+- **Capture (everything):** a client interceptor (`lib/activity-client.ts`) mounted on both the brand
+  console and the doctor view patches `window.fetch` (every API call), listens for every click
+  (capture-phase, with a readable label), and logs navigation — batched + beaconed to
+  `/api/activity/ingest`. Server-side, rich semantic events are recorded at the meaningful points:
+  sign-in/out, content upload, coaching rule / rep-state / launch (studio), video connect + every
+  Tavus webhook (replica/pal joined, shutdown, transcription/recording ready), recording save/fail,
+  and compliance routing (AE / off-label / escalation flagged).
+- **Store:** a new `activity` module — a process-global, capped (5000), cross-user event log behind a
+  small interface (Postgres-ready; in-memory now, resets on restart like the rest of the stateless
+  demo). Deliberately global, unlike the per-user `audit` store, because the admin view is cross-user.
+  Identity is stamped SERVER-side at ingest (the client can't spoof the user).
+- **UI (`ActivityDashboard.tsx`):** summary tiles (events, active users, event types, errors), a
+  filter bar (search + user/category/surface/severity), colour-coded category chips, and a
+  live-updating newest-first timeline (time · category · action · target · user/surface) with
+  expandable per-event detail. Polls `/api/activity` every ~2s with a Pause/Live toggle.
+- Verified: 6 unit tests (record/query/filters/sinceSeq/cap/never-throw + ingest identity-stamp &
+  category clamp), plus a live ingest→query round-trip in the running server. Full suite **458 pass**;
+  typecheck + build clean. (Couldn't screenshot the dashboard — it's behind the brand login and I
+  don't sign in; visible after signing in.)
+
+### Guided deck is button step-through (no auto-walk) (2026-07-17)
 
 The guided deck is now driven ONE slide at a time by the buttons, not an auto-playing walk. On the
 video preview the auto-walk "breezed through" the whole deck, firing segment after segment; it's

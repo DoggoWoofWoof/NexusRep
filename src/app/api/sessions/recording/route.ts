@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { getRecordingStore } from "@lib/recording-store";
+import { logServerActivity } from "@lib/activity-log";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +55,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     ({ url } = await store.save({ sessionId: sessionIdRaw, bytes, contentType }));
   } catch (e) {
     console.error(`[recording] SAVE FAILED for ${sessionIdRaw}:`, e);
+    void logServerActivity({ category: "recording", action: "Recording save failed", target: sessionIdRaw, sessionId: sessionIdRaw, severity: "error", metadata: { bytes: bytes.byteLength, error: String(e) } });
     return NextResponse.json({ ok: false, error: "could not persist recording" }, { status: 500 });
   }
   const attached = await c.sessions.setRecordingUrl(sessionId, url);
@@ -62,6 +64,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "could not attach recording" }, { status: 500 });
   }
   console.info(`[recording] saved + attached: session=${sessionIdRaw} url=${url}`);
+  void logServerActivity({ category: "recording", action: "Recording saved", target: url, sessionId: sessionIdRaw, metadata: { bytes: bytes.byteLength, store: store.name, contentType } });
 
   await c.audit.record(sessionId, "response_output", { recording: url, bytes: bytes.byteLength, source: "client_capture" });
   return NextResponse.json({ ok: true, url });

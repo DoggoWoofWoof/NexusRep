@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AppState } from "./NexusRepApp";
 import { btnGhost, btnPrimary } from "./NexusRepApp";
 import { SlideView } from "../_components/SlideView";
+import { ActivityDashboard } from "./ActivityDashboard";
 import {
   ANALYTICS_KPIS, ANALYTICS_TABS, CRM_CONNECTORS,
   HCPS, TONE_COLORS, TRAIN_SEED_KEY, VENDOR_STACK, compStyle, segStyle, type Hcp, type SegTone,
@@ -23,6 +24,7 @@ export function BrandScreens({ app }: { app: AppState }) {
     case "audit": return <SessionDetail app={app} />;
     case "crm": return <FollowUps />;
     case "admin": return <Admin />;
+    case "activity": return <ActivityDashboard />;
     default: return null;
   }
 }

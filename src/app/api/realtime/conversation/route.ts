@@ -14,6 +14,7 @@ import { env } from "@lib/env";
 import { getRealtimeProvider, resolveDefaultAgentId } from "@modules/vendors";
 import { resolveBrandProfile, setupAnswersOf } from "@modules/brand";
 import { setActiveCall } from "@lib/active-call";
+import { logServerActivity } from "@lib/activity-log";
 
 export const dynamic = "force-dynamic";
 
@@ -237,6 +238,16 @@ async function startConversation(body: { hcpId?: unknown }, ownerUserId: string 
   if (session.transportUrl) {
     await c.sessions.setVendorConversation(hist.id, session.id);
   }
+
+  void logServerActivity({
+    user: ownerUserId ?? undefined,
+    category: "video",
+    action: session.transportUrl ? "Video rep connected" : "Video rep started (mock avatar)",
+    target: hist.id,
+    sessionId: hist.id,
+    severity: "notice",
+    metadata: { provider: provider.name, vendorConversationId: session.id ?? null },
+  });
 
   const reachableLlm = await reachableLlmPromise;
   return {

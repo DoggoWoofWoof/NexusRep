@@ -13,6 +13,7 @@ import { isOverviewPrompt } from "./overviewPrompt";
 import { appendTurn, type TranscriptMsg } from "@lib/transcript";
 import { useCuedSlide } from "../_components/useCuedSlide";
 import { isSameLiveTurnText } from "@lib/live-turn-guard";
+import { installActivityCapture } from "@lib/activity-client";
 
 // Wall-clock read behind a tiny indirection. These timestamps are for ASR-latency telemetry in
 // DEFERRED handlers (mic tap, recognizer callbacks) — never during render — but a bare Date.now()
@@ -90,7 +91,10 @@ export function HcpExperience({ app }: { app?: AppState }) {
     setMicSupported(rec.supported());
     const onFs = () => setFs(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", onFs);
-    return () => { voiceRef.current?.cancel(); document.removeEventListener("fullscreenchange", onFs); cancelSlideCue(); };
+    // Capture the doctor's clicks / API calls into the activity monitor (the admin sees HCP-side
+    // activity too, tagged surface "doctor"). Server-side session/video events carry the sessionId.
+    const stopCapture = installActivityCapture({ surface: "doctor" });
+    return () => { voiceRef.current?.cancel(); document.removeEventListener("fullscreenchange", onFs); cancelSlideCue(); stopCapture(); };
   }, []);
 
   async function speak(text: string) {

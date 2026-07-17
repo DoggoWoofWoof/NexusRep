@@ -10,6 +10,7 @@
 import { NextResponse } from "next/server";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
+import { logServerActivity } from "@lib/activity-log";
 import { setupAnswersOf } from "@modules/brand";
 import { llmComplete } from "@modules/content";
 import { resolveTargetingCodes } from "@modules/audience";
@@ -85,6 +86,13 @@ export async function POST(req: Request): Promise<NextResponse> {
   for (const slide of result.slides) await c.content.addSlide(slide);
   for (const ans of result.answers) await c.content.addAnswer(ans);
   for (const safety of result.safety) await c.content.addSafetyStatement(safety);
+  void logServerActivity({
+    category: "content",
+    action: "Uploaded content",
+    target: title,
+    severity: "notice",
+    metadata: { kind, filename, slides: result.slides.length, answers: result.answers.length, safety: result.safety.length },
+  });
 
   // Setup autofill: the document also ANSWERS setup questions (brand, indication, talking
   // points, hotwords…) — infer them so the brand user uploads once instead of typing each

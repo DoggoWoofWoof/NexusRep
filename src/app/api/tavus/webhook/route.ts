@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { env } from "@lib/env";
 import { getContainer, getContainerForUser } from "@lib/container";
+import { logServerActivity } from "@lib/activity-log";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,16 @@ export async function POST(req: Request): Promise<NextResponse> {
   const convId = body.conversation_id ?? (body.properties?.conversation_id as string | undefined);
 
   console.log("[tavus webhook]", event, convId ?? "(no conversation_id)");
+  // Feed the video lifecycle (replica_joined / pal_joined / shutdown / transcription_ready /
+  // recording_ready) into the activity monitor so the operator sees the live call unfold.
+  void logServerActivity({
+    user: owner ?? "system",
+    category: "video",
+    action: `Tavus ${event || "event"}`,
+    target: convId ?? undefined,
+    severity: /shutdown|error|fail/i.test(event) ? "notice" : "info",
+    metadata: { conversationId: convId, event },
+  });
 
   if (convId && /recording_ready|recording\.ready/i.test(event)) {
     const url = recordingUrl(body);

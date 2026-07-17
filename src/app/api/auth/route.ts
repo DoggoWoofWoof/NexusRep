@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { appAuthEnabled, verifyCredentials, sessionCookieFor, usernameFromCookie, findUser, SESSION_COOKIE } from "@lib/auth-session";
+import { recordActivity } from "@modules/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as { action?: unknown; username?: unknown; password?: unknown };
 
   if (body.action === "logout") {
+    const who = usernameFromCookie(req.cookies.get(SESSION_COOKIE)?.value);
+    recordActivity({ user: who ?? "anon", surface: "brand", category: "auth", action: "Signed out" });
     const res = NextResponse.json({ ok: true, authed: false });
     res.cookies.set(SESSION_COOKIE, "", { path: "/", maxAge: 0 });
     return res;
@@ -38,6 +41,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const password = typeof body.password === "string" ? body.password : "";
   const user = verifyCredentials(username, password);
   if (user) {
+    recordActivity({ user: user.username, surface: "brand", category: "auth", action: "Signed in", metadata: { name: user.name } });
     const res = NextResponse.json({ ok: true, authed: true, username: user.username, name: user.name });
     res.cookies.set(SESSION_COOKIE, sessionCookieFor(user.username), {
       httpOnly: true,
@@ -49,5 +53,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return res;
   }
 
+  recordActivity({ user: username || "anon", surface: "brand", category: "auth", action: "Failed sign-in", severity: "warn", metadata: { username } });
   return NextResponse.json({ ok: false, authed: false, error: "Incorrect username or password." }, { status: 401 });
 }

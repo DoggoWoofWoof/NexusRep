@@ -18,6 +18,7 @@ import { BrandScreens } from "./BrandScreens";
 import { StudioScreen } from "./StudioScreen";
 import { HcpExperience } from "./HcpExperience";
 import { useBrand, invalidateBrandCache } from "../_components/useBrand";
+import { installActivityCapture, logNavigation } from "@lib/activity-client";
 
 export type Screen =
   | "overview"
@@ -28,7 +29,8 @@ export type Screen =
   | "analytics"
   | "audit"
   | "crm"
-  | "admin";
+  | "admin"
+  | "activity";
 
 // The AI Rep badge is COMPUTED from live studio readiness (see useStudioMeta) — never static.
 const NAV_PLAN: { id: Screen; label: string; badge?: string }[] = [
@@ -228,10 +230,18 @@ function AuthedConsole({ name, authEnabled, onLogout }: { name: string | null; a
   const attention = useAttention(); // real pending items, not a hardcoded "3"
 
   const setNav = (s: Screen) => {
+    if (s !== nav) logNavigation(s, nav); // feed the activity monitor every screen change
     setNavState(s);
     setMode("brand");
     setDrawerId(null);
   };
+
+  // Capture every click / navigation / API call in the brand console into the activity log. The
+  // doctor view (mode "hcp") installs its own capture; here we only run for the brand surface.
+  useEffect(() => {
+    if (mode === "hcp") return;
+    return installActivityCapture({ surface: "brand" });
+  }, [mode]);
   const toggleActivation = (id: string) =>
     setActivation((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
 
@@ -288,6 +298,10 @@ function AuthedConsole({ name, authEnabled, onLogout }: { name: string | null; a
           {NAV_GOVERN.map((item) => <NavRow key={item.id} item={item} active={nav === item.id} collapsed={navCollapsed} onClick={() => setNav(item.id)} />)}
         </nav>
         <div style={{ padding: navCollapsed ? "8px 8px" : "8px 10px", borderTop: "1px solid rgba(255,255,255,.08)" }}>
+          <div onClick={() => setNav("activity")} title={navCollapsed ? "Activity log" : undefined} data-activity="Activity log nav" style={{ display: "flex", alignItems: "center", justifyContent: navCollapsed ? "center" : "flex-start", gap: 10, padding: navCollapsed ? "10px 0" : "10px 13px", minHeight: 38, borderRadius: 9, cursor: "pointer", font: "500 13px/1.2 var(--dn-font-sans)", color: nav === "activity" ? "#fff" : "rgba(255,255,255,.6)", background: nav === "activity" ? "rgba(96,165,250,.18)" : "transparent" }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", boxShadow: "0 0 0 3px rgba(34,197,94,.18)" }} />{!navCollapsed && "Activity log"}
+            {!navCollapsed && <span style={{ font: "500 9.5px/1 var(--dn-font-sans)", color: "rgba(255,255,255,.4)", marginLeft: "auto" }}>INTERNAL</span>}
+          </div>
           <div onClick={() => setNav("admin")} title={navCollapsed ? "Platform Admin" : undefined} style={{ display: "flex", alignItems: "center", justifyContent: navCollapsed ? "center" : "flex-start", gap: 10, padding: navCollapsed ? "10px 0" : "10px 13px", minHeight: 38, borderRadius: 9, cursor: "pointer", font: "500 13px/1.2 var(--dn-font-sans)", color: nav === "admin" ? "#fff" : "rgba(255,255,255,.6)", background: nav === "admin" ? "rgba(96,165,250,.18)" : "transparent" }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#64748b" }} />{!navCollapsed && "Platform Admin"}
             {!navCollapsed && <span style={{ font: "500 9.5px/1 var(--dn-font-sans)", color: "rgba(255,255,255,.4)", marginLeft: "auto" }}>INTERNAL</span>}

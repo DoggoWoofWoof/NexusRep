@@ -7,6 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { getContainer } from "@lib/container";
+import { logServerActivity } from "@lib/activity-log";
 import { hcpNameOf } from "@lib/demo-seed";
 import { compactCoaching } from "@modules/content";
 import type { StudioSnapshot } from "@modules/aiRepStudio";
@@ -122,7 +123,9 @@ export async function POST(req: Request): Promise<NextResponse> {
       // An HCP binding only makes sense on hcp_specific rules — a stray id on a global/persona
       // rule would silently narrow it. Ignore it for other scopes.
       const appliesToHcpId = scope === "hcp_specific" ? body.appliesToHcpId ?? c.demo.hcpId : undefined;
-      return done(await c.studio.addRule(id, { feedback: body.feedback, scope, appliesToHcpId, topic: body.topic, sourceMessage: body.sourceMessage }));
+      const ruleSnap = await c.studio.addRule(id, { feedback: body.feedback, scope, appliesToHcpId, topic: body.topic, sourceMessage: body.sourceMessage });
+      void logServerActivity({ category: "training", action: "Added coaching rule", target: String(body.feedback).slice(0, 80), metadata: { scope: body.scope ?? "persona", topic: body.topic } });
+      return done(ruleSnap);
     }
     case "acceptCoaching": {
       // Persist a whole accepted coaching thread: compliance-sensitive notes → individual gated
@@ -149,7 +152,9 @@ export async function POST(req: Request): Promise<NextResponse> {
       if (!hcpIds.length) return bad("hcpIds (valid cohort members) required");
       const isiGap = await missingIsi(c);
       if (isiGap) return bad(isiGap);
-      return done(await c.studio.launch(id, hcpIds));
+      const launchSnap = await c.studio.launch(id, hcpIds);
+      void logServerActivity({ category: "launch", action: "Launched invitations", target: `${hcpIds.length} HCP${hcpIds.length === 1 ? "" : "s"}`, severity: "notice", metadata: { count: hcpIds.length } });
+      return done(launchSnap);
     }
     case "greeting": {
       // Accepting a coached OPENING LINE persists it as the rep's greeting + disclosure, so the
@@ -168,7 +173,9 @@ export async function POST(req: Request): Promise<NextResponse> {
         const isiGap = await missingIsi(c);
         if (isiGap) return bad(isiGap);
       }
-      return done(await c.studio.setRepState(id, body.repState as (typeof allowed)[number]));
+      const repSnap = await c.studio.setRepState(id, body.repState as (typeof allowed)[number]);
+      void logServerActivity({ category: "training", action: `Rep set to ${body.repState}`, severity: body.repState === "live" ? "notice" : "info" });
+      return done(repSnap);
     }
     default:
       return bad("unknown action");
