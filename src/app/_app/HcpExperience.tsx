@@ -14,6 +14,7 @@ import { appendTurn, type TranscriptMsg } from "@lib/transcript";
 import { useCuedSlide } from "../_components/useCuedSlide";
 import { isSameLiveTurnText } from "@lib/live-turn-guard";
 import { installActivityCapture } from "@lib/activity-client";
+import { estimateSegmentSpeechMs as estimateSpeechMs } from "@lib/pacing";
 
 // Wall-clock read behind a tiny indirection. These timestamps are for ASR-latency telemetry in
 // DEFERRED handlers (mic tap, recognizer callbacks) — never during render — but a bare Date.now()
@@ -630,11 +631,6 @@ function followUpNotice(kind: string): string {
     case "human_rep": return "A representative will reach out — a follow-up was created.";
     default: return "A follow-up has been created.";
   }
-}
-
-function estimateSpeechMs(text: string): number {
-  const words = text.trim().split(/\s+/).filter(Boolean).length;
-  return Math.max(5500, Math.min(28000, words * 360));
 }
 
 function wait(ms: number): Promise<void> {

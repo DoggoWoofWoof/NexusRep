@@ -12,6 +12,7 @@ import { resolveSessionAndHcp } from "@lib/resolve-session";
 import { gatePresentationSegment, isiAlreadyDelivered, type PolicyRoute, type RiskClassification, classify, route as policyRouteFor } from "@modules/compliance";
 import { mergePlan, PresentationSkill, defaultComposer } from "@modules/content";
 import { presentationGuidance } from "@modules/rules";
+import { estimateSegmentSpeechMs as estimateSpeechMs } from "@lib/pacing";
 
 export const dynamic = "force-dynamic";
 
@@ -29,10 +30,6 @@ const BASE_CLASSIFICATION: RiskClassification = {
   isiRequired: false,
 };
 
-function estimateSpeechMs(text: string): number {
-  const words = text.trim().split(/\s+/).filter(Boolean).length;
-  return Math.max(5500, Math.min(28000, words * 360));
-}
 
 export async function POST(req: Request): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as {

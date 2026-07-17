@@ -17,6 +17,7 @@ import type { SetupProposedAction } from "@modules/setupAssistant";
 import type { OverviewPlanSnap, OverviewPlanStep } from "./studio-types";
 import { useOverviewPlan } from "./useOverviewPlan";
 import { makePreviewSessionId, slideChipRedundant, splitIsi } from "./studio-helpers";
+import { card } from "./ui";
 
 type StudioMode = "setup" | "agent" | "pitch" | "train" | "rules" | "readiness";
 const MODES: { key: StudioMode; label: string }[] = [
@@ -756,7 +757,7 @@ function BuildMode({ repName, snap, post, app, refresh }: { repName: string; sna
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <span style={{ font: "600 11px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-muted)", padding: "2px 2px 4px" }}>Open a section to edit, then confirm it.</span>
         {SECTIONS.map((sec) => (
-          <div key={sec.key} style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+          <div key={sec.key} style={{ ...card, overflow: "hidden" }}>
             <div onClick={() => setOpen((o) => (o === sec.key ? null : sec.key))} style={{ padding: "14px 17px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 9 }}><span style={{ font: "600 13px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{sec.title}</span><span style={statusStyle(sec.key)}>{statusLabel(sec.key)}</span></div>
               <span style={{ font: "500 17px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{open === sec.key ? "▾" : "▸"}</span>
@@ -1199,7 +1200,7 @@ function PitchMode({ voiceStyle }: { voiceStyle?: string }) {
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr 0.85fr", gap: 15, alignItems: "start" }}>
       {/* ── LEFT: the PPT (where Train has the video) + deck sources + rules ── */}
       <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+        <div style={{ ...card, overflow: "hidden" }}>
           <div style={{ padding: "12px 14px 0" }}>
             <div style={{ height: 250, minHeight: 0, borderRadius: 10, overflow: "hidden", border: "1px solid var(--dn-border)", background: "var(--dn-surface-2)" }}>
               <SlideView focusId={activePlanSlideId} compact fill />
@@ -1237,7 +1238,7 @@ function PitchMode({ voiceStyle }: { voiceStyle?: string }) {
       </div>
 
       {/* ── MIDDLE: the script, line by line — coach any line in place ── */}
-      <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", display: "flex", flexDirection: "column", height: 640 }}>
+      <div style={{ ...card, display: "flex", flexDirection: "column", height: 640 }}>
         <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--dn-border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <span style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Script <span style={{ font: "500 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>· what the rep says, slide by slide</span></span>
           <button onClick={() => void generate()} disabled={generating} style={{ ...btnGhost, padding: "6px 10px", font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)", opacity: generating ? 0.6 : 1 }}>{generating ? "Generating…" : "↻ Regenerate"}</button>
@@ -1705,7 +1706,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
       </div>
 
       {/* Coaching thread */}
-      <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", display: "flex", flexDirection: "column", height: 604 }}>
+      <div style={{ ...card, display: "flex", flexDirection: "column", height: 604 }}>
         <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--dn-border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}><span style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Coach the rep</span><span style={{ font: "500 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Refine each answer, then accept</span></div>
         <div ref={threadRef} style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 18 }}>
           {exchanges.length === 0 && <div style={{ textAlign: "center", color: "var(--dn-fg-subtle)", font: "400 12px/1.6 var(--dn-font-sans)", padding: "40px 14px" }}>Ask the rep a question on the left. Then coach any answer and it will try again — until you accept it.</div>}
@@ -1880,7 +1881,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
         {/* The deck as a doctor sees it — it follows the conversation (latest answer's slide,
             or a clicked line). Script editing lives in Pitch & Script, not here. */}
-        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+        <div style={{ ...card, overflow: "hidden" }}>
           <div style={{ padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Deck <span style={{ font: "500 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>· follows the conversation</span></span>
             <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
@@ -1898,7 +1899,7 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
         </div>
         {/* Rules from coaching — below the deck, next to the thread whose Accept creates them.
             (Script coaching in Pitch & Script saves permanently into the plan — no rules.) */}
-        <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+        <div style={{ ...card, overflow: "hidden" }}>
           <div style={{ padding: "12px 14px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--dn-border)" }}><span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Rules from your coaching</span><span onClick={() => app.setStudioMode("rules")} style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)", cursor: "pointer" }}>See all →</span></div>
           <div style={{ padding: "11px 14px", display: "flex", flexDirection: "column", gap: 9, maxHeight: 230, overflowY: "auto" }}>
             {coachingRules.length === 0 && <div style={{ textAlign: "center", padding: "14px 8px", font: "400 11.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>Accept a coached answer and the rules behind it land here for review.</div>}
@@ -1962,7 +1963,7 @@ function ModelLab() {
   const sel: React.CSSProperties = { flex: 1, minWidth: 0, padding: "6px 8px", border: "1px solid var(--dn-border)", borderRadius: 7, font: "500 11px/1.2 var(--dn-font-sans)", background: "#fff", color: "var(--dn-fg)" };
 
   return (
-    <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+    <div style={{ ...card, overflow: "hidden" }}>
       <div onClick={() => setOpen((v) => !v)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}>
         <span style={{ font: "600 12px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>⚙ Model lab <span style={{ font: "500 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>· internal</span></span>
         <span style={{ font: "600 11px/1 var(--dn-font-sans)", color: "var(--dn-brand-light)" }}>{open ? "Hide" : "Open"}</span>
@@ -2101,7 +2102,7 @@ function OverviewPlanCard({
   const stepIndex = Math.max(0, steps.findIndex((s) => s.id === step?.id));
 
   return (
-    <div style={{ background: "#fff", border: "1px solid var(--dn-border)", borderRadius: 13, boxShadow: "var(--dn-shadow-card)", overflow: "hidden" }}>
+    <div style={{ ...card, overflow: "hidden" }}>
       <div style={{ padding: "13px 16px 11px", borderBottom: "1px solid var(--dn-border)", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ font: "600 12.5px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>Brand pitch</div>
