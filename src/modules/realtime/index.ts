@@ -17,3 +17,14 @@ export {
 } from "./avSpike";
 export { getRealtimeProvider } from "@modules/vendors";
 export { RESPONDERS, getResponder, listResponders, type Responder } from "./responders";
+export {
+  FRAGMENT_WINDOW_MS,
+  isLikelyIncompleteFragment,
+  isLikelyFragmentContinuation,
+  mergeOrBufferFragment,
+  shouldIgnoreTrailingRecoveredFragment,
+  markRecoveredFragmentWindow,
+  rememberRecoveredFragmentReply,
+  getRecoveredFragmentReply,
+  waitForRecoveredFragmentReply,
+} from "./fragment-buffer";

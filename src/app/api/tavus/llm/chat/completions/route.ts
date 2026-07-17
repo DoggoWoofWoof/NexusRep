@@ -16,6 +16,14 @@ import { env } from "@lib/env";
 import { getActiveCall } from "@lib/active-call";
 import { correctHcpAsrText } from "@lib/asr-correct";
 import { beginLiveTurn, failLiveTurn, finishLiveTurn } from "@lib/live-turn-guard";
+import {
+  FRAGMENT_WINDOW_MS,
+  mergeOrBufferFragment,
+  shouldIgnoreTrailingRecoveredFragment,
+  markRecoveredFragmentWindow,
+  rememberRecoveredFragmentReply,
+  waitForRecoveredFragmentReply,
+} from "@modules/realtime";
 
 export const dynamic = "force-dynamic";
 
@@ -47,88 +55,6 @@ function stripUserAudioAnalysis(text: string): string {
     .replace(/<user_audio_analysis>[\s\S]*?<\/user_audio_analysis>/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-type FragmentState = { text: string; at: number };
-const FRAGMENT_WINDOW_MS = 2500;
-const pendingFragments = new Map<string, FragmentState>();
-const recoveredFragmentUntil = new Map<string, number>();
-const recoveredFragmentReplies = new Map<string, { reply: string; until: number }>();
-
-function wordCount(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
-}
-
-function isLikelyIncompleteFragment(text: string): boolean {
-  const t = text.trim();
-  if (!t) return false;
-  // Safety reports must not be held behind fragment buffering just because
-  // Tavus leaves a trailing comma. A partial AE route is better than silence.
-  if (
-    /\b(?:patient|hcp|doctor|he|she|they|i)\b[\s\S]{0,80}\b(?:had|has|developed|experienced|reported|while taking|after taking|on)\b[\s\S]{0,80}\b(?:bleeding|rash|swelling|reaction|hospitali[sz]ed|dizz(?:y|iness)|nausea|side effect|adverse)\b/i.test(t) ||
-    /\b(?:bleeding|rash|swelling|reaction|hospitali[sz]ed|dizz(?:y|iness)|nausea)\b[\s\S]{0,80}\b(?:after|while taking|on|from|with)\b/i.test(t)
-  ) return false;
-  if (/\bliberation\b/i.test(t)) return false;
-  if (/[,:;–-]\s*$/.test(t)) return true;
-  return /^(?:what|how|tell|explain|can|could|does|is)\b/i.test(t) && wordCount(t) <= 3 && !/[?!.]\s*$/.test(t);
-}
-
-function isLikelyFragmentContinuation(text: string): boolean {
-  const t = text.trim();
-  if (!t) return false;
-  if (wordCount(t) <= 3) return true;
-  return /^[a-z]/.test(t);
-}
-
-function mergeOrBufferFragment(sessionKey: string, text: string, now = Date.now()):
-  | { action: "buffer" }
-  | { action: "process"; text: string; merged?: boolean } {
-  const prev = pendingFragments.get(sessionKey);
-  if (prev && now - prev.at <= FRAGMENT_WINDOW_MS && isLikelyFragmentContinuation(text)) {
-    pendingFragments.delete(sessionKey);
-    return { action: "process", text: `${prev.text.replace(/\s+$/, "")} ${text.trim()}`, merged: true };
-  }
-  if (prev) pendingFragments.delete(sessionKey);
-  if (isLikelyIncompleteFragment(text)) {
-    pendingFragments.set(sessionKey, { text, at: now });
-    return { action: "buffer" };
-  }
-  return { action: "process", text };
-}
-
-function shouldIgnoreTrailingRecoveredFragment(sessionKey: string, text: string, now = Date.now()): boolean {
-  const until = recoveredFragmentUntil.get(sessionKey) ?? 0;
-  if (now > until) {
-    recoveredFragmentUntil.delete(sessionKey);
-    return false;
-  }
-  const t = text.trim();
-  return wordCount(t) <= 2 && /^[a-z]{2,8}\??$/i.test(t);
-}
-
-function rememberRecoveredFragmentReply(sessionKey: string, reply: string, now = Date.now()): void {
-  if (!reply.trim()) return;
-  recoveredFragmentReplies.set(sessionKey, { reply, until: now + Math.max(7000, VOICE_COMPOSER_TIMEOUT_MS + FRAGMENT_WINDOW_MS) });
-}
-
-function getRecoveredFragmentReply(sessionKey: string, now = Date.now()): string | null {
-  const cached = recoveredFragmentReplies.get(sessionKey);
-  if (!cached) return null;
-  if (now > cached.until) {
-    recoveredFragmentReplies.delete(sessionKey);
-    return null;
-  }
-  return cached.reply;
-}
-
-async function waitForRecoveredFragmentReply(sessionKey: string, timeoutMs: number): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const reply = getRecoveredFragmentReply(sessionKey);
-    if (reply) return reply;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return getRecoveredFragmentReply(sessionKey);
 }
 
 function timingHeaders(timings: TimingStep[], extra?: Record<string, string>): HeadersInit {
@@ -246,7 +172,7 @@ export async function POST(req: Request): Promise<Response> {
     correctedPreview = correctedText !== text ? previewText(correctedText) : undefined;
     asrCorrections = correction.corrections.length ? correction.corrections.slice(0, 4) : undefined;
     if (correction.corrections.some(([heard]) => /\bliberation\b/i.test(heard))) {
-      recoveredFragmentUntil.set(sessionKey, Date.now() + FRAGMENT_WINDOW_MS);
+      markRecoveredFragmentWindow(sessionKey);
     }
     if (correctedText !== text) mark("asr_correct");
     // Tavus supplies ASR + avatar transport only. The actual turn goes through the same
@@ -334,7 +260,7 @@ export async function POST(req: Request): Promise<Response> {
       (asrCorrections?.some(([heard]) => /\bliberation\b|\bbrue\b|\bbrew\b|\bbro\b/i.test(heard)) ||
         /\bLIBREXIA program\b/i.test(correctedPreview ?? ""))
     ) {
-      rememberRecoveredFragmentReply(sessionKey, reply);
+      rememberRecoveredFragmentReply(sessionKey, reply, VOICE_COMPOSER_TIMEOUT_MS);
     }
     mark(finish.status === "current" ? `turn_${output.route}` : "turn_superseded");
     turnInfo = {
