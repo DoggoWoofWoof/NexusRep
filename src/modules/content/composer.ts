@@ -233,17 +233,19 @@ function plainDirective(s: string): string {
     .trim();
 }
 
+const MAX_RULE_CHARS = 180; // one tight directive — keeps the Rules list + rep prompt clean
+
 export async function compactCoaching(notes: string[], ctx: { question: string; answer: string }): Promise<{ instruction: string; usedLlm: boolean }> {
   const clean = notes.map((n) => n.trim()).filter(Boolean);
-  // Example = the accepted answer's prose, with the verbatim ISI block trimmed off, capped.
-  const example = (ctx.answer.split(/\n\nImportant Safety Information:/)[0] ?? ctx.answer).trim().slice(0, 280);
-  const fallback = plainDirective(`${clean.join("; ")}${clean.length ? "." : ""}${example ? ` For example, when asked "${ctx.question}", answer in this style: "${example}"` : ""}`);
-  // Write the rule the way the rep's system prompt consumes it: a single plain-text imperative
-  // directive + one example line. No markdown (it renders literally in the Rules list / prompt).
-  const system = `You compress a brand's coaching notes into ONE rule for an AI pharma rep's system prompt. Rules: style/tone/emphasis ONLY — never a medical, dosing, efficacy, safety, or comparative claim, and never invent facts. Output PLAIN TEXT ONLY — no markdown, asterisks, headers, or bullet characters. Write one imperative directive (1–2 sentences) telling the rep how to speak, then a final line beginning "Example:" that shows the desired style using the accepted answer.`;
-  const user = `Coaching notes:\n${clean.map((n) => `- ${n}`).join("\n")}\n\nQuestion asked: "${ctx.question}"\nAccepted answer in the desired style: "${example}"\n\nReturn the directive then the Example line, plain text.`;
+  const topic = ctx.question.trim().slice(0, 120); // short context only — NOT the answer prose
+  // ONE short, plain-text style directive with NO embedded example answer. Baking the accepted answer
+  // (hundreds of chars) into every rule is what made rules "so big" and rotted the rep's system prompt
+  // as rules accumulated. Keep the directive; drop the example. Capped so it can never balloon.
+  const fallback = plainDirective(clean.join("; ")).slice(0, MAX_RULE_CHARS);
+  const system = `You compress a brand's coaching notes into ONE short rule for an AI pharma rep's system prompt. Rules cover STYLE / TONE / EMPHASIS only — never a medical, dosing, efficacy, safety, or comparative claim, and never invent facts. Output ONE plain-text imperative directive of at most 25 words telling the rep HOW to speak. No example, no quotes, no markdown, no headers, no bullet characters — just the directive.`;
+  const user = `Coaching notes:\n${clean.map((n) => `- ${n}`).join("\n")}${topic ? `\n\n(These notes were given on the question "${topic}".)` : ""}\n\nReturn ONE short directive, plain text, at most 25 words.`;
   const out = await llmText(system, user).catch(() => null);
-  const text = plainDirective(out ?? "");
+  const text = plainDirective(out ?? "").slice(0, MAX_RULE_CHARS);
   return text ? { instruction: text, usedLlm: true } : { instruction: fallback, usedLlm: false };
 }
 

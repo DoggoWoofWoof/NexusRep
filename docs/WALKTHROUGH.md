@@ -10,7 +10,24 @@
 
 ## 1. Current build status
 
-### Latest: Admin → Activity monitor — every click/connection/event, live (2026-07-17)
+### Latest: Training — coaching doesn't jump to the bottom + coached rules are compact (2026-07-17)
+
+Two Training-tab fixes:
+
+- **Coaching no longer yanks the thread to the bottom.** The scroll effect fired on ANY `exchanges`
+  change, so coaching a line (which appends a re-answer to that exchange) scrolled past it to the very
+  bottom. Now it jumps to the bottom ONLY when a NEW exchange is added (a question/answer or a session
+  handoff); coaching mutates an existing exchange in place, so the view stays on the coached line and
+  the coached message stays shown. `StudioScreen.tsx` (tracks the prior exchange count).
+- **Coached rules are compact — no context rot.** `compactCoaching` baked up to 280 chars of the
+  accepted answer into every rule as an "Example:" clause, so rules were huge and the rep's system
+  prompt bloated as they piled up. Now it emits ONE short imperative directive (≤25 words, capped at
+  180 chars, plain text) with NO embedded example. `composer.ts`; `tests/coaching-compaction.test.ts`.
+
+(Both live behind the brand login/Training tab, which I don't sign into — verified via typecheck +
+build + the compaction size test; visible in the Training tab after signing in.)
+
+### Admin → Activity monitor — every click/connection/event, live (2026-07-17)
 
 A new in-app observability surface so an operator can watch what any user did/does WITHOUT the host
 console. New sidebar row **Activity log** (INTERNAL, next to Platform Admin; the doctor never sees the

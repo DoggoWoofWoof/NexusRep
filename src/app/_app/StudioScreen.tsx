@@ -1506,12 +1506,17 @@ function TrainMode({ rules, post, repName, app, voiceStyle }: { rules: UiRule[];
   // If push-to-talk finalizes while the previous preview answer is still composing, do not drop the
   // question. Queue it and run it as soon as the current preview settles.
   const pendingAskRef = useRef<string[]>([]);
-  // Keep the coaching thread pinned to the newest message (new questions, re-answers,
-  // seeded session-coaching handoffs) — no manual scrolling to find the latest.
+  // Jump to the newest message ONLY when a NEW turn is added (a question/answer, or a session-coaching
+  // handoff). Coaching mutates an EXISTING exchange in place (a re-answer appended) — don't yank to the
+  // bottom then; keep the view on the coached line so the coached message stays shown. "Going fully
+  // down" is for new messages only.
   const threadRef = useRef<HTMLDivElement | null>(null);
+  const lastExchangeCountRef = useRef(0);
   useEffect(() => {
     const el = threadRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    const grew = exchanges.length > lastExchangeCountRef.current;
+    lastExchangeCountRef.current = exchanges.length;
+    if (el && grew) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [exchanges, busyIdx]);
 
   // Browser ASR for voice rehearsal (created once; supported() gates the mic button).
