@@ -10,6 +10,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { createVideoTransport, type VideoCallTransport } from "./video-transport";
+import { estimateReplicaSpeechMs, isHcpRawEvent, isRepRawEvent } from "./video-events";
 
 type ConvResp = { provider: string; configured: boolean; conversationUrl: string | null; token: string | null; note: string; reachableLlm?: boolean; sessionId?: string; greeting?: string | null };
 type Stage = "loading" | "unconfigured" | "joining" | "live" | "ended" | "error";
@@ -67,26 +68,6 @@ type VideoAgentStageProps = {
    *  recording is off on our account, so we capture it ourselves). Independent of bare/bot mode. */
   recordSession?: boolean;
 };
-
-function estimateReplicaSpeechMs(text: string): number {
-  const words = text.trim().split(/\s+/).filter(Boolean).length;
-  return Math.min(45_000, Math.max(2_400, words * 430 + 1_200));
-}
-
-function isHcpRawEvent(e: { type: string; role: string }): boolean {
-  const role = e.role.toLowerCase();
-  const type = e.type.toLowerCase();
-  return /\b(hcp|user|human|participant|remote)\b/.test(role) ||
-    /(?:^|[._-])(?:user|hcp|human|participant|remote)(?:[._-]|$)/.test(type);
-}
-
-function isRepRawEvent(e: { type: string; role: string }): boolean {
-  if (isHcpRawEvent(e)) return false;
-  const role = e.role.toLowerCase();
-  const type = e.type.toLowerCase();
-  return /\b(replica|assistant|agent|ai|pal|face)\b/.test(role) ||
-    /(?:^|[._-])(?:replica|assistant|agent|pal|face)(?:[._-]|$)/.test(type);
-}
 
 export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStageProps>(function VideoAgentStage({ onClose, bare = false, onRepTurn, onHcpUtterance, normalizeHcpUtterance, hcpId, onMutedChange, onRepAudioStart, onHcpSpeechStart, onMicReadyChange, onDoctorMicActiveChange, onSessionReady, recordSession = false }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);

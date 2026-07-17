@@ -27,11 +27,18 @@ full suite (459) + build green, committed separately.
   `HcpEngagementPanel`, `Launch`, `Sessions`, `Analytics`, `SessionDetail`, `FollowUps`, `Admin`),
   with shared audience logic in `useAudience.ts`. Pure extraction, no behavior change.
 
-**Still open (deliberately deferred for review):** extract `StudioScreen`'s `useOverviewPlan` hook +
-form primitives (low risk); pull `VideoAgentStage`'s pure event helpers into `video-events.ts` (low
-risk). **Higher-risk (need a focused pass with their tests):** unify the duplicated overview/preview
-compliance gate-loop into one service; extract the Tavus fragment/utterance state machine into
-`@modules/realtime`; consolidate the OpenAI-compatible LLM client into one `@modules/vendors` adapter.
+- **Stage 3 — StudioScreen + VideoAgentStage extractions.** `VideoAgentStage`'s pure event helpers
+  (`estimateReplicaSpeechMs`, `isHcpRawEvent`, `isRepRawEvent`) → `video-events.ts`. From
+  `StudioScreen` (2471 → ~2325 LOC): the `useOverviewPlan` hook → `useOverviewPlan.ts`; the pure
+  helpers `makePreviewSessionId`/`splitIsi`/`slideChipRedundant` → `studio-helpers.ts`; the shared
+  overview-plan types → `studio-types.ts` (a dependency-free module, so the hook doesn't import back
+  from StudioScreen — no cycle). Pure extraction, no behavior change.
+
+**Still open (higher-risk — need a focused pass with their tests):** unify the duplicated
+overview/preview compliance gate-loop into one service; extract the Tavus fragment/utterance state
+machine into `@modules/realtime`; consolidate the OpenAI-compatible LLM client into one
+`@modules/vendors` adapter. (The remaining StudioScreen mode-component split — BuildMode/TrainMode etc.
+— needs a `studio-types.ts` expansion first and is a larger, medium-risk stage.)
 
 ### Training — coaching doesn't jump to the bottom + coached rules are compact (2026-07-17)
 
