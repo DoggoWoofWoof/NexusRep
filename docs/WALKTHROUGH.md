@@ -31,6 +31,10 @@ sidebar). Screen id `activity` (`admin` was already Platform Admin).
   filter bar (search + user/category/surface/severity), colour-coded category chips, and a
   live-updating newest-first timeline (time · category · action · target · user/surface) with
   expandable per-event detail. Polls `/api/activity` every ~2s with a Pause/Live toggle.
+- **Scoped by user** (like the per-user data isolation): a **Group by user** toggle segments the feed
+  into per-user sections — each with an initials avatar, the user's GLOBAL event total, last-active
+  time, and their events beneath (collapsible) — so you can drill into "what did this user do." The
+  user filter dropdown still narrows the whole feed to one user.
 - Verified: 6 unit tests (record/query/filters/sinceSeq/cap/never-throw + ingest identity-stamp &
   category clamp), plus a live ingest→query round-trip in the running server. Full suite **458 pass**;
   typecheck + build clean. (Couldn't screenshot the dashboard — it's behind the brand login and I

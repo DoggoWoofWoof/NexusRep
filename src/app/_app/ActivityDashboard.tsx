@@ -67,6 +67,8 @@ export function ActivityDashboard() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [now, setNow] = useState<number>(() => Date.now());
   const [err, setErr] = useState<string>("");
+  const [groupBy, setGroupBy] = useState<"none" | "user">("none");
+  const [collapsedUsers, setCollapsedUsers] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     const f = filters;
@@ -110,10 +112,35 @@ export function ActivityDashboard() {
       return next;
     });
 
+  const toggleUser = (u: string) =>
+    setCollapsedUsers((prev) => {
+      const next = new Set(prev);
+      if (next.has(u)) next.delete(u);
+      else next.add(u);
+      return next;
+    });
+
   const topCategories = useMemo(() => {
     if (!summary) return [];
     return Object.entries(summary.byCategory).sort((a, b) => b[1] - a[1]).slice(0, 6);
   }, [summary]);
+
+  // Per-user scoping: segment the (loaded) events into one section per user, newest-active user
+  // first. Each section's header shows the user's GLOBAL total (from the summary) alongside how many
+  // are in the loaded window, so the admin can drill into "what did this user do" like the per-user
+  // data isolation everywhere else in the app.
+  const userGroups = useMemo(() => {
+    if (groupBy !== "user") return [];
+    const map = new Map<string, ActivityEvent[]>();
+    for (const e of events) {
+      const arr = map.get(e.user);
+      if (arr) arr.push(e);
+      else map.set(e.user, [e]);
+    }
+    return [...map.entries()]
+      .map(([user, evs]) => ({ user, evs, lastAt: evs[0]!.at, loaded: evs.length, total: summary?.byUser[user] ?? evs.length }))
+      .sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt));
+  }, [groupBy, events, summary]);
 
   const activeFilters = filters.q || filters.user || filters.category || filters.surface || filters.severity;
 
@@ -157,6 +184,7 @@ export function ActivityDashboard() {
           <button onClick={() => setFilters(EMPTY)} style={pill(false)}>Clear</button>
         ) : null}
         <div style={{ flex: "1 0 0" }} />
+        <button onClick={() => setGroupBy((g) => (g === "user" ? "none" : "user"))} data-activity="Group by user" style={pill(groupBy === "user")}>{groupBy === "user" ? "👤 By user" : "☰ Flat"}</button>
         <button onClick={() => setLive((v) => !v)} data-activity={live ? "Pause activity" : "Resume activity"} style={pill(live)}>{live ? "⏸ Pause" : "▶ Live"}</button>
         <button onClick={() => void load()} data-activity="Refresh activity" style={pill(false)}>↻ Refresh</button>
       </div>
@@ -186,46 +214,81 @@ export function ActivityDashboard() {
           <div style={{ padding: "40px 20px", textAlign: "center", font: "400 13px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
             {activeFilters ? "No events match these filters." : "No activity yet — interact with the app and it'll appear here live."}
           </div>
-        ) : (
-          events.map((e) => {
-            const col = catColor(e.category);
-            const open = expanded.has(e.id);
+        ) : groupBy === "user" ? (
+          userGroups.map((g) => {
+            const collapsed = collapsedUsers.has(g.user);
             return (
-              <div key={e.id} style={{ borderBottom: "1px solid var(--dn-surface-2)" }}>
+              <div key={g.user}>
                 <div
-                  onClick={() => toggle(e.id)}
-                  style={{ display: "grid", gridTemplateColumns: "78px 108px 1fr auto", gap: 12, alignItems: "center", padding: "9px 14px", cursor: "pointer" }}
+                  onClick={() => toggleUser(g.user)}
+                  data-activity="Toggle user group"
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", cursor: "pointer", background: "var(--dn-surface-2)", borderBottom: "1px solid var(--dn-border)", position: "sticky", top: 0, zIndex: 1 }}
                 >
-                  <span title={new Date(e.at).toLocaleString()} style={{ font: "400 11px/1.3 var(--dn-font-mono, var(--dn-font-sans))", color: "var(--dn-fg-subtle)", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{relTime(e.at, now)}</span>
-                  <span style={{ display: "inline-flex", justifySelf: "start", alignItems: "center", padding: "3px 9px", borderRadius: 20, background: col.bg, color: col.fg, font: "600 10.5px/1 var(--dn-font-sans)", whiteSpace: "nowrap" }}>{e.category}</span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                    {SEV_DOT[e.severity] && e.severity !== "info" ? <span style={{ width: 7, height: 7, borderRadius: "50%", background: SEV_DOT[e.severity], flexShrink: 0 }} /> : null}
-                    <span style={{ font: "600 12.5px/1.35 var(--dn-font-sans)", color: "var(--dn-fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.action}</span>
-                    {e.target ? <span style={{ font: "400 12px/1.35 var(--dn-font-sans)", color: "var(--dn-fg-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>· {e.target}</span> : null}
-                  </span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
-                    <span style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)", background: "var(--dn-surface-2)", padding: "3px 8px", borderRadius: 6 }}>{e.user}</span>
-                    <span style={{ font: "400 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{e.surface}</span>
-                    <span style={{ color: "var(--dn-fg-subtle)", fontSize: 11 }}>{open ? "▾" : "▸"}</span>
-                  </span>
+                  <span style={{ width: 24, height: 24, borderRadius: "50%", background: userColor(g.user), color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", font: "700 10px/1 var(--dn-font-sans)", flexShrink: 0 }}>{initials(g.user)}</span>
+                  <span style={{ font: "600 13px/1 var(--dn-font-sans)", color: "var(--dn-fg)" }}>{g.user}</span>
+                  <span style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)", background: "#fff", border: "1px solid var(--dn-border)", padding: "3px 8px", borderRadius: 20 }}>{g.total.toLocaleString()} total</span>
+                  <span style={{ font: "400 11px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>last {relTime(g.lastAt, now)}{g.loaded < g.total ? ` · ${g.loaded} shown` : ""}</span>
+                  <span style={{ marginLeft: "auto", color: "var(--dn-fg-subtle)", fontSize: 11 }}>{collapsed ? "▸" : "▾"}</span>
                 </div>
-                {open && (
-                  <div style={{ padding: "2px 14px 14px 90px", display: "flex", flexWrap: "wrap", gap: "6px 22px" }}>
-                    <Detail k="Time" v={new Date(e.at).toLocaleString()} />
-                    <Detail k="Seq" v={String(e.seq)} />
-                    {e.sessionId ? <Detail k="Session" v={e.sessionId} /> : null}
-                    {e.metadata
-                      ? Object.entries(e.metadata).map(([k, v]) => <Detail key={k} k={k} v={typeof v === "object" ? JSON.stringify(v) : String(v)} />)
-                      : null}
-                  </div>
-                )}
+                {!collapsed && g.evs.map((e) => <EventRow key={e.id} e={e} now={now} open={expanded.has(e.id)} onToggle={() => toggle(e.id)} indent />)}
               </div>
             );
           })
+        ) : (
+          events.map((e) => <EventRow key={e.id} e={e} now={now} open={expanded.has(e.id)} onToggle={() => toggle(e.id)} />)
         )}
       </div>
     </div>
   );
+}
+
+/** One event row (shared by the flat timeline and the per-user grouped view). */
+function EventRow({ e, now, open, onToggle, indent }: { e: ActivityEvent; now: number; open: boolean; onToggle: () => void; indent?: boolean }) {
+  const col = catColor(e.category);
+  return (
+    <div style={{ borderBottom: "1px solid var(--dn-surface-2)" }}>
+      <div
+        onClick={onToggle}
+        data-activity="Toggle activity detail"
+        style={{ display: "grid", gridTemplateColumns: "78px 108px 1fr auto", gap: 12, alignItems: "center", padding: indent ? "9px 14px 9px 30px" : "9px 14px", cursor: "pointer" }}
+      >
+        <span title={new Date(e.at).toLocaleString()} style={{ font: "400 11px/1.3 var(--dn-font-mono, var(--dn-font-sans))", color: "var(--dn-fg-subtle)", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{relTime(e.at, now)}</span>
+        <span style={{ display: "inline-flex", justifySelf: "start", alignItems: "center", padding: "3px 9px", borderRadius: 20, background: col.bg, color: col.fg, font: "600 10.5px/1 var(--dn-font-sans)", whiteSpace: "nowrap" }}>{e.category}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          {SEV_DOT[e.severity] && e.severity !== "info" ? <span style={{ width: 7, height: 7, borderRadius: "50%", background: SEV_DOT[e.severity], flexShrink: 0 }} /> : null}
+          <span style={{ font: "600 12.5px/1.35 var(--dn-font-sans)", color: "var(--dn-fg)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{e.action}</span>
+          {e.target ? <span style={{ font: "400 12px/1.35 var(--dn-font-sans)", color: "var(--dn-fg-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>· {e.target}</span> : null}
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
+          <span style={{ font: "600 10.5px/1 var(--dn-font-sans)", color: "var(--dn-fg-muted)", background: "var(--dn-surface-2)", padding: "3px 8px", borderRadius: 6 }}>{e.user}</span>
+          <span style={{ font: "400 10px/1 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>{e.surface}</span>
+          <span style={{ color: "var(--dn-fg-subtle)", fontSize: 11 }}>{open ? "▾" : "▸"}</span>
+        </span>
+      </div>
+      {open && (
+        <div style={{ padding: indent ? "2px 14px 14px 106px" : "2px 14px 14px 90px", display: "flex", flexWrap: "wrap", gap: "6px 22px" }}>
+          <Detail k="Time" v={new Date(e.at).toLocaleString()} />
+          <Detail k="Seq" v={String(e.seq)} />
+          {e.sessionId ? <Detail k="Session" v={e.sessionId} /> : null}
+          {e.metadata
+            ? Object.entries(e.metadata).map(([k, v]) => <Detail key={k} k={k} v={typeof v === "object" ? JSON.stringify(v) : String(v)} />)
+            : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Deterministic per-user colour + initials for the group avatar, so a user reads at a glance. */
+function userColor(u: string): string {
+  let h = 0;
+  for (let i = 0; i < u.length; i += 1) h = (h * 31 + u.charCodeAt(i)) % 360;
+  return `hsl(${h} 52% 42%)`;
+}
+function initials(u: string): string {
+  const parts = u.replace(/[._-]/g, " ").trim().split(/\s+/).filter(Boolean);
+  const two = ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase();
+  return two || u.slice(0, 2).toUpperCase() || "?";
 }
 
 function Tile({ label, value, tone }: { label: string; value: number; tone?: "error" }) {
