@@ -10,10 +10,11 @@
 
 ## 1. Current build status
 
-### Latest: Architecture cleanup — shared modules + BrandScreens split (2026-07-17)
+### Latest: Architecture cleanup — 6 staged, behavior-preserving refactors (2026-07-17)
 
-A staged, behavior-preserving cleanup pass (from a full read-only audit). Each stage: typecheck +
-full suite (459) + build green, committed separately.
+A staged cleanup pass (from a full read-only audit). Each stage: typecheck + full suite + build green,
+committed separately. No behavior change in any stage; new unit tests lock in the two compliance/
+realtime cores that were extracted.
 
 - **Stage 1 — shared modules + boundary fix.** New `src/app/_app/ui.ts` (shared `card`/`eyebrow`/
   `h1`/`cell`/`ghost*` — were copy-pasted across screens) and `src/lib/format.ts` (`mmss`, `initials`
@@ -34,11 +35,25 @@ full suite (459) + build green, committed separately.
   overview-plan types → `studio-types.ts` (a dependency-free module, so the hook doesn't import back
   from StudioScreen — no cycle). Pure extraction, no behavior change.
 
-**Still open (higher-risk — need a focused pass with their tests):** unify the duplicated
-overview/preview compliance gate-loop into one service; extract the Tavus fragment/utterance state
-machine into `@modules/realtime`; consolidate the OpenAI-compatible LLM client into one
-`@modules/vendors` adapter. (The remaining StudioScreen mode-component split — BuildMode/TrainMode etc.
-— needs a `studio-types.ts` expansion first and is a larger, medium-risk stage.)
+- **Stage 4 — shared LLM provider config.** The compliance classifier and the realtime responder each
+  re-declared the same OpenAI-compatible provider config (base URL / key / model) + Anthropic model +
+  classifier max-tokens. New `src/lib/llm-config.ts` is the one source of truth; both build on it. The
+  distinct call shapes (JSON classify vs streaming SSE) stay put. No behavior change.
+- **Stage 5 — shared compliance gate-core (higher-risk).** The live overview route and the
+  training-preview route inlined the SAME per-segment ISI-append + final-gate logic. Extracted to
+  `gatePresentationSegment()` in `@modules/compliance` (pure); each route keeps only its own side
+  effects + ISI-delivered bookkeeping, so behavior is unchanged but the safety-critical core can't
+  drift. `tests/presentation-segment-gate.test.ts` (6).
+- **Stage 6 — Tavus ASR fragment state machine (higher-risk).** Moved the stateful fragment
+  buffer/merge/ignore/replay logic (incl. the "never buffer an adverse-event report" carve-out) out of
+  the `/api/tavus/llm` OpenAI-shim route into `src/modules/realtime/fragment-buffer.ts`. Verbatim move;
+  the one direct map write is encapsulated. `tests/fragment-buffer.test.ts` (5). Full suite **470 pass**.
+
+**Still open (deferred):** consolidate the LLM *HTTP clients* further (the classifier/responder still
+own their own fetch/stream code — only the config is shared now) and the composer's `llmText`; and the
+larger StudioScreen mode-component split (BuildMode/TrainMode/etc.), which needs a `studio-types.ts`
+expansion first (medium risk). The audit's remaining items are lower-value polish (magic-number naming,
+the debug-global bridge in VideoAgentStage, the orphaned `/api/presentation/overview` route).
 
 ### Training — coaching doesn't jump to the bottom + coached rules are compact (2026-07-17)
 
