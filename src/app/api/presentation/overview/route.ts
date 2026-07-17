@@ -9,7 +9,7 @@
 import { NextResponse } from "next/server";
 import { getContainer } from "@lib/container";
 import { resolveSessionAndHcp } from "@lib/resolve-session";
-import { complianceGate, isiAlreadyDelivered, type PolicyRoute, type RiskClassification, classify, route as policyRouteFor } from "@modules/compliance";
+import { gatePresentationSegment, isiAlreadyDelivered, type PolicyRoute, type RiskClassification, classify, route as policyRouteFor } from "@modules/compliance";
 import { mergePlan, PresentationSkill, defaultComposer } from "@modules/content";
 import { presentationGuidance } from "@modules/rules";
 
@@ -28,10 +28,6 @@ const BASE_CLASSIFICATION: RiskClassification = {
   comparativeClaimRisk: 0,
   isiRequired: false,
 };
-
-function normalized(s: string): string {
-  return s.replace(/\s+/g, " ").trim();
-}
 
 function estimateSpeechMs(text: string): number {
   const words = text.trim().split(/\s+/).filter(Boolean).length;
@@ -96,29 +92,23 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   for (const [index, step] of steps.entries()) {
     const segStart = Date.now();
-    const finalSegment = index === steps.length - 1;
-    const includesSafetyText = Boolean(isi && normalized(step.text).includes(normalized(isi.text)));
-    const shouldAppendSafety = Boolean(isi && !overviewIsiDelivered && !includesSafetyText && finalSegment);
-    const shouldRequireSafety = Boolean(isi && (includesSafetyText || shouldAppendSafety));
-    const classification = { ...BASE_CLASSIFICATION, isiRequired: shouldRequireSafety };
-    await c.audit.record(sessionId, "classification", { ...classification, skill: "presentation_overview", segment: index + 1 });
-
     const sourceIds = step.sourceIds.map(String);
     const detailAidSlideId = step.detailAidSlideId ? String(step.detailAidSlideId) : undefined;
-    let responseText = step.text;
-    let isiAttached = false;
-    let requiredSafetyText: string | undefined;
-    if (includesSafetyText && isi) {
-      requiredSafetyText = isi.text;
-      isiAttached = true;
-      overviewIsiDelivered = true;
-    } else if (shouldAppendSafety && isi) {
-      requiredSafetyText = isi.text;
-      responseText = `${responseText}\n\nImportant Safety Information: ${isi.text}`;
-      isiAttached = true;
-      overviewIsiDelivered = true;
-    }
+    // Shared per-segment ISI + compliance gate (identical to the training-preview route).
+    const gated = gatePresentationSegment({
+      text: step.text,
+      sourceIds,
+      isiText: isi?.text,
+      isiAlreadyDelivered: overviewIsiDelivered,
+      isLastSegment: index === steps.length - 1,
+      route,
+      baseClassification: BASE_CLASSIFICATION,
+      safeFallback: SAFE_FALLBACK,
+    });
+    if (gated.shouldRequireSafety) overviewIsiDelivered = true;
+    const approved = gated.approved;
 
+    await c.audit.record(sessionId, "classification", { ...gated.classification, skill: "presentation_overview", segment: index + 1 });
     await c.audit.record(sessionId, "retrieval", {
       skill: "presentation_overview",
       accepted: sourceIds,
@@ -126,30 +116,20 @@ export async function POST(req: Request): Promise<NextResponse> {
       slide: detailAidSlideId,
       step: { action: step.action, index: step.index, total: step.total },
     });
+    await c.audit.record(sessionId, "compliance_decision", { ...gated.decision, route, skill: "presentation_overview", segment: index + 1 });
 
-    const decision = complianceGate({
-      responseText,
-      classification,
-      sourceIds,
-      isiAttached,
-      requiredSafetyText,
-      route,
-    });
-    await c.audit.record(sessionId, "compliance_decision", { ...decision, route, skill: "presentation_overview", segment: index + 1 });
-
-    const finalText = decision.decision === "approved" ? responseText : SAFE_FALLBACK;
     await c.sessions.appendTurn(sessionId, {
       speaker: "rep",
-      text: finalText,
-      sourceIds: decision.decision === "approved" ? sourceIds : [],
-      ...(decision.decision === "approved" && detailAidSlideId ? { detailAidSlideId } : {}),
+      text: gated.finalText,
+      sourceIds: approved ? sourceIds : [],
+      ...(approved && detailAidSlideId ? { detailAidSlideId } : {}),
       at: new Date(nextRepAt).toISOString(),
     });
-    nextRepAt += estimateSpeechMs(finalText) + 900;
-    await c.sessions.recordOutcome(sessionId, { route, decision: decision.decision });
+    nextRepAt += estimateSpeechMs(gated.finalText) + 900;
+    await c.sessions.recordOutcome(sessionId, { route, decision: gated.decision.decision });
     await c.audit.record(sessionId, "response_output", {
       route,
-      text: finalText,
+      text: gated.finalText,
       sourceIds,
       detailAid: detailAidSlideId,
       skill: "presentation_overview",
@@ -159,12 +139,12 @@ export async function POST(req: Request): Promise<NextResponse> {
 
     segments.push({
       route,
-      response: finalText,
-      isiDelivered: decision.decision === "approved" && isiAttached,
-      detailAidSlideId: decision.decision === "approved" ? detailAidSlideId ?? null : null,
-      sourceIds: decision.decision === "approved" ? sourceIds : [],
-      decision: decision.decision,
-      reasons: decision.reasons,
+      response: gated.finalText,
+      isiDelivered: approved && gated.shouldRequireSafety,
+      detailAidSlideId: approved ? detailAidSlideId ?? null : null,
+      sourceIds: approved ? sourceIds : [],
+      decision: gated.decision.decision,
+      reasons: gated.decision.reasons,
       step: { action: step.action, index: step.index, total: step.total, slideTitle: step.slideTitle ?? null },
     });
   }

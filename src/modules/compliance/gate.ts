@@ -95,3 +95,66 @@ export function complianceGate(input: GateInput): ComplianceDecision {
     isiRequired: c.isiRequired,
   };
 }
+
+export interface PresentationSegmentGateInput {
+  /** The approved segment text. */
+  text: string;
+  /** Canonical source ids backing the segment. */
+  sourceIds: string[];
+  /** The active ISI text, if any (undefined → no ISI to enforce). */
+  isiText?: string;
+  /** Has the ISI already been delivered earlier in THIS overview? (No re-delivery mid-walk.) */
+  isiAlreadyDelivered: boolean;
+  /** Is this the last segment? (ISI is appended on the final segment if not already shown.) */
+  isLastSegment: boolean;
+  route: PolicyRoute;
+  /** The zero-risk presentation classification the caller starts from (isiRequired is set here). */
+  baseClassification: RiskClassification;
+  /** Text to speak instead when the gate blocks. */
+  safeFallback: string;
+}
+
+export interface PresentationSegmentGateResult {
+  /** Gated text to speak (the approved text, ISI appended when required, or the safe fallback). */
+  finalText: string;
+  approved: boolean;
+  decision: ComplianceDecision;
+  classification: RiskClassification;
+  requiredSafetyText?: string;
+  /** ISI was required for this segment (inline OR appended). */
+  shouldRequireSafety: boolean;
+  /** ISI was APPENDED to this segment (final-segment top-up) rather than already inline. */
+  shouldAppendSafety: boolean;
+  /** The segment text already contained the verbatim ISI. */
+  includesSafetyText: boolean;
+}
+
+/**
+ * The per-segment compliance core for a guided-overview walk — the exact ISI-append + final-gate
+ * logic that the live overview and the training-preview routes each used to inline (identically).
+ * Pure: it computes the ISI requirement, appends the verbatim ISI on the last segment when needed,
+ * runs the final gate, and returns the gated text + flags. Callers own their OWN side effects (audit,
+ * turn persistence, metrics) and their own running "ISI already delivered" bookkeeping — this only
+ * owns the safety-critical decision so it can never drift between the two callers again.
+ */
+export function gatePresentationSegment(input: PresentationSegmentGateInput): PresentationSegmentGateResult {
+  const { text, sourceIds, isiText, isiAlreadyDelivered, isLastSegment, route, baseClassification, safeFallback } = input;
+  const includesSafetyText = Boolean(isiText && normalized(text).includes(normalized(isiText)));
+  const shouldAppendSafety = Boolean(isiText && !isiAlreadyDelivered && !includesSafetyText && isLastSegment);
+  const shouldRequireSafety = Boolean(isiText && (includesSafetyText || shouldAppendSafety));
+  const classification: RiskClassification = { ...baseClassification, isiRequired: shouldRequireSafety };
+  const requiredSafetyText = shouldRequireSafety ? isiText : undefined;
+  const responseText = shouldAppendSafety && isiText ? `${text}\n\nImportant Safety Information: ${isiText}` : text;
+  const decision = complianceGate({ responseText, classification, sourceIds, isiAttached: shouldRequireSafety, requiredSafetyText, route });
+  const approved = decision.decision === "approved";
+  return {
+    finalText: approved ? responseText : safeFallback,
+    approved,
+    decision,
+    classification,
+    requiredSafetyText,
+    shouldRequireSafety,
+    shouldAppendSafety,
+    includesSafetyText,
+  };
+}

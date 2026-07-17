@@ -1,6 +1,6 @@
 export * from "./types";
 export { classify, configureClassifierLexicon, canonicalizeProductNames } from "./classifier";
-export { route, complianceGate, type GateInput } from "./gate";
+export { route, complianceGate, gatePresentationSegment, type GateInput, type PresentationSegmentGateInput, type PresentationSegmentGateResult } from "./gate";
 export { validateGrounding, type GroundingResult, type GroundingInput } from "./grounding";
 export { isiAlreadyDelivered, stripEmbeddedIsi, type AuditLikeEvent } from "./isiDelivery";
 export {
