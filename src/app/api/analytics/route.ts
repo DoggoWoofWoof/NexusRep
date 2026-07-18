@@ -4,6 +4,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { getContainer } from "@lib/container";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,8 @@ const TAB_LABELS: { key: string; label: string }[] = [
 ];
 
 export async function GET(): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const c = await getContainer();
   const [data, overview] = await Promise.all([c.analytics.all(), c.analytics.overview()]);
   return NextResponse.json({ tabs: TAB_LABELS, data, ...overview });

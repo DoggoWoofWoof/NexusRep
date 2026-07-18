@@ -15,11 +15,18 @@
 export async function register(): Promise<void> {
   // transformers.js is Node-only; skip the edge runtime and any non-server context.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  const [{ warmupEmbeddings }, { getContainerForUser }, { DEMO_USERS, appAuthEnabled }] = await Promise.all([
+  const [{ warmupEmbeddings }, { getContainerForUser }, { DEMO_USERS, appAuthEnabled }, { env }] = await Promise.all([
     import("@lib/embeddings"),
     import("@lib/container"),
     import("@lib/auth-session"),
+    import("@lib/env"),
   ]);
+  // Fail-closed heads-up: a production deploy with auth on MUST set a private NEXUSREP_SESSION_SECRET —
+  // the built-in default is public, so cookies would be forgeable. The brand API refuses (503) in this
+  // state (see require-auth); this line makes the cause obvious in the boot logs.
+  if (process.env.NODE_ENV === "production" && appAuthEnabled() && env.sessionSecretIsDefault) {
+    console.error("[auth] SECURITY: NEXUSREP_SESSION_SECRET is not set — the default cookie secret is public (forgeable sessions). The brand console will return 503 until you set NEXUSREP_SESSION_SECRET (or set NEXUSREP_AUTH=0 to run open).");
+  }
   void warmupEmbeddings();
   void (async () => {
     const started = Date.now();

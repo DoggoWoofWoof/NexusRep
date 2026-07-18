@@ -5,6 +5,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { getContainer } from "@lib/container";
 import { hcpNameOf } from "@lib/demo-seed";
 import type { FollowUpType } from "@modules/followups";
@@ -29,6 +30,8 @@ const CRM_STATUS: Record<CrmDeliveryStatus, string> = {
 };
 
 export async function GET(): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const c = await getContainer();
   const [followups, outbox] = await Promise.all([c.followups.list(), c.crm.list()]);
   // Honest CRM label: show what is actually connected. A mock adapter is labeled as

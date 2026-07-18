@@ -9,6 +9,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { getContainer } from "@lib/container";
 import { setupAnswersOf } from "@modules/brand";
 import { extractSourceText, llmComplete } from "@modules/content";
@@ -19,6 +20,8 @@ export const dynamic = "force-dynamic";
 const MAX_HISTORY = 12;
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const body = (await req.json().catch(() => ({}))) as {
     message?: unknown;
     history?: unknown;

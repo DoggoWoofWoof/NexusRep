@@ -6,6 +6,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { hcpNameOf } from "@lib/demo-seed";
@@ -14,6 +15,8 @@ import { deriveSessionDurationSeconds } from "@modules/sessions";
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const { id } = await ctx.params;
   const sessionId = asId<"session_id">(id);
   const c = await getContainer();

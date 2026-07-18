@@ -6,6 +6,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { getContainer } from "@lib/container";
 import { logServerActivity } from "@lib/activity-log";
 import { hcpNameOf } from "@lib/demo-seed";
@@ -71,6 +72,8 @@ function shape(snap: StudioSnapshot) {
 }
 
 export async function GET(): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const c = await getContainer();
   const snap = await c.studio.get(c.demo.aiRepId);
   return NextResponse.json(snap ? shape(snap) : null);
@@ -79,6 +82,8 @@ export async function GET(): Promise<NextResponse> {
 const UI_SCOPE: Record<string, RuleScope> = { persona: "persona", global: "global", hcp: "hcp_specific" };
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const body = (await req.json().catch(() => ({}))) as {
     action?: string;
     questionKey?: string;

@@ -11,6 +11,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { gatePresentationSegment, isiAlreadyDelivered, type PolicyRoute, type RiskClassification } from "@modules/compliance";
@@ -54,6 +55,8 @@ function previewSessionId(v: unknown) {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const body = (await req.json().catch(() => ({}))) as { text?: unknown; coaching?: unknown; kind?: unknown; current?: unknown; previewSessionId?: unknown };
   // Cap note count + length: coaching is guidance text folded into an LLM prompt, so it is
   // bounded to keep the prompt sane (and shrink the injection surface).

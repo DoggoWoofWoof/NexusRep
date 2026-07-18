@@ -5,11 +5,14 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { getContainer } from "@lib/container";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const hcp = new URL(req.url).searchParams.get("hcp") ?? "";
   if (!hcp.trim()) return NextResponse.json({ error: "hcp is required" }, { status: 400 });
   const c = await getContainer();

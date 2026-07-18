@@ -6,8 +6,11 @@
  */
 
 import { getResponder } from "@modules/realtime";
+import { requireBrandUser } from "@lib/require-auth";
 
 export async function POST(req: Request): Promise<Response> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const body = (await req.json().catch(() => ({}))) as { provider?: unknown; text?: unknown };
   const provider = typeof body.provider === "string" ? body.provider : "mock";
   const text = typeof body.text === "string" ? body.text.trim() : "";

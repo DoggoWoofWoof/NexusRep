@@ -5,11 +5,14 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { getContainer } from "@lib/container";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const c = await getContainer();
   // A degraded source (boot-time fallback to the modeled cohort) retries here, throttled —
   // the live claims cohort comes back without a restart, and the UI banners on `degraded`.

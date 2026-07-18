@@ -8,6 +8,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { logServerActivity } from "@lib/activity-log";
@@ -34,6 +35,8 @@ function draftMlr(sourceFile: string, clinical: { audience: string; indication: 
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const body = (await req.json().catch(() => ({}))) as {
     filename?: unknown;
     contentBase64?: unknown;

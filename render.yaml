@@ -49,7 +49,16 @@ services:
       # Flip to "tavus" once TAVUS_* secrets are set to enable the live video rep.
       - key: NEXUSREP_REALTIME_PROVIDER
         value: mock
+      # Auth gate: ON by default (brand console requires sign-in; the doctor /hcp link is never gated).
+      # Set to "0" ONLY to run the console open (pure demo). When ON, NEXUSREP_SESSION_SECRET is
+      # REQUIRED — the brand API returns 503 until it's set (the built-in default is public/forgeable).
+      - key: NEXUSREP_AUTH
+        value: "1"
       # ---- secrets: set values in the Render dashboard (sync: false) ----
+      - key: NEXUSREP_SESSION_SECRET # REQUIRED when NEXUSREP_AUTH=1: a long random string. Signs the
+        sync: false #                  session cookie; without it cookies are forgeable and the brand API 503s.
+      - key: ANTHROPIC_API_KEY # grounded answer composition + classifier (optional)
+        sync: false
       - key: ANTHROPIC_API_KEY # grounded answer composition + classifier (optional)
         sync: false
       - key: OPENAI_API_KEY # alternate composer/classifier (optional)

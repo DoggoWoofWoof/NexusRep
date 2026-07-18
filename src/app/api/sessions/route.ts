@@ -5,6 +5,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { getContainer } from "@lib/container";
 import { hcpNameOf } from "@lib/demo-seed";
 import { mmss } from "@lib/format";
@@ -29,6 +30,8 @@ const FOLLOWUP_LABEL: Record<FollowUpType, string> = {
 
 
 export async function GET(): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const c = await getContainer();
   const [sessions, followups] = await Promise.all([c.sessions.list(), c.followups.list()]);
   // A session is reviewable when it has real turns OR a recording — same rule as the

@@ -5,6 +5,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import type { MlrMetadata, SafetyStatement } from "@modules/content";
@@ -29,6 +30,8 @@ function nextVersion(all: SafetyStatement[]): number {
 }
 
 export async function GET(): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const c = await getContainer();
   const all = await c.content.listSafetyStatements();
   const active = await c.content.latestActiveSafetyStatement();
@@ -40,6 +43,8 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const body = (await req.json().catch(() => ({}))) as {
     action?: unknown;
     text?: unknown;

@@ -17,7 +17,7 @@ describe("streaming recording upload (chunked, fast finalize)", () => {
     uploadChunk(new Request("http://localhost/api/sessions/recording/chunk", {
       method: "POST",
       headers: { "content-type": "video/webm", "x-nexusrep-session-id": sessionId, "x-nexusrep-chunk-seq": String(seq), ...extra },
-      body: bytes,
+      body: bytes as unknown as BodyInit,
     }));
 
   it("appends chunks in order, attaches on chunk 0, sets duration on the final marker, and serves the concatenation", async () => {

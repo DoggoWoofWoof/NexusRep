@@ -5,6 +5,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { getContainer } from "@lib/container";
 import { mergePlan, PresentationSkill, type PresentationDeckSlide, type PresentationPlan, type PresentationPlanStep } from "@modules/content";
 
@@ -98,6 +99,8 @@ async function snapshot(): Promise<{ slides: PresentationDeckSlide[]; plan: Pres
 }
 
 export async function GET(): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   try {
     return NextResponse.json(await snapshot());
   } catch (e) {
@@ -108,6 +111,8 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   try {
     const body = (await req.json().catch(() => ({}))) as {
       action?: unknown;

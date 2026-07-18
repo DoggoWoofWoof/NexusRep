@@ -172,6 +172,9 @@ export const env = {
   authEnabled: process.env.NEXUSREP_AUTH !== "0",
   /** Secret for signing the session cookie (stable across restarts so sessions survive). */
   appSessionSecret: process.env.NEXUSREP_SESSION_SECRET || process.env.NEXUSREP_APP_PASSWORD || "nexusrep-demo-session-secret",
+  /** True when no private secret was provided → the public built-in default is in use. A production
+   *  deploy with auth on must set NEXUSREP_SESSION_SECRET, else cookies are forgeable (see require-auth). */
+  sessionSecretIsDefault: !(process.env.NEXUSREP_SESSION_SECRET || process.env.NEXUSREP_APP_PASSWORD),
 } as const;
 
 function clampNum(raw: string | undefined, fallback: number, min: number, max: number): number {

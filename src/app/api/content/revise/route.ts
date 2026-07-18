@@ -5,12 +5,15 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const body = (await req.json().catch(() => ({}))) as { answerId?: unknown; text?: unknown };
   const answerId = typeof body.answerId === "string" ? body.answerId.trim() : "";
   const text = typeof body.text === "string" ? body.text.slice(0, 4000) : "";

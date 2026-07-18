@@ -6,11 +6,14 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { getContainer } from "@lib/container";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const c = await getContainer();
   const [assets, answers, slides, safety] = await Promise.all([
     c.content.listAssets(),

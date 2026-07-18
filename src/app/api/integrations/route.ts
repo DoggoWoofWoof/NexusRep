@@ -6,6 +6,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { getContainer } from "@lib/container";
 import { getEmbeddingMode, getEmbeddingProvider } from "@lib/embeddings";
 import { env } from "@lib/env";
@@ -22,6 +23,8 @@ function seat(role: string, vendor: string, status: Status, detail?: string) {
 }
 
 export async function GET(): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const c = await getContainer();
   const realtime = getRealtimeProvider();
   const voice = getVoiceProvider();

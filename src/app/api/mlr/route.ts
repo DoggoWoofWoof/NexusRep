@@ -5,12 +5,15 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireBrandUser } from "@lib/require-auth";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const c = await getContainer();
   const pending = await c.mlr.listPending();
   const pendingSafety = await c.mlr.listPendingSafety();
@@ -21,6 +24,8 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const _auth = await requireBrandUser();
+  if (!_auth.ok) return _auth.res;
   const body = (await req.json().catch(() => ({}))) as { action?: string; answerId?: unknown; safetyId?: unknown };
   const answerId = typeof body.answerId === "string" ? asId<"approved_answer_id">(body.answerId) : undefined;
 
