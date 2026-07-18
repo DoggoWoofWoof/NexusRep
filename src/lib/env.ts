@@ -11,6 +11,8 @@ export type AvatarProviderName = "mock" | "tavus" | "heygen";
 export type CrmAdapterName = "outbox-mock" | "veeva" | "salesforce";
 export type RetrievalProviderName = "memory-vector" | "pgvector";
 export type AudienceProviderName = "modeled" | "docnexus";
+export type LogLevel = "debug" | "info" | "warn" | "error";
+export type LogFormat = "json" | "pretty";
 
 function pick<T extends string>(value: string | undefined, allowed: readonly T[], fallback: T): T {
   return (allowed as readonly string[]).includes(value ?? "") ? (value as T) : fallback;
@@ -175,6 +177,16 @@ export const env = {
   /** True when no private secret was provided → the public built-in default is in use. A production
    *  deploy with auth on must set NEXUSREP_SESSION_SECRET, else cookies are forgeable (see require-auth). */
   sessionSecretIsDefault: !(process.env.NEXUSREP_SESSION_SECRET || process.env.NEXUSREP_APP_PASSWORD),
+
+  // ── Logging / error tracking ─────────────────────────────────────────────────
+  /** Minimum level emitted by the structured logger (debug < info < warn < error). Default: info. */
+  logLevel: pick<LogLevel>(process.env.NEXUSREP_LOG_LEVEL, ["debug", "info", "warn", "error"], "info"),
+  /** Log output shape: "json" (one JSON object per line, for prod log aggregation) or "pretty"
+   *  (human-readable, for local dev). Defaults by NODE_ENV. */
+  logFormat: pick<LogFormat>(process.env.NEXUSREP_LOG_FORMAT, ["json", "pretty"], process.env.NODE_ENV === "production" ? "json" : "pretty"),
+  /** Optional Sentry DSN. When set, captureError() also forwards to Sentry; otherwise errors are
+   *  structured-logged only (no third-party egress). */
+  sentryDsn: process.env.NEXUSREP_SENTRY_DSN ?? "",
 } as const;
 
 function clampNum(raw: string | undefined, fallback: number, min: number, max: number): number {

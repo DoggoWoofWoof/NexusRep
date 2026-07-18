@@ -13,6 +13,8 @@
 import { asId } from "@lib/ids";
 import { getContainer, getContainerForUser } from "@lib/container";
 import { env } from "@lib/env";
+import { logger } from "@lib/logger";
+import { captureError } from "@lib/error-capture";
 import { getActiveCall } from "@lib/active-call";
 import { correctHcpAsrText } from "@lib/asr-correct";
 import { beginLiveTurn, failLiveTurn, finishLiveTurn } from "@lib/live-turn-guard";
@@ -238,6 +240,9 @@ export async function POST(req: Request): Promise<Response> {
       });
       output = result.output;
     } catch (error) {
+      // The outer POST has no catch (Tavus gets a 500), so without this a live-turn orchestrator
+      // failure left no structured signal. Capture it, then preserve the existing fail-turn + rethrow.
+      captureError(error, { phase: "tavus-llm.turn", sessionId });
       failLiveTurn(guard.handle);
       throw error;
     }
@@ -285,15 +290,18 @@ export async function POST(req: Request): Promise<Response> {
   const created = Math.floor(Date.now() / 1000);
   const model = "nexusrep-compliance";
   if (isAsrArtifact || isProbe) mark(isAsrArtifact ? "ignored_asr_artifact" : "connectivity_probe");
-  console.info("[tavus-llm-latency]", JSON.stringify({
+  // Full HCP transcript + rep reply are logged verbatim on OUR side (intentional — see logger.ts;
+  // the "no patient data to vendors" rule is enforced at the vendor boundary, not here).
+  logger.child("tavus-llm").info("turn", {
     stream: body.stream !== false,
     inputChars: text.length,
-    inputPreview: previewText(text),
+    input: text,
     outputChars: reply.length,
+    output: reply,
     totalMs: Date.now() - started,
     ...(turnInfo ? { turn: turnInfo } : {}),
     timings,
-  }));
+  });
 
   if (body.stream === false) {
     return Response.json({

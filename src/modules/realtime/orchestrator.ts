@@ -11,6 +11,7 @@
  */
 
 import { asId, type ApprovedAnswerId, type HcpId, type SessionId } from "@lib/ids";
+import { captureError } from "@lib/error-capture";
 import { classify, complianceGate, route, validateGrounding, type PolicyRoute, type RiskClassification, isiAlreadyDelivered, stripEmbeddedIsi } from "@modules/compliance";
 import type { RetrievalService } from "@modules/retrieval";
 import { buildApprovedResponse, slideReference, type ApprovedAnswer, type ContentService, type GroundedComposer, type SafetyStatement } from "@modules/content";
@@ -435,6 +436,9 @@ export class TurnOrchestrator {
       }
     } catch (error) {
       classifierFallback = error instanceof Error ? error.message : "classifier_error";
+      // Audited below, but ALSO surface it: a classifier-vendor outage silently degrading every turn
+      // to keyword classification was previously invisible outside the per-session audit UI.
+      captureError(error, { phase: "orchestrator.classify", sessionId: ctx.sessionId });
       classification = classify(ctx.text);
     }
     await this.audit.record(ctx.sessionId, "classification", {
@@ -478,6 +482,7 @@ export class TurnOrchestrator {
     if (r === "approved_answer") {
       const retrievalSettled = await retrievalPromise;
       if ("error" in retrievalSettled) {
+        captureError((retrievalSettled as { error?: unknown }).error ?? new Error("retrieval_error"), { phase: "orchestrator.retrieval", sessionId: ctx.sessionId });
         await this.audit.record(ctx.sessionId, "retrieval", {
           action: "retrieval_error",
           latencyMs: retrievalSettled.latencyMs,
@@ -676,6 +681,7 @@ export class TurnOrchestrator {
             }
           }
         } catch (error) {
+          captureError(error, { phase: "orchestrator.compose", sessionId: ctx.sessionId, timeoutMs: composerTimeoutMs });
           await this.audit.record(ctx.sessionId, "response_validation", {
             action: "composer_fallback",
             reason: error instanceof Error ? error.message : "error_or_timeout",

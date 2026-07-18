@@ -4,6 +4,7 @@
  */
 
 import { env } from "@lib/env";
+import { captureError } from "@lib/error-capture";
 import { classify } from "../classifier";
 import type { RiskClassification } from "../types";
 import { keywordClassifier } from "./keyword";
@@ -73,7 +74,7 @@ export function resolveClassifier(): (text: string) => Promise<RiskClassificatio
     try {
       return mergeWithKeywordSignals((await chosen.classify(text)).result, keyword, text);
     } catch (e) {
-      console.warn(`[classifier] ${chosen.name} failed, falling back to keyword:`, e);
+      captureError(e, { phase: "classifier", provider: chosen.name });
       return keyword;
     }
   };

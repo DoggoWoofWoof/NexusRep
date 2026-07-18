@@ -12,20 +12,37 @@
  * turn. If a request somehow arrives mid-load, it shares the same cached load promise (getPipe),
  * so nothing double-loads.
  */
+type InstrumentationGlobal = typeof globalThis & { __nexusrepErrHandlers?: boolean };
+
 export async function register(): Promise<void> {
   // transformers.js is Node-only; skip the edge runtime and any non-server context.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  const [{ warmupEmbeddings }, { getContainerForUser }, { DEMO_USERS, appAuthEnabled }, { env }] = await Promise.all([
+  const [{ warmupEmbeddings }, { getContainerForUser }, { DEMO_USERS, appAuthEnabled }, { env }, { logger }, { captureError, warnIfUnwiredTracker }] = await Promise.all([
     import("@lib/embeddings"),
     import("@lib/container"),
     import("@lib/auth-session"),
     import("@lib/env"),
+    import("@lib/logger"),
+    import("@lib/error-capture"),
   ]);
+  const boot = logger.child("boot");
+
+  // Global error capture: unhandled rejections / uncaught exceptions previously had NO capture path.
+  // We log + forward (to any registered sink) but do NOT exit — a single stray rejection must not tear
+  // down a live Tavus call; a truly fatal error will resurface. Guarded so dev HMR can't stack handlers.
+  const g = globalThis as InstrumentationGlobal;
+  if (!g.__nexusrepErrHandlers) {
+    g.__nexusrepErrHandlers = true;
+    process.on("unhandledRejection", (reason) => captureError(reason, { phase: "unhandledRejection" }));
+    process.on("uncaughtException", (err) => captureError(err, { phase: "uncaughtException" }));
+    warnIfUnwiredTracker();
+  }
+
   // Fail-closed heads-up: a production deploy with auth on MUST set a private NEXUSREP_SESSION_SECRET —
   // the built-in default is public, so cookies would be forgeable. The brand API refuses (503) in this
   // state (see require-auth); this line makes the cause obvious in the boot logs.
   if (process.env.NODE_ENV === "production" && appAuthEnabled() && env.sessionSecretIsDefault) {
-    console.error("[auth] SECURITY: NEXUSREP_SESSION_SECRET is not set — the default cookie secret is public (forgeable sessions). The brand console will return 503 until you set NEXUSREP_SESSION_SECRET (or set NEXUSREP_AUTH=0 to run open).");
+    boot.error("SECURITY: NEXUSREP_SESSION_SECRET is not set — the default cookie secret is public (forgeable sessions). The brand console returns 503 until you set NEXUSREP_SESSION_SECRET (or set NEXUSREP_AUTH=0 to run open).", { scope: "auth" });
   }
   void warmupEmbeddings();
   void (async () => {
@@ -33,14 +50,14 @@ export async function register(): Promise<void> {
     try {
       const users = appAuthEnabled() ? DEMO_USERS.filter((u) => u.data === "demo").map((u) => u.username) : [];
       await Promise.all([getContainerForUser(null), ...users.map((u) => getContainerForUser(u))]);
-      console.info(`[container] warmup complete in ${Date.now() - started}ms${users.length ? ` (default + ${users.join(", ")})` : " (default)"}`);
+      boot.info(`container warmup complete in ${Date.now() - started}ms`, { users: users.length ? users : ["default"] });
     } catch (e) {
-      console.warn("[container] warmup failed (first request will lazy-load):", e instanceof Error ? e.message : e);
+      boot.warn("container warmup failed (first request will lazy-load)", { error: e });
     }
   })();
   if (process.env.ANTHROPIC_API_KEY) {
     void import("@anthropic-ai/sdk").catch((e) => {
-      console.warn("[llm] Anthropic SDK warmup failed (first LLM call will import lazily):", e instanceof Error ? e.message : e);
+      boot.warn("Anthropic SDK warmup failed (first LLM call will import lazily)", { error: e });
     });
   }
   void (async () => {
@@ -50,9 +67,9 @@ export async function register(): Promise<void> {
       // compiles it before the first live HCP turn. This does NOT call POST, authenticate, create a
       // Tavus conversation, hit Claude/OpenAI, or log a fake transcript turn.
       await import("@/app/api/tavus/llm/chat/completions/route");
-      console.info(`[tavus-llm] route warmup complete in ${Date.now() - started}ms`);
+      boot.info(`tavus-llm route warmup complete in ${Date.now() - started}ms`);
     } catch (e) {
-      console.warn("[tavus-llm] route warmup failed (first Tavus callback will lazy-load):", e instanceof Error ? e.message : e);
+      boot.warn("tavus-llm route warmup failed (first Tavus callback will lazy-load)", { error: e });
     }
   })();
 }

@@ -10,7 +10,26 @@
 
 ## 1. Current build status
 
-### Latest: Permission roles — admin-only internal surfaces (2026-07-18)
+### Latest: Structured logging + error tracking (2026-07-18)
+
+🟠 Important item. Errors in the runtime turn path were swallowed into per-session audit rows (invisible
+in stdout) and there was no capture path for unhandled rejections/exceptions; logs were scattered raw
+`console.*`.
+- **Added:** `lib/logger.ts` — dependency-free structured logger (JSON per line in prod, pretty in dev,
+  level-gated, `child(scope)`, Error/circular-safe). `lib/error-capture.ts` — `captureError()` that
+  ALWAYS structured-logs on our side + forwards to an OPT-IN external sink (no Sentry dependency shipped).
+  Env: `NEXUSREP_LOG_LEVEL` / `NEXUSREP_LOG_FORMAT` / `NEXUSREP_SENTRY_DSN`.
+- **Wired:** `instrumentation.ts` registers `process.on("unhandledRejection"/"uncaughtException")` →
+  captureError (logs, does NOT exit — a stray rejection must not tear down a live Tavus call) and moves
+  boot logs to the logger. `captureError` added at the orchestrator's silent swallow-points (classifier /
+  retrieval / composer fallbacks) and the Tavus route's re-throw, so a vendor/LLM outage now emits a
+  structured signal instead of only an audit row.
+- **Per user's steer:** full HCP transcripts are kept in OUR logs (the Tavus turn log now records the
+  FULL input + output, dropping the 96-char preview) — the "no patient data to VENDORS" rule is enforced
+  separately at the vendor boundary, not by redacting our own logs.
+- **Verified:** typecheck 0, lint 0, 505 tests (8 new), build green.
+
+### Permission roles — admin-only internal surfaces (2026-07-18)
 
 Part of blocker #6. Until now every signed-in user could reach the internal oversight surfaces
 (Platform Admin, the cross-user Activity monitor). Now there's a real permission role.
