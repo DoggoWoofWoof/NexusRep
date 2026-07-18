@@ -67,6 +67,8 @@ export default defineConfig({
       // Console auth gate OFF for E2E regardless of .env.local — tests drive the console directly.
       NEXUSREP_APP_PASSWORD: "",
       NEXUSREP_AUTH: "0",
+      // Rate limiting OFF for E2E — the suite drives the public endpoints far faster than a human.
+      NEXUSREP_RATELIMIT: "0",
     },
   },
 });

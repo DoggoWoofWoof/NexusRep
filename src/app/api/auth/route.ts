@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { limited } from "@lib/rate-limit";
 import { appAuthEnabled, verifyCredentials, sessionCookieFor, usernameFromCookie, findUser, isAdminUser, SESSION_COOKIE } from "@lib/auth-session";
 import { recordActivity } from "@modules/activity";
 
@@ -40,6 +41,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   if (!appAuthEnabled()) return NextResponse.json({ ok: true, authed: true, enabled: false });
+
+  // Throttle credential guessing by IP (login only — logout returned above).
+  const limit = limited(req, "auth");
+  if (limit) return limit;
 
   const username = typeof body.username === "string" ? body.username : "";
   const password = typeof body.password === "string" ? body.password : "";

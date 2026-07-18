@@ -10,6 +10,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { limited } from "@lib/rate-limit";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { getRecordingStore } from "@lib/recording-store";
@@ -21,6 +22,8 @@ export const dynamic = "force-dynamic";
 const MAX_BYTES = 300 * 1024 * 1024;
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const limit = limited(req, "upload");
+  if (limit) return limit;
   const sessionIdRaw = req.headers.get("x-nexusrep-session-id") ?? "";
   if (!/^session_[a-z0-9_]+$/i.test(sessionIdRaw)) {
     return NextResponse.json({ ok: false, error: "missing or malformed session id" }, { status: 400 });

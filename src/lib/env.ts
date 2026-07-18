@@ -187,6 +187,11 @@ export const env = {
   /** Optional Sentry DSN. When set, captureError() also forwards to Sentry; otherwise errors are
    *  structured-logged only (no third-party egress). */
   sentryDsn: process.env.NEXUSREP_SENTRY_DSN ?? "",
+
+  // ── Rate limiting ────────────────────────────────────────────────────────────
+  /** In-process token-bucket limiting on the public endpoints. ON by default; set NEXUSREP_RATELIMIT=0
+   *  to disable (E2E/tests/local run open). Single-instance only (render.yaml pins numInstances: 1). */
+  rateLimitEnabled: process.env.NEXUSREP_RATELIMIT !== "0",
 } as const;
 
 function clampNum(raw: string | undefined, fallback: number, min: number, max: number): number {

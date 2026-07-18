@@ -10,7 +10,25 @@
 
 ## 1. Current build status
 
-### Latest: PII redaction at the vendor boundary (2026-07-18)
+### Latest: Rate limiting on public endpoints (2026-07-18)
+
+🟠 Important item. The public doctor endpoints + the unauthenticated `voice/speak` TTS proxy had no
+throttle → LLM/TTS credit-burn + Tavus-session-spam + DoS exposure.
+- **Added:** `lib/rate-limit.ts` — in-process token-bucket limiter (single-instance, per render.yaml),
+  named per-endpoint `LIMITS`, IP extraction (leftmost `x-forwarded-for`), and a `limited(req, name)`
+  route helper returning a ready 429 + `Retry-After`. Env `NEXUSREP_RATELIMIT` (ON by default; E2E/tests
+  set 0). Idle-bucket eviction backstops memory.
+- **Applied (IP-keyed):** `voice/speak` (paid TTS), `conversation/turn` + `presentation/step|overview`
+  (paid LLM), `realtime/conversation` (paid Tavus session — strictest), `sessions/utterance` +
+  `recording` + `recording/chunk` (upload/spam), `activity/ingest` (beacon), and `auth` login
+  (brute-force). Limits are generous — normal conversational cadence never trips them.
+- **Tavus custom-LLM callback:** keyed by SESSION (never IP — Tavus egress IPs are shared) with a high
+  safety ceiling that can't trip a live call's cadence; only a runaway loop hits it. The bearer key
+  stays the real gate; the per-session bucket honors the "don't break/mingle Tavus sessions" constraint.
+- **Skipped `/api/brand`** — it's the Render health check.
+- **Verified:** typecheck 0, lint 0, 520 tests (8 new), build green.
+
+### PII redaction at the vendor boundary (2026-07-18)
 
 🟠 Important item — enforces the hard rule "no patient-level data reaches third-party vendors", which
 was previously only a comment.

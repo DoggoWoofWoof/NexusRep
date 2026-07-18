@@ -6,6 +6,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { limited } from "@lib/rate-limit";
 import { currentUserId } from "@lib/container";
 import { recordActivity, ACTIVITY_CATEGORIES, type ActivityCategory, type ActivitySeverity } from "@modules/activity";
 
@@ -27,6 +28,8 @@ interface RawBeacon {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const limit = limited(req, "beacon");
+  if (limit) return limit;
   const body = (await req.json().catch(() => ({}))) as { events?: unknown; surface?: unknown };
   const raw: RawBeacon[] = Array.isArray(body?.events) ? (body.events as RawBeacon[]).slice(0, MAX_BATCH) : [];
   const batchSurface = body?.surface === "doctor" ? "doctor" : "brand";

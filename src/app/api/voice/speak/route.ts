@@ -7,6 +7,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { limited } from "@lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,8 @@ function audio(buf: Buffer): NextResponse {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const limit = limited(req, "tts");
+  if (limit) return limit;
   const body = (await req.json().catch(() => ({}))) as { text?: unknown; tone?: unknown; voice?: unknown };
   const text = (typeof body.text === "string" ? body.text : "").trim().slice(0, 1200); // bounded (answer + ISI)
   if (!text) return new NextResponse(null, { status: 204 });

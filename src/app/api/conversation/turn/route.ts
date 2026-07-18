@@ -7,6 +7,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { limited } from "@lib/rate-limit";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { resolveSessionAndHcp } from "@lib/resolve-session";
@@ -15,6 +16,8 @@ import { getComposer } from "@modules/content";
 import { logServerActivity } from "@lib/activity-log";
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const limit = limited(req, "llmTurn");
+  if (limit) return limit;
   const body = (await req.json().catch(() => ({}))) as { text?: unknown; classifier?: unknown; sessionId?: unknown; newSession?: unknown; greeting?: unknown; hcpId?: unknown };
   const text = typeof body.text === "string" ? body.text.trim().slice(0, 2000) : "";
   const classifier = typeof body.classifier === "string" ? body.classifier : undefined;

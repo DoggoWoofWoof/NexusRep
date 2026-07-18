@@ -15,6 +15,7 @@ import { getContainer, getContainerForUser } from "@lib/container";
 import { env } from "@lib/env";
 import { logger } from "@lib/logger";
 import { captureError } from "@lib/error-capture";
+import { limited } from "@lib/rate-limit";
 import { getActiveCall } from "@lib/active-call";
 import { correctHcpAsrText } from "@lib/asr-correct";
 import { beginLiveTurn, failLiveTurn, finishLiveTurn } from "@lib/live-turn-guard";
@@ -101,6 +102,11 @@ export async function POST(req: Request): Promise<Response> {
   mark("parse");
   const boundSessionId = req.headers.get("x-nexusrep-session-id")?.trim() || "";
   const boundUserId = req.headers.get("x-nexusrep-user-id")?.trim() || "";
+  // Safety ceiling on the (bearer-authenticated) callback — keyed by SESSION, never IP (Tavus egress
+  // IPs are shared). Deliberately generous so it can NEVER trip a live call's normal cadence (a turn
+  // every few seconds); it only catches a runaway loop that would burn LLM credits.
+  const limit = limited(req, "tavusCallback", boundSessionId || boundUserId || "default");
+  if (limit) return limit;
   const boundCall = boundSessionId
     ? { sessionId: boundSessionId, userId: boundUserId && boundUserId !== "__default__" ? boundUserId : null }
     : null;

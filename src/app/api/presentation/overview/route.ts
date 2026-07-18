@@ -7,6 +7,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { limited } from "@lib/rate-limit";
 import { getContainer } from "@lib/container";
 import { resolveSessionAndHcp } from "@lib/resolve-session";
 import { gatePresentationSegment, isiAlreadyDelivered, type PolicyRoute, type RiskClassification, classify, route as policyRouteFor } from "@modules/compliance";
@@ -32,6 +33,8 @@ const BASE_CLASSIFICATION: RiskClassification = {
 
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const limit = limited(req, "presentation");
+  if (limit) return limit;
   const body = (await req.json().catch(() => ({}))) as {
     text?: unknown;
     sessionId?: unknown;

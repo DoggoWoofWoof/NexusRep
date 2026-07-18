@@ -18,6 +18,6 @@ export default defineConfig({
     // Tests drive the brand API routes directly (no cookie / no Next request pipeline), so run with
     // auth OFF — the same as the Playwright E2E config. requireBrandUser's own branches are unit-tested
     // in tests/require-auth.test.ts by mocking its deps, independent of this flag.
-    env: { NEXUSREP_AUTH: "0" },
+    env: { NEXUSREP_AUTH: "0", NEXUSREP_RATELIMIT: "0" },
   },
 });

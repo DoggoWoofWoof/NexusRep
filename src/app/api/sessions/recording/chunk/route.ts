@@ -9,6 +9,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { limited } from "@lib/rate-limit";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 import { getRecordingStore } from "@lib/recording-store";
@@ -20,6 +21,8 @@ const MAX_CHUNK_BYTES = 20 * 1024 * 1024; // one timeslice is small; this only r
 const MAX_TOTAL_BYTES = 300 * 1024 * 1024; // whole-recording ceiling (matches the whole-blob route)
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const limit = limited(req, "upload");
+  if (limit) return limit;
   const sessionIdRaw = req.headers.get("x-nexusrep-session-id") ?? "";
   if (!/^session_[a-z0-9_]+$/i.test(sessionIdRaw)) {
     return NextResponse.json({ ok: false, error: "missing or malformed session id" }, { status: 400 });

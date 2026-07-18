@@ -12,12 +12,15 @@
  */
 
 import { NextResponse } from "next/server";
+import { limited } from "@lib/rate-limit";
 import { asId } from "@lib/ids";
 import { getContainer } from "@lib/container";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const limit = limited(req, "utterance");
+  if (limit) return limit;
   const body = (await req.json().catch(() => ({}))) as { sessionId?: unknown; speaker?: unknown; text?: unknown; at?: unknown };
   const speaker = body.speaker === "rep" ? "rep" : body.speaker === "hcp" ? "hcp" : null;
   const text = typeof body.text === "string" ? body.text.trim() : "";

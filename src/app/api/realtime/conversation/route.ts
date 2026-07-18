@@ -8,6 +8,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { limited } from "@lib/rate-limit";
 import { asId } from "@lib/ids";
 import { getContainerForUser, currentUserId } from "@lib/container";
 import { env } from "@lib/env";
@@ -66,6 +67,8 @@ async function probePublicLlmReachability(): Promise<boolean> {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const limit = limited(req, "startCall");
+  if (limit) return limit;
   try {
     const body = (await req.json().catch(() => ({}))) as { hcpId?: unknown; startNonce?: unknown };
     const ownerUserId = await currentUserId();

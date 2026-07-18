@@ -5,6 +5,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { limited } from "@lib/rate-limit";
 import { getContainer } from "@lib/container";
 import { resolveSessionAndHcp } from "@lib/resolve-session";
 import { complianceGate, type PolicyRoute, type RiskClassification, classify, route as policyRouteFor } from "@modules/compliance";
@@ -43,6 +44,8 @@ function normalized(s: string): string {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  const limit = limited(req, "presentation");
+  if (limit) return limit;
   const body = (await req.json().catch(() => ({}))) as {
     action?: unknown;
     currentSlideId?: unknown;
