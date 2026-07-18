@@ -3,11 +3,12 @@
 Status of a full read-only audit (2026-07-18). **Bottom line:** the hard part is done — the
 compliance engine is genuinely production-grade (fail-safe, single-choke-point final gate on every
 turn, ~490 tests incl. red-team) and the vendor-adapter seams are real and swappable. What's left is
-conventional web-app hardening around it. **Update (2026-07-18): server-side auth, the session-secret
-gate, `/api/activity` gating, managed-Postgres persistence, and CI are all now DONE (blockers 1–5).**
-Remaining before real users: the 🟠 Important items below — chiefly **PII redaction to vendors**,
-**a real CRM adapter + scheduled outbox flush**, **error tracking / structured logging**, and
-**rate limiting** — plus (deferred by request) a real user store with hashing + roles (blocker 6).
+conventional web-app hardening around it. **Update (2026-07-18): blockers 1–5 are DONE** (server-side
+auth, the session-secret gate, `/api/activity` gating, managed-Postgres persistence, CI), **plus 🟠
+Important items 7–10** (PII redaction at the vendor boundary, a real HTTP CRM adapter + scheduled outbox
+flush, structured logging + error capture, rate limiting) **and the roles half of blocker 6**. Remaining:
+Important **11** (Tavus webhook auth), **12** (LLM timeouts on the ingest path), **13** (auth E2E), the
+real user store + password hashing (rest of #6), and the 🟢 Nice-to-haves.
 
 ## 🔴 Blockers (must fix before real users / real data)
 
@@ -48,15 +49,23 @@ hashing still deferred)._
 
 ## 🟠 Important
 
-7. **PII redaction** on inbound HCP text before ANY vendor call (Claude/OpenAI classifier + composer,
-   Tavus ASR) — the "no patient-level data to vendors" hard rule is currently comment-only, and a raw
-   utterance reaches vendors before the AE router acts. Also make `docnexus.ts` `mapRows` an explicit
-   aggregate-only allowlist (today the guarantee is a comment).
-8. **Real CRM adapter + scheduled outbox `flush()`.** CRM is always `MockCrmAdapter`; the retry
-   `flush()` is never scheduled, so with a real adapter failed deliveries would never retry.
-9. **Error tracking + structured logging** (Sentry/JSON logs); stop logging HCP transcript previews to
-   stdout (`tavus/llm/.../route.ts`).
-10. **Rate limiting** on the public doctor endpoints and the unauthenticated `voice/speak` TTS proxy.
+_Progress (2026-07-18): items 7, 8, 9, 10 DONE. Remaining: 11 (Tavus webhook auth), 12 (LLM timeouts on
+the ingest path), 13 (auth E2E)._
+
+7. ✅ **DONE — PII redaction.** `lib/pii-redact.ts` scrubs identifiers (email/phone/SSN/MRN/DOB/member
+   IDs/titled names) at the 4 vendor request builders (Claude+OpenAI classifier + composer); keyword
+   classification/retrieval/gate keep full text upstream. `docnexus.ts mapRows` is now an explicit
+   aggregate-only allowlist. NOT redacted in our own store/logs (per request). Tavus gets the doctor's
+   audio from the CLIENT, so that boundary is client-side (documented).
+8. ✅ **DONE — Real CRM adapter + scheduled outbox flush.** `HttpCrmAdapter` (veeva/salesforce → HTTP
+   intake) selected on `env.crmAdapter` + `NEXUSREP_CRM_WEBHOOK_URL`; outbox `flush()` (backoff +
+   attempt cap → suppress) scheduled in `instrumentation.ts` across every live container's outbox.
+9. ✅ **DONE — Error tracking + structured logging.** `lib/logger.ts` (JSON/pretty, level-gated) +
+   `lib/error-capture.ts` (global handlers + opt-in sink, no Sentry dep); captureError at the
+   orchestrator swallow-points + Tavus route. Per request, HCP transcripts are KEPT in our logs (full,
+   not previews) — the vendor rule is enforced by #7, not by redacting our logs.
+10. ✅ **DONE — Rate limiting.** `lib/rate-limit.ts` token-bucket on the public doctor endpoints +
+    `voice/speak` (IP-keyed) and the Tavus callback (session-keyed high ceiling). `NEXUSREP_RATELIMIT`.
 11. **Tavus webhook auth** fails open when the key is unset and passes the key as `?k=` in the URL
     (lands in logs) — require it + move to a header (`tavus/webhook/route.ts`).
 12. **Timeouts on `llmComplete`/`llmText`** (composer) — called on the `content/ingest` request path

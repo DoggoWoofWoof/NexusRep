@@ -17,6 +17,8 @@ import {
   MockVoiceProvider,
 } from "./mock";
 import { TavusRealtimeProvider } from "./tavus";
+import { HttpCrmAdapter } from "./crm-http";
+import { logger } from "@lib/logger";
 import { hasAgentCatalog } from "./types";
 import type {
   AvatarProvider,
@@ -77,6 +79,15 @@ export function getAvatarProvider(): AvatarProvider {
 }
 
 export function getCrmAdapter(): CrmAdapter {
+  // Real adapter (veeva/salesforce → an HTTP intake) when selected AND a URL is configured; otherwise
+  // the mock. A selected real adapter with no URL falls back to the mock with a loud warning rather
+  // than silently dropping every handoff.
+  if (env.crmAdapter === "veeva" || env.crmAdapter === "salesforce") {
+    if (env.crmWebhookUrl) {
+      return new HttpCrmAdapter({ name: env.crmAdapter, url: env.crmWebhookUrl, token: env.crmWebhookToken });
+    }
+    logger.warn(`CRM adapter "${env.crmAdapter}" selected but NEXUSREP_CRM_WEBHOOK_URL is unset — using the mock (no events will be delivered)`, { scope: "crm" });
+  }
   return new MockCrmAdapter();
 }
 

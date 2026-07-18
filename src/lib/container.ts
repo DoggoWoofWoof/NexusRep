@@ -388,6 +388,23 @@ export function getContainerForUser(userId: string | null): Promise<AppContainer
   return cache.get(key)!;
 }
 
+/** Drain EVERY live container's CRM outbox (each user owns its own), retrying failed deliveries with
+ *  backoff + attempt cap. Called on a timer by instrumentation.ts. Best-effort + isolated: a flush
+ *  failure on one container never blocks another. Returns the number of entries acted on. */
+export async function flushAllOutboxes(): Promise<number> {
+  let acted = 0;
+  for (const promise of containerCache().values()) {
+    const c = await promise.catch(() => null);
+    if (!c) continue;
+    try {
+      acted += (await c.crm.flush()).length;
+    } catch {
+      /* best-effort per container */
+    }
+  }
+  return acted;
+}
+
 /** Resolve the signed-in user from the request cookie. Request-scoped via next/headers; returns
  *  null when auth is off or when called outside a request (e.g. tests) so we fall back to the
  *  shared default. Exported so the realtime call can record WHICH container owns the call's

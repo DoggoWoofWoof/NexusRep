@@ -69,6 +69,8 @@ export default defineConfig({
       NEXUSREP_AUTH: "0",
       // Rate limiting OFF for E2E — the suite drives the public endpoints far faster than a human.
       NEXUSREP_RATELIMIT: "0",
+      // No background CRM flush timer during E2E.
+      NEXUSREP_CRM_FLUSH_INTERVAL_MS: "0",
     },
   },
 });

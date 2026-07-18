@@ -10,7 +10,25 @@
 
 ## 1. Current build status
 
-### Latest: Rate limiting on public endpoints (2026-07-18)
+### Latest: Real CRM adapter + scheduled outbox flush (2026-07-18)
+
+🟠 Important item. CRM handoff was always the MockCrmAdapter, and the outbox retry `flush()` was never
+scheduled — so with a real CRM a failed delivery would never retry.
+- **Added:** `modules/vendors/crm-http.ts` — `HttpCrmAdapter` POSTs each canonical `CrmEventPayload` to
+  a configured HTTP intake (Veeva/Salesforce both accept inbound REST), mapping outcomes to canonical
+  results: 2xx → sent, 429/5xx/network → retrying, other 4xx → failed, no-NPI → needs_mapping (never
+  POSTs an unroutable event). `getCrmAdapter()` now branches on `env.crmAdapter` (was hard-coded mock)
+  — real adapter only when selected AND `NEXUSREP_CRM_WEBHOOK_URL` is set, else mock (with a warning).
+- **Outbox hardened** (`modules/crm`): `deliver()` sets exponential backoff on non-terminal results;
+  `flush()` honors it and SUPPRESSES an entry after `MAX_ATTEMPTS` (8) — so a scheduled retry can't
+  hammer a permanently-failing delivery forever.
+- **Scheduled:** `instrumentation.ts` runs a `globalThis`-guarded, unref'd `setInterval` that drains
+  EVERY live container's outbox (`container.flushAllOutboxes()` — each user owns its own) every
+  `NEXUSREP_CRM_FLUSH_INTERVAL_MS` (default 60s; 0 disables for E2E/tests). Single-instance safe
+  (render.yaml pins numInstances: 1); a multi-instance deploy would need a row-claim (noted).
+- **Verified:** typecheck 0, lint 0, 526 tests (6 new), build green.
+
+### Rate limiting on public endpoints (2026-07-18)
 
 🟠 Important item. The public doctor endpoints + the unauthenticated `voice/speak` TTS proxy had no
 throttle → LLM/TTS credit-burn + Tavus-session-spam + DoS exposure.

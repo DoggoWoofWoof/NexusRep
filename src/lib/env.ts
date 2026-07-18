@@ -71,6 +71,14 @@ export const env = {
     ["outbox-mock", "veeva", "salesforce"],
     "outbox-mock",
   ),
+  /** CRM ingestion endpoint the real (veeva/salesforce) adapter POSTs each outbox event to (both map to
+   *  an HTTP intake). Required to leave the mock — a selected real adapter with no URL falls back to mock. */
+  crmWebhookUrl: process.env.NEXUSREP_CRM_WEBHOOK_URL ?? "",
+  /** Optional bearer token for the CRM intake endpoint. */
+  crmWebhookToken: process.env.NEXUSREP_CRM_WEBHOOK_TOKEN ?? "",
+  /** How often (ms) the background worker drains the CRM outbox to retry failed deliveries. 0 disables
+   *  the scheduler (E2E/tests). Default 60s. */
+  crmFlushIntervalMs: Math.round(clampNum(process.env.NEXUSREP_CRM_FLUSH_INTERVAL_MS, 60_000, 0, 3_600_000)),
   retrievalProvider: pick<RetrievalProviderName>(
     process.env.NEXUSREP_RETRIEVAL_PROVIDER,
     ["memory-vector", "pgvector"],

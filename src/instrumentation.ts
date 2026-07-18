@@ -12,12 +12,15 @@
  * turn. If a request somehow arrives mid-load, it shares the same cached load promise (getPipe),
  * so nothing double-loads.
  */
-type InstrumentationGlobal = typeof globalThis & { __nexusrepErrHandlers?: boolean };
+type InstrumentationGlobal = typeof globalThis & {
+  __nexusrepErrHandlers?: boolean;
+  __nexusrepCrmFlush?: ReturnType<typeof setInterval>;
+};
 
 export async function register(): Promise<void> {
   // transformers.js is Node-only; skip the edge runtime and any non-server context.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  const [{ warmupEmbeddings }, { getContainerForUser }, { DEMO_USERS, appAuthEnabled }, { env }, { logger }, { captureError, warnIfUnwiredTracker }] = await Promise.all([
+  const [{ warmupEmbeddings }, { getContainerForUser, flushAllOutboxes }, { DEMO_USERS, appAuthEnabled }, { env }, { logger }, { captureError, warnIfUnwiredTracker }] = await Promise.all([
     import("@lib/embeddings"),
     import("@lib/container"),
     import("@lib/auth-session"),
@@ -36,6 +39,19 @@ export async function register(): Promise<void> {
     process.on("unhandledRejection", (reason) => captureError(reason, { phase: "unhandledRejection" }));
     process.on("uncaughtException", (err) => captureError(err, { phase: "uncaughtException" }));
     warnIfUnwiredTracker();
+  }
+
+  // CRM outbox worker: an inline delivery that fails (real CRM down / needs mapping) leaves a
+  // non-terminal entry that ONLY a flush recovers. Drain every live container's outbox on a timer
+  // (backoff + attempt cap live in CrmOutbox). Guarded against double-scheduling (dev HMR); unref'd so
+  // the timer never keeps the process alive. Disable with NEXUSREP_CRM_FLUSH_INTERVAL_MS=0 (E2E/tests).
+  if (!g.__nexusrepCrmFlush && env.crmFlushIntervalMs > 0) {
+    g.__nexusrepCrmFlush = setInterval(() => {
+      void flushAllOutboxes()
+        .then((n) => { if (n) boot.info(`CRM outbox flush acted on ${n} entr${n === 1 ? "y" : "ies"}`); })
+        .catch((e) => captureError(e, { phase: "crm.flush" }));
+    }, env.crmFlushIntervalMs);
+    g.__nexusrepCrmFlush.unref?.();
   }
 
   // Fail-closed heads-up: a production deploy with auth on MUST set a private NEXUSREP_SESSION_SECRET —

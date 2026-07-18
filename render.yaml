@@ -68,6 +68,12 @@ services:
         sync: false
       - key: OPENAI_API_KEY # alternate composer/classifier (optional)
         sync: false
+      # Real CRM handoff: set NEXUSREP_CRM_ADAPTER=veeva|salesforce (in the value block above) AND this
+      # intake URL to POST follow-up events to a real CRM; a scheduled worker retries failures.
+      - key: NEXUSREP_CRM_WEBHOOK_URL
+        sync: false
+      - key: NEXUSREP_CRM_WEBHOOK_TOKEN # optional bearer for the CRM intake endpoint
+        sync: false
       - key: TAVUS_API_KEY # video rep (optional — mock avatar without it)
         sync: false
       - key: TAVUS_LLM_KEY # bearer Tavus uses to call back into /api/tavus/llm
