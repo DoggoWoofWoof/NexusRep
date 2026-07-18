@@ -10,7 +10,26 @@
 
 ## 1. Current build status
 
-### Latest: Streaming session recording + honest review messaging (2026-07-18)
+### Latest: Measured, per-engine speech pacing (2026-07-18)
+
+The rep's spoken pace was estimated by several scattered per-word constants (360 / 370 / 400 / 430).
+We **measured** the two real voices instead of guessing:
+- **OpenAI/browser video-off voice** (`gpt-4o-mini-tts` / echo, professional): **≈408 ms/word** over a
+  165-word representative corpus (drug names included). → `TTS_MS_PER_WORD = 400` (already accurate).
+- **Live Tavus replica** (Cartesia `sonic-3` @ speed 1.0), via a rendered `/v2/videos` clip:
+  **≈301 ms/word** — a genuinely *fast* voice. A live turn also carries **~1.2 s startup latency**
+  (join→first word), so a replica turn is `REPLICA_STARTUP_MS + words × REPLICA_MS_PER_WORD`, not one
+  inflated slope (the old `430` folded startup into the rate → over-estimated long lines).
+- **Changed:** `src/lib/pacing.ts` now holds the two measured rates + `estimateReplicaTurnMs`;
+  `HcpExperience` video-on overview waits on the replica turn estimate (startup + real rate) instead
+  of a flat `360` (fixes short-line cut-off / long-line dead air); `video-events.estimateReplicaSpeechMs`
+  and `browser-speech.estimateSpeechMs` now source the shared constants; `slide-cue` WORD_MS left at
+  370 on purpose (raising it delays the cue — the opposite of the "cue earlier" preference).
+- **Caveat:** the 301 is from a pre-rendered clip; the live CVI may differ slightly, but the startup
+  offset + the safety-window tails (`+1500`/`+3000` in `VideoAgentStage`) absorb it.
+- **Verified:** typecheck 0, 482 tests (7 new in `tests/pacing.test.ts`), build all green.
+
+### Streaming session recording + honest review messaging (2026-07-18)
 
 Recording no longer uploads one multi-MB blob at the end (which aborted on tab-close → blank pane).
 MediaRecorder now runs on a **2s timeslice** and each chunk POSTs to `/api/sessions/recording/chunk`

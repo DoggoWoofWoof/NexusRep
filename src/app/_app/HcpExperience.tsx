@@ -14,7 +14,7 @@ import { appendTurn, type TranscriptMsg } from "@lib/transcript";
 import { useCuedSlide } from "../_components/useCuedSlide";
 import { isSameLiveTurnText } from "@lib/live-turn-guard";
 import { installActivityCapture } from "@lib/activity-client";
-import { estimateSegmentSpeechMs as estimateSpeechMs } from "@lib/pacing";
+import { estimateReplicaTurnMs } from "@lib/pacing";
 
 // Wall-clock read behind a tiny indirection. These timestamps are for ASR-latency telemetry in
 // DEFERRED handlers (mic tap, recognizer callbacks) — never during render — but a bare Date.now()
@@ -134,7 +134,10 @@ export function HcpExperience({ app }: { app?: AppState }) {
         showRep(text);
         cueSlide(slideId, text, true);
       }
-      await wait(estimateSpeechMs(text));
+      // Pace the live replica turn: join→first-word startup + the MEASURED replica speaking rate, so
+      // the next overview segment (or the re-enabled Continue button) never fires while the replica is
+      // still talking. A flat per-word rate mis-timed short lines (cut off) and long lines (dead air).
+      await wait(estimateReplicaTurnMs(text));
       return;
     }
     // Transcript first, immediately — the caption is never delayed to match the voice.

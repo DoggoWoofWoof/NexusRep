@@ -4,11 +4,13 @@
  * functions over vendor event shapes and text.
  */
 
-/** Estimate how long the replica will speak a line (ms), for pacing captions/slide cues. */
-export function estimateReplicaSpeechMs(text: string): number {
-  const words = text.trim().split(/\s+/).filter(Boolean).length;
-  return Math.min(45_000, Math.max(2_400, words * 430 + 1_200));
-}
+import { estimateReplicaTurnMs } from "@lib/pacing";
+
+/** How long a live replica turn takes (startup latency + speaking time), for pacing captions/slide
+ *  cues and the turn-done / barge-in safety windows. Sourced from the MEASURED replica rate in
+ *  @lib/pacing (Tavus Cartesia sonic-3 ≈301 ms/word + ~1.2s startup) — previously a hard-coded,
+ *  startup-inflated 430 ms/word here. */
+export const estimateReplicaSpeechMs = estimateReplicaTurnMs;
 
 /** Is this raw vendor event from the DOCTOR (user) side? */
 export function isHcpRawEvent(e: { type: string; role: string }): boolean {
