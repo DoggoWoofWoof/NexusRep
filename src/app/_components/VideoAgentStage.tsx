@@ -82,6 +82,13 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
   // join effect sees the current value. recordingDoneRef makes finalizeRecording idempotent.
   const recorderRef = useRef<{ stop: () => void; chunks: BlobPart[]; mime: string } | null>(null);
   const recordingDoneRef = useRef(false);
+  // Streaming-upload state: chunks are POSTed to /api/sessions/recording/chunk AS the call happens, in
+  // seq order, so a clean end only flushes the last chunk (fast) and an abrupt close still leaves
+  // everything up to the last chunk on the server. `uploaded` = how many chunks have landed; `chain`
+  // serializes uploads so the server appends them in order (chunk 0 carries the WebM header).
+  const recStreamRef = useRef<{ active: boolean; mime: string; startedAt: number; uploaded: number; chain: Promise<void> }>(
+    { active: false, mime: "", startedAt: 0, uploaded: 0, chain: Promise.resolve() },
+  );
   const recordSessionRef = useRef(recordSession);
   const onRepTurnRef = useRef<typeof onRepTurn>(onRepTurn);
   // Fires when the replica's AUDIO starts (vendor_started_speaking), so the parent anchors the
@@ -177,15 +184,69 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
   // Stop the client-side replica recording and upload it to this session, then attach it. Idempotent
   // (the "End video" button AND the parent's end-session flow may both call it). We record the clip
   // ourselves because Tavus's own recording is off on this account — see /api/sessions/recording.
+  // Upload any chunks not yet sent, in seq order (chunk 0 first — it carries the WebM header). Safe to
+  // call repeatedly (on every dataavailable and on finalize); serialized via recStreamRef.chain. A
+  // failed chunk doesn't advance `uploaded`, so the next pump retries it.
+  const pumpRecordingUploads = (): void => {
+    const s = recStreamRef.current;
+    const sid = sessionIdRef.current;
+    if (!s.active || !sid || !s.mime) return; // sid not ready yet → chunks stay buffered, pumped next time
+    s.chain = s.chain.then(async () => {
+      const all = recorderRef.current?.chunks ?? [];
+      while (s.uploaded < all.length) {
+        const idx = s.uploaded;
+        try {
+          const res = await fetch("/api/sessions/recording/chunk", {
+            method: "POST",
+            headers: { "Content-Type": s.mime, "x-nexusrep-session-id": sid, "x-nexusrep-chunk-seq": String(idx) },
+            body: all[idx] as Blob,
+          });
+          if (!res.ok) return; // retry this seq on the next pump
+          s.uploaded = idx + 1;
+        } catch {
+          return; // network hiccup — retry on the next pump; never skip a chunk (would corrupt the WebM)
+        }
+      }
+    });
+  };
+
+  // Stop the client-side replica recording and attach it to this session. Idempotent ("End video" AND
+  // the parent's end-session flow may both call it). Streaming path (interactive doctor session): the
+  // chunks already streamed as the call ran, so we only flush the final chunk + a finalize marker
+  // (duration) — fast, within a few hundred ms. Fallback path (bare/script capture, or if streaming
+  // never started): the original whole-blob upload.
   const finalizeRecording = async (): Promise<void> => {
     if (recordingDoneRef.current) return;
     const r = recorderRef.current;
     const sid = sessionIdRef.current;
     if (!r || !sid) return;
     recordingDoneRef.current = true;
+    const s = recStreamRef.current;
     try {
-      r.stop();
-      await new Promise((resolve) => window.setTimeout(resolve, 1200)); // let the final MediaRecorder chunk land
+      r.stop(); // flushes the final dataavailable into r.chunks
+      if (s.active) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250)); // let the final chunk land in r.chunks
+        pumpRecordingUploads();
+        await s.chain; // drain remaining chunks — fast, since all but the last already streamed
+        // Finalize marker (empty body) → server sets the duration + logs completion. If this never
+        // arrives (abrupt close), the URL was already attached on chunk 0, so the recording still shows.
+        await fetch("/api/sessions/recording/chunk", {
+          method: "POST",
+          headers: {
+            "Content-Type": s.mime,
+            "x-nexusrep-session-id": sid,
+            "x-nexusrep-chunk-seq": String(s.uploaded),
+            "x-nexusrep-final": "1",
+            "x-nexusrep-duration-ms": String(Math.max(0, Date.now() - s.startedAt)),
+          },
+          body: new Blob([], { type: s.mime }),
+          keepalive: true, // empty marker is tiny → survives an unmount
+        });
+        recordTiming({ type: "recording_finalized", reason: `streamed_${s.uploaded}_chunks` });
+        return;
+      }
+      // Fallback: whole-blob upload (bare/script capture or streaming disabled).
+      await new Promise((resolve) => window.setTimeout(resolve, 1200));
       const blob = new Blob(r.chunks, { type: r.mime });
       if (!blob.size) { recordingDoneRef.current = false; return; }
       const res = await fetch("/api/sessions/recording", {
@@ -765,11 +826,18 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
             const rec = new MediaRecorder(new MediaStream(tracks), { mimeType: mime });
             const chunks: BlobPart[] = [];
             const startedAt = Date.now();
-            rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-            rec.start(1000);
-            // Hold the live recorder so finalizeRecording() can stop + upload it when the call ends.
+            // Stream chunks for the INTERACTIVE doctor recording (recordSession, not bare/script capture
+            // which the record scripts upload as one blob). A 2s timeslice keeps the end-of-call flush small.
+            const streamActive = recordSessionRef.current && !bare;
+            recStreamRef.current = { active: streamActive, mime, startedAt, uploaded: 0, chain: Promise.resolve() };
+            rec.ondataavailable = (e) => {
+              if (e.data && e.data.size) chunks.push(e.data);
+              if (streamActive) pumpRecordingUploads(); // fire off the newly-available chunk right away
+            };
+            rec.start(streamActive ? 2000 : 1000);
+            // Hold the live recorder so finalizeRecording() can stop + flush it when the call ends.
             recorderRef.current = { chunks, mime, stop: () => { try { if (rec.state !== "inactive") { rec.requestData(); rec.stop(); } } catch { /* already stopped */ } } };
-            recordTiming({ type: "recording_started", reason: hasAudio ? "media_tracks" : "video_only_fallback" });
+            recordTiming({ type: "recording_started", reason: streamActive ? "streaming" : hasAudio ? "media_tracks" : "video_only_fallback" });
             (window as unknown as { __nexusrepRec?: unknown }).__nexusrepRec = {
               mimeType: mime,
               startedAt,

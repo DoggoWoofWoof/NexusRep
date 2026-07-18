@@ -8,7 +8,7 @@
  * never returns a recording_url), so we record the replica stream ourselves and attach it.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, appendFile, stat } from "node:fs/promises";
 import { join, basename } from "node:path";
 
 /** The writable directory recordings live in (under public/ so it survives a build, but we SERVE via
@@ -33,10 +33,23 @@ export interface RecordingSaveInput {
   contentType: string;
 }
 
+export interface RecordingChunkInput {
+  sessionId: string;
+  /** 0-based chunk index. seq 0 STARTS a fresh recording (creates/truncates); later chunks append. */
+  seq: number;
+  bytes: Uint8Array;
+  contentType: string;
+}
+
 export interface RecordingStore {
   readonly name: string;
-  /** Persist the clip and return the URL the Session-review UI can play (<video src=…>). */
+  /** Persist a whole clip at once and return the URL the Session-review UI can play. */
   save(input: RecordingSaveInput): Promise<{ url: string }>;
+  /** Append ONE streamed chunk (MediaRecorder timeslice) to the session's recording as the call
+   *  happens — so a clean end only has to flush the last small chunk (fast finalize) and an abrupt
+   *  close still leaves everything up to the last chunk on disk. Returns the eventual playback URL +
+   *  total bytes so far. Concatenated WebM timeslice chunks form a valid, playable file. */
+  appendChunk(input: RecordingChunkInput): Promise<{ url: string; totalBytes: number }>;
 }
 
 /** Safe object basename from a session id (no path traversal, stable per session). */
@@ -61,6 +74,21 @@ class LocalDiskRecordingStore implements RecordingStore {
     const file = `${fileBase(sessionId)}.${ext(contentType)}`;
     await writeFile(join(localRecordingsDir(), file), bytes);
     return { url: `/api/recordings/${file}` };
+  }
+  async appendChunk({ sessionId, seq, bytes, contentType }: RecordingChunkInput): Promise<{ url: string; totalBytes: number }> {
+    await mkdir(localRecordingsDir(), { recursive: true });
+    const file = `${fileBase(sessionId)}.${ext(contentType)}`;
+    const path = join(localRecordingsDir(), file);
+    // seq 0 = a brand-new recording (truncate any stale file from a prior call on the same session).
+    if (seq <= 0) await writeFile(path, bytes);
+    else await appendFile(path, bytes);
+    let totalBytes = bytes.byteLength;
+    try {
+      totalBytes = (await stat(path)).size;
+    } catch {
+      /* stat is best-effort telemetry */
+    }
+    return { url: `/api/recordings/${file}`, totalBytes };
   }
 }
 

@@ -9,7 +9,7 @@ import { mmss } from "@lib/format";
 import { type SessionRow } from "./Sessions";
 
 type SessionDetailData = {
-  session: { hcp: string; startedAt: string; durationSeconds: number; questionCount: number; complianceStatus: string; recordingUrl?: string | null; timelineSource?: "recorded" | null };
+  session: { hcp: string; startedAt: string; durationSeconds: number; questionCount: number; complianceStatus: string; recordingUrl?: string | null; recordingDurationMs?: number | null; timelineSource?: "recorded" | null };
   turns: { speaker: "hcp" | "rep"; text: string; sourceIds: string[]; detailAidSlideId?: string | null; at?: string | null }[];
   audit: { seq: number; type: string; payload: Record<string, unknown> }[];
   hasTurnDetail: boolean;
@@ -30,9 +30,12 @@ export function SessionDetail({ app }: { app: AppState }) {
   // Real recording length once the video's metadata resolves — used to scale the transcript/slide
   // timeline to the video so they track it end-to-end (0 until known / no recording).
   const [vidDur, setVidDur] = useState(0);
+  // The recording URL was present but the <video> failed to load it (truncated / corrupted clip, or
+  // the file isn't on this instance) — surfaced honestly instead of a silent black pane.
+  const [videoError, setVideoError] = useState(false);
   useEffect(() => {
     let alive = true;
-    setDetail(null); setSel(0); setNowSec(0); setVidDur(0);
+    setDetail(null); setSel(0); setNowSec(0); setVidDur(0); setVideoError(false);
     setLoading(true);
     setLoadError("");
     const openLatestReviewable = async () => {
@@ -134,8 +137,12 @@ export function SessionDetail({ app }: { app: AppState }) {
         : i === 0 ? 0 : Math.max(at, rawOffsets[i - 1]! + estDur(turns[i - 1]!));
     }
     const estTotal = (rawOffsets[turns.length - 1] ?? 0) + (turns.length ? estDur(turns[turns.length - 1]!) : 0);
-    const timelineDuration = vidDur > 1 ? vidDur : s.durationSeconds || 0;
-    const recordingShort = !recordedTimeline && vidDur > 1 && estTotal > vidDur + 8;
+    // Authoritative recording length: the client-reported MediaRecorder duration if we have it (set on
+    // finalize), else the video element's resolved metadata. Used to tell an honest story when the
+    // recording is shorter than the transcript.
+    const recDurSec = s.recordingDurationMs && s.recordingDurationMs > 0 ? s.recordingDurationMs / 1000 : vidDur;
+    const timelineDuration = recDurSec > 1 ? recDurSec : s.durationSeconds || 0;
+    const recordingShort = !recordedTimeline && recDurSec > 1 && estTotal > recDurSec + 8;
     const scale = !recordedTimeline && timelineDuration > 1 && estTotal > 0 && !recordingShort ? timelineDuration / estTotal : 1;
     const offsets = rawOffsets.map((o) => o * scale);
     const offsetOf = (t: Turn) => { const i = turns.indexOf(t); return i >= 0 ? offsets[i]! : 0; };
@@ -188,9 +195,14 @@ export function SessionDetail({ app }: { app: AppState }) {
         <div style={eyebrow}>Session Detail · live record</div>
         <h1 style={{ ...h1, marginBottom: 6 }}>{s.hcp} — session review</h1>
         <p style={{ font: "400 12.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "0 0 12px" }}>{app.selectedSessionId} · {mmss(effectiveDuration)} · {detail.audit.length} audited events — every turn is a provable record.</p>
-        {recordingShort && (
+        {videoError && s.recordingUrl && (
+          <div style={{ margin: "0 0 12px", padding: "9px 12px", border: "1px solid #f0a3a3", background: "#fdecec", borderRadius: 8, font: "600 11.5px/1.45 var(--dn-font-sans)", color: "#8a1f1f" }}>
+            The recording for this session couldn&apos;t be loaded — the clip is likely truncated or corrupted, or it isn&apos;t on this server instance. The click-through transcript + audit below are the complete, provable record.
+          </div>
+        )}
+        {!videoError && recordingShort && (
           <div style={{ margin: "0 0 12px", padding: "9px 12px", border: "1px solid #f3c969", background: "#fff8e6", borderRadius: 8, font: "600 11.5px/1.45 var(--dn-font-sans)", color: "#7a4b00" }}>
-            Recording ends at {mmss(Math.round(vidDur))}, but the transcript runs to {mmss(Math.round(estTotal))}. Later transcript lines were logged after the captured video stream stopped, so this replay is not a clean recording.
+            The recording is {mmss(Math.round(recDurSec))} but the session ran to about {mmss(Math.round(estTotal))} — the video was switched off before the session ended, or the clip was cut short. Turns after {mmss(Math.round(recDurSec))} aren&apos;t in the video, but they&apos;re in the transcript + audit below.
           </div>
         )}
         {/* Compact stat strip (was a tall 5-card grid) — keeps the replay above the fold. */}
@@ -214,7 +226,8 @@ export function SessionDetail({ app }: { app: AppState }) {
                 preload="metadata"
                 src={s.recordingUrl}
                 onTimeUpdate={(e) => setNowSec(e.currentTarget.currentTime)}
-                onDurationChange={(e) => { const d = e.currentTarget.duration; if (isFinite(d) && d > 0) setVidDur(d); }}
+                onError={() => setVideoError(true)}
+                onDurationChange={(e) => { const d = e.currentTarget.duration; if (isFinite(d) && d > 0) { setVidDur(d); setVideoError(false); } }}
                 // MediaRecorder webm has no duration header (duration === Infinity), which
                 // breaks the scrubber + click-to-seek; force a seek to the end so the browser
                 // computes the real duration. If the user clicks a transcript row while this fix
@@ -237,7 +250,7 @@ export function SessionDetail({ app }: { app: AppState }) {
                 style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", background: "#000" }}
               />
             ) : (
-              <div style={{ margin: "auto", padding: "0 20px", textAlign: "center", font: "400 12px/1.5 var(--dn-font-sans)", color: "#cfe0f6" }}>🎥 No recording — this session was text/preview turns. The click-through transcript is below.</div>
+              <div style={{ margin: "auto", padding: "0 20px", textAlign: "center", font: "400 12px/1.5 var(--dn-font-sans)", color: "#cfe0f6" }}>🎥 No video recording for this session — it was a text/voice session, or the video was never started. The click-through transcript + audit below are the full record.</div>
             )}
           </div>
           {/* 2 · approved slide the rep showed (follows the recording) */}

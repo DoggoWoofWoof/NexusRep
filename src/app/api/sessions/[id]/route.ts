@@ -45,6 +45,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       questionCount: session.questionCount,
       complianceStatus: session.complianceStatus,
       recordingUrl: session.recordingUrl ?? null,
+      recordingDurationMs: session.recordingDurationMs ?? null,
       timelineSource: session.timelineSource ?? null,
     },
     turns,

@@ -45,6 +45,9 @@ export interface ConversationSession {
   vendorConversationId?: string;
   /** Playback recording URL once Tavus's recording_ready callback lands. */
   recordingUrl?: string;
+  /** Length of the captured recording in ms (client MediaRecorder clock). Lets Session review detect
+   *  a recording that ends before the transcript did (video switched off early / truncated). */
+  recordingDurationMs?: number;
   /** Review timeline source. "recorded" means turn.at is already synced to the playback recording. */
   timelineSource?: "recorded";
   /** True when this is a BRAND-USER PREVIEW (opened /hcp to try the rep) rather than a real invited
@@ -247,10 +250,15 @@ export class SessionService {
   }
 
   /** Attach a playback recording URL directly by session id — used by the client-side capture
-   *  upload (the browser knows its own session id), independent of any vendor conversation id. */
-  async setRecordingUrl(sessionId: SessionId, recordingUrl: string): Promise<ConversationSession | null> {
+   *  upload (the browser knows its own session id), independent of any vendor conversation id.
+   *  durationMs (from the client's MediaRecorder clock) lets Session review tell an HONEST story when
+   *  the recording is shorter than the transcript (video switched off early / clip truncated). */
+  async setRecordingUrl(sessionId: SessionId, recordingUrl: string, durationMs?: number): Promise<ConversationSession | null> {
     if (!(await this.sessions.get(sessionId))) return null;
-    return this.sessions.update(sessionId, { recordingUrl });
+    return this.sessions.update(sessionId, {
+      recordingUrl,
+      ...(typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs > 0 ? { recordingDurationMs: Math.round(durationMs) } : {}),
+    });
   }
 
   async get(sessionId: SessionId): Promise<ConversationSession | null> {

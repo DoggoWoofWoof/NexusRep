@@ -9,7 +9,50 @@
 import { describe, expect, it } from "vitest";
 import { createContainer, getContainer } from "@lib/container";
 import { POST as uploadRecording } from "@/app/api/sessions/recording/route";
+import { POST as uploadChunk } from "@/app/api/sessions/recording/chunk/route";
 import { GET as serveRecording } from "@/app/api/recordings/[file]/route";
+
+describe("streaming recording upload (chunked, fast finalize)", () => {
+  const chunkReq = (sessionId: string, seq: number, bytes: Uint8Array, extra: Record<string, string> = {}) =>
+    uploadChunk(new Request("http://localhost/api/sessions/recording/chunk", {
+      method: "POST",
+      headers: { "content-type": "video/webm", "x-nexusrep-session-id": sessionId, "x-nexusrep-chunk-seq": String(seq), ...extra },
+      body: bytes,
+    }));
+
+  it("appends chunks in order, attaches on chunk 0, sets duration on the final marker, and serves the concatenation", async () => {
+    const c = await getContainer();
+    const s = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId, preview: true, seed: "stream_ok" });
+    const sid = String(s.id);
+
+    // Chunk 0 (carries the WebM header) → recording is attached IMMEDIATELY (survives an abrupt end).
+    const c0 = await chunkReq(sid, 0, new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3]));
+    expect(c0.status).toBe(200);
+    expect((await c.sessions.get(s.id))?.recordingUrl).toMatch(/^\/api\/recordings\//);
+    expect((await c.sessions.get(s.id))?.recordingDurationMs).toBeUndefined(); // not until finalize
+
+    await chunkReq(sid, 1, new Uint8Array([4, 5, 6, 7]));
+
+    // Final marker: empty body, sets the duration + finalizes.
+    const fin = await chunkReq(sid, 2, new Uint8Array([]), { "x-nexusrep-final": "1", "x-nexusrep-duration-ms": "41000" });
+    expect((await fin.json()).finalized).toBe(true);
+    const sess = await c.sessions.get(s.id);
+    expect(sess?.recordingDurationMs).toBe(41000);
+
+    // Served bytes = chunk0 + chunk1 concatenated (the final empty marker adds nothing).
+    const file = sess!.recordingUrl!.split("/").pop()!;
+    const served = await serveRecording(new Request(`http://localhost${sess!.recordingUrl}`), { params: Promise.resolve({ file }) });
+    expect(served.status).toBe(200);
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4, 5, 6, 7]));
+  });
+
+  it("rejects a malformed session id / seq", async () => {
+    expect((await chunkReq("not-a-session", 0, new Uint8Array([1]))).status).toBe(400);
+    const c = await getContainer();
+    const s = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId, preview: true, seed: "stream_badseq" });
+    expect((await chunkReq(String(s.id), -1, new Uint8Array([1]))).status).toBe(400);
+  });
+});
 
 describe("client-capture recording upload", () => {
   it("attaches the uploaded clip to the session so Session-review can play it", async () => {
