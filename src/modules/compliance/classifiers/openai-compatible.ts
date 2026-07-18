@@ -8,6 +8,7 @@
 import { CLASSIFIER_SYSTEM, classifierMaxTokens, parseClassification } from "./shared";
 import type { LlmClassifier } from "./types";
 import { OPENAI_PROVIDER, THINKING_MACHINES_PROVIDER, type OpenAiCompatibleProvider } from "@lib/llm-config";
+import { redactPii } from "@lib/pii-redact";
 
 type CompatConfig = OpenAiCompatibleProvider & { label: string };
 
@@ -31,7 +32,8 @@ export function makeOpenAiCompatible(cfg: CompatConfig): LlmClassifier {
           model: cfg.model(),
           messages: [
             { role: "system", content: CLASSIFIER_SYSTEM },
-            { role: "user", content: text },
+            // PII scrubbed before egress (keyword classification upstream still sees full text).
+            { role: "user", content: redactPii(text) },
           ],
           response_format: { type: "json_object" },
           max_tokens: classifierMaxTokens(),

@@ -10,6 +10,7 @@
  */
 
 import { env } from "@lib/env";
+import { redactPii } from "@lib/pii-redact";
 import type { ApprovedAnswer } from "./types";
 
 export const COMPOSER_SYSTEM = `You are an AI pharmaceutical representative answering a healthcare professional (HCP).
@@ -104,7 +105,9 @@ const claudeComposer: GroundedComposer = {
       model: anthropicModel(),
       max_tokens: maxTokens ?? env.composerMaxTokens,
       system: systemFor(blocks, guidance, safety, alreadyDisclosed),
-      messages: [{ role: "user", content: question }],
+      // PII scrubbed before the HCP question reaches Anthropic (see lib/pii-redact.ts). The answer is
+      // composed from approved blocks (in `system`), so masking identifiers in the question is lossless.
+      messages: [{ role: "user", content: redactPii(question) }],
     });
     const text = res.content.find((b) => b.type === "text")?.text ?? "";
     return { text, latencyMs: Date.now() - t0, truncated: res.stop_reason === "max_tokens" };
@@ -130,7 +133,8 @@ function makeOpenAiCompatibleComposer(cfg: CompatCfg): GroundedComposer {
           max_tokens: maxTokens ?? env.composerMaxTokens,
           messages: [
             { role: "system", content: systemFor(blocks, guidance, safety, alreadyDisclosed) },
-            { role: "user", content: question },
+            // PII scrubbed before egress (answer comes from approved blocks in `system`).
+            { role: "user", content: redactPii(question) },
           ],
         }),
       });

@@ -8,6 +8,7 @@
 import { CLASSIFIER_SYSTEM, classifierMaxTokens, parseClassification } from "./shared";
 import type { LlmClassifier } from "./types";
 import { anthropicModel as model } from "@lib/llm-config";
+import { redactPii } from "@lib/pii-redact";
 
 export const claudeClassifier: LlmClassifier = {
   name: "claude",
@@ -24,7 +25,9 @@ export const claudeClassifier: LlmClassifier = {
       max_tokens: classifierMaxTokens(),
       system: CLASSIFIER_SYSTEM,
       messages: [
-        { role: "user", content: text?.trim() || "(no message)" },
+        // PII scrubbed before it reaches Anthropic (keyword classification still runs on the full
+        // text upstream, so redaction never weakens intent/risk detection). See lib/pii-redact.ts.
+        { role: "user", content: redactPii(text ?? "").trim() || "(no message)" },
         // Prefill the reply with "{" so Claude MUST continue a JSON object and can never answer
         // conversationally. Without this it replied "I'm ready to help…" to the fragment "And",
         // which isn't JSON and silently dropped us to the keyword classifier. We re-attach the

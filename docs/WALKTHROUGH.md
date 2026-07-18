@@ -10,7 +10,29 @@
 
 ## 1. Current build status
 
-### Latest: Structured logging + error tracking (2026-07-18)
+### Latest: PII redaction at the vendor boundary (2026-07-18)
+
+🟠 Important item — enforces the hard rule "no patient-level data reaches third-party vendors", which
+was previously only a comment.
+- **Added:** `lib/pii-redact.ts` — `redactPii()` scrubs email / phone / SSN / MRN / DOB / member-policy
+  IDs / titled personal names, leaving clinical language + drug/program names + dosing intact (a title
+  is required before a name, so "Milvexian"/"Factor XIa" are never touched, and AE/off-label signals
+  survive → routing/gating unaffected).
+- **Applied at the 4 vendor request builders** (the only server→third-party egress of HCP text): the
+  Claude + OpenAI compliance classifiers and the Claude + OpenAI grounded composers. Keyword
+  classification + retrieval + the compliance gate still run on FULL text upstream, so redaction never
+  weakens detection; the answer is composed from approved blocks, so masking identifiers is lossless.
+- **NOT applied to our own session store or logs** — full transcripts stay on our side (per the user's
+  logging steer). Redact for vendors, keep full internally.
+- **DocNexus `mapRows`** is now an explicit aggregate-only ALLOWLIST (`ALLOWED_ROW_FIELDS`): only
+  HCP-level fields (NPI, provider name, specialty, aggregate counts, location) cross the boundary, and
+  any patient-level column name on a row is dropped + logged loudly.
+- **Boundary honesty:** the doctor's mic AUDIO + typed text reach Tavus from the *client* (WebRTC), so
+  server-side redaction can't scrub those; it covers our LLM classifier/composer calls. Un-titled
+  free-text patient names need NER (out of scope) — this is defense-in-depth, not a zero-PHI guarantee.
+- **Verified:** typecheck 0, lint 0, 512 tests (7 new), build green.
+
+### Structured logging + error tracking (2026-07-18)
 
 🟠 Important item. Errors in the runtime turn path were swallowed into per-session audit rows (invisible
 in stdout) and there was no capture path for unhandled rejections/exceptions; logs were scattered raw

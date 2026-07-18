@@ -11,6 +11,7 @@
  * cohort so the demo never depends on live infra being reachable.
  */
 
+import { logger } from "@lib/logger";
 import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -351,9 +352,33 @@ function buildConditions(query: AudienceQuery):
   return children.length ? { operator: "AND", children } : undefined;
 }
 
-/** Map claims rows → aggregate HCPFeatures, assigning deciles by volume rank. */
+// Explicit aggregate-only ALLOWLIST — the ONLY fields we ever read off a DocNexus row. Every other
+// column the backend might return (patient-level data would violate the hard rule) is dropped here
+// and never enters a NexusRep object. HCP-level only: NPI, provider name, specialty, aggregate counts,
+// practice location.
+const ALLOWED_ROW_FIELDS = ["type_1_npi", "first_name", "last_name", "specialties", "group_1_patient_count", "primary_city", "primary_state"] as const;
+
+// Column names that must NEVER appear on an HCP-aggregate row. If they do, the upstream contract has
+// changed to leak patient-level data — the allowlist already drops them, but we surface it loudly.
+const PATIENT_LEVEL_KEY = /(^|_)(mrn|dob|birth|patient|member|subscriber|ssn|social|address|street|zip|postal|phone|email)($|_)/i;
+
+/** Reduce a raw row to ONLY the allowlisted aggregate fields (defense-in-depth: even if the cast to
+ *  DocNexusRow let extra columns through at runtime, they stop here). */
+function toAllowedRow(raw: DocNexusRow): DocNexusRow {
+  const src = raw as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of ALLOWED_ROW_FIELDS) if (k in src) out[k] = src[k];
+  return out as DocNexusRow;
+}
+
+/** Map claims rows → aggregate HCPFeatures, assigning deciles by volume rank. Every row is first put
+ *  through the aggregate-only allowlist so no patient-level field can cross this boundary. */
 function mapRows(rows: DocNexusRow[]): HCPFeatures[] {
+  if (rows.some((r) => Object.keys(r as Record<string, unknown>).some((k) => PATIENT_LEVEL_KEY.test(k)))) {
+    logger.warn("DocNexus rows carried patient-level column names — dropped by the aggregate-only allowlist; check the upstream contract", { scope: "docnexus" });
+  }
   const mapped = rows
+    .map(toAllowedRow)
     .filter((r) => r.type_1_npi != null)
     .map((r) => {
       const specialty = Array.isArray(r.specialties) ? r.specialties[0] ?? "Provider" : r.specialties ?? "Provider";
