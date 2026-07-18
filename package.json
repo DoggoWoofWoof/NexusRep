@@ -2,7 +2,7 @@
   "name": "nexusrep",
   "version": "0.1.0",
   "private": true,
-  "description": "NexusRep \u00e2\u20ac\u201d AI-first pharma AI Rep Studio. Source-agnostic, vendor-agnostic, CRM-compatible.",
+  "description": "NexusRep â€” AI-first pharma AI Rep Studio. Source-agnostic, vendor-agnostic, CRM-compatible.",
   "scripts": {
     "dev": "next dev --turbopack",
     "dev:webpack": "next dev",
@@ -25,14 +25,17 @@
     "jszip": "^3.10.1",
     "next": "^15.1.6",
     "pdf-parse": "^2.4.5",
+    "pg": "^8.22.0",
     "pptxgenjs": "^4.0.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite-socket": "^0.2.7",
     "@eslint/eslintrc": "^3.3.5",
     "@playwright/test": "^1.49.1",
     "@types/node": "^22.10.7",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
     "eslint": "^9.39.4",

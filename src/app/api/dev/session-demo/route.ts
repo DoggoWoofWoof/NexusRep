@@ -7,7 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { currentUserId, getContainer } from "@lib/container";
-import { getDb } from "@lib/db";
+import { getActiveSqlHandle } from "@lib/db";
 import { env } from "@lib/env";
 import { asId, newId } from "@lib/ids";
 import type { ConversationSession, ConversationTurn } from "@modules/sessions";
@@ -22,6 +22,12 @@ function ident(name: string): string {
 
 function userPrefix(userId: string | null): string {
   return userId ? `u_${userId.toLowerCase().replace(/[^a-z0-9]/g, "_")}_` : "";
+}
+
+/** True when canonical state actually persists across restarts (managed node-pg OR embedded PGlite).
+ *  On the memory driver these dev helpers are a no-op — a restart already resets everything. */
+function persistent(): boolean {
+  return Boolean(env.databaseUrl) || env.dataDriver === "postgres";
 }
 
 function restoredFollowUpOwner(type: FollowUpType): string {
@@ -41,8 +47,8 @@ function isFollowUpType(value: unknown): value is FollowUpType {
 }
 
 async function ensureAndClear(table: string): Promise<number> {
-  if (env.dataDriver === "postgres" && !process.env.PGLITE_DATA_DIR) process.env.PGLITE_DATA_DIR = ".nexusrep-data";
-  const db = await getDb();
+  if (env.dataDriver === "postgres" && !env.databaseUrl && !process.env.PGLITE_DATA_DIR) process.env.PGLITE_DATA_DIR = ".nexusrep-data";
+  const db = await getActiveSqlHandle();
   await db.exec(`create table if not exists ${ident(table)} (ord bigserial, id text primary key, data text not null)`);
   const res = await db.query(`delete from ${ident(table)}`);
   return res.affectedRows ?? 0;
@@ -64,7 +70,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   };
 
   if (body.action === "clean") {
-    if (env.dataDriver !== "postgres") {
+    if (!persistent()) {
       return NextResponse.json({ ok: true, cleaned: {}, note: "memory driver resets on restart" });
     }
     const prefix = userPrefix(await currentUserId());
@@ -94,7 +100,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   if (body.action === "importSessionDetail") {
-    if (env.dataDriver !== "postgres") {
+    if (!persistent()) {
       return NextResponse.json({ error: "importSessionDetail requires the local postgres driver" }, { status: 400 });
     }
     const detail = body.detail as {
@@ -128,7 +134,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       timelineSource: "recorded",
     };
     const prefix = userPrefix(await currentUserId());
-    const db = await getDb();
+    const db = await getActiveSqlHandle();
     const sessionTable = `${prefix}sessions`;
     const auditTable = `${prefix}audit`;
     const followupsTable = `${prefix}followups`;
@@ -163,7 +169,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   if (body.action === "resequence") {
-    if (env.dataDriver !== "postgres") {
+    if (!persistent()) {
       return NextResponse.json({ error: "resequence requires the local postgres driver" }, { status: 400 });
     }
     const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
@@ -183,7 +189,7 @@ export async function POST(req: Request): Promise<NextResponse> {
 
     const prefix = userPrefix(await currentUserId());
     const table = `${prefix}sessions`;
-    const db = await getDb();
+    const db = await getActiveSqlHandle();
     const r = await db.query<{ data: string }>(`select data from ${ident(table)} where id = $1`, [sessionId]);
     const row = r.rows[0];
     if (!row) return NextResponse.json({ error: "session not found" }, { status: 404 });

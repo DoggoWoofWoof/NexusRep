@@ -10,7 +10,29 @@
 
 ## 1. Current build status
 
-### Latest: Measured, per-engine speech pacing (2026-07-18)
+### Latest: Managed-Postgres persistence via node-postgres (2026-07-18)
+
+`DATABASE_URL` now points the app at a hosted Postgres (Neon / Supabase / Render / RDS) — the last
+productionization blocker (#4). Before this, `env.databaseUrl` was parsed but unused and the only
+"postgres" driver was embedded PGlite (needs ~600 MB / a disk).
+- **Added:** `src/lib/db/pg-node.ts` — one shared node-pg `Pool` behind the minimal `SqlHandle`
+  interface (the tiny slice `PgRepository` uses), mapping node-pg `rowCount` → `affectedRows`; SSL
+  auto-enabled for non-localhost. The SAME `PgRepository` (plain-Postgres SQL) now backs both PGlite
+  and managed Postgres.
+- **Selection** (`makeRepositoryFactory`): `DATABASE_URL` → node-pg (non-resilient; a bad URL surfaces
+  instead of silently dropping to memory) > `NEXUSREP_DATA_DRIVER=postgres` → PGlite > memory. Per-user
+  isolation is the same `u_<user>_` table prefix on ONE shared pool.
+- **Untouched:** the in-process live Tavus call slot (`lib/active-call.ts`) — it never lived in the DB
+  layer, so switching drivers can't race or mingle sessions (the constraint for this work).
+- **Validated end-to-end** against the REAL Postgres wire protocol via `pglite-socket`
+  (`tests/pg-node-adapter.test.ts`) — the actual node-pg client driving CRUD, upsert, jsonb filters,
+  append-only immutability, and per-user isolation. Plus `tests/pg-driver-selection.test.ts` for
+  precedence. Not mocked.
+- **Deferred:** a formal migration tool (lazy `CREATE TABLE IF NOT EXISTS` covers v1); a real user
+  store + hashing + roles (blocker #6, skipped by request).
+- **Verified:** typecheck 0, lint 0 errors, 492 tests, build green (`pg` stays server-side).
+
+### Measured, per-engine speech pacing (2026-07-18)
 
 The rep's spoken pace was estimated by several scattered per-word constants (360 / 370 / 400 / 430).
 We **measured** the two real voices instead of guessing:

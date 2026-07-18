@@ -1,13 +1,22 @@
 /**
- * Postgres-backed Repository<T> over PGlite. Each collection is a table
- * (ord bigserial, id text primary key, data text). Objects are stored as JSON
- * text; metadata filters use jsonb extraction (`data::jsonb->>'k'`). Insertion
- * order is preserved via `ord` so behaviour matches InMemoryRepository. The
- * vector index stays separate — Postgres is the canonical truth (brief §15).
+ * Postgres-backed Repository<T>. Each collection is a table (ord bigserial, id text primary key,
+ * data text). Objects are stored as JSON text; metadata filters use jsonb extraction
+ * (`data::jsonb->>'k'`). Insertion order is preserved via `ord` so behaviour matches
+ * InMemoryRepository. The vector index stays separate — Postgres is the canonical truth (brief §15).
+ *
+ * The SQL here is plain Postgres, so this ONE class backs both drivers: embedded PGlite (WASM) and a
+ * managed Postgres over node-postgres. It depends only on the minimal `SqlHandle` below — the tiny
+ * slice of a Postgres connection it actually uses — which both PGlite and the node-pg adapter satisfy.
  */
 
-import type { PGlite } from "@electric-sql/pglite";
 import type { Entity, Query, Repository } from "@lib/repository";
+
+/** The minimal Postgres surface PgRepository needs. PGlite satisfies this structurally; the node-pg
+ *  adapter (db/pg-node.ts) implements it explicitly (mapping node-pg's `rowCount` → `affectedRows`). */
+export interface SqlHandle {
+  exec(sql: string): Promise<unknown>;
+  query<R>(sql: string, params?: unknown[]): Promise<{ rows: R[]; affectedRows?: number }>;
+}
 
 type Row = { data: string };
 
@@ -20,12 +29,12 @@ export class PgRepository<T extends Entity> implements Repository<T> {
   private ready: Promise<void> | null = null;
 
   constructor(
-    private readonly getDb: () => Promise<PGlite>,
+    private readonly getDb: () => Promise<SqlHandle>,
     private readonly table: string,
     private readonly appendOnly = false,
   ) {}
 
-  private async db(): Promise<PGlite> {
+  private async db(): Promise<SqlHandle> {
     const db = await this.getDb();
     if (!this.ready) {
       this.ready = db

@@ -10,8 +10,8 @@
 
 import { asId, type AiRepId, type BrandId, type CampaignId, type ContentAssetId, type DetailAidSlideId, type HcpId, type MlrApprovalId, type SessionId, type TenantId } from "@lib/ids";
 import { InMemoryVectorIndex } from "@lib/vector-index";
-import { getRepositoryFactory, ResilientPgRepositoryFactory } from "@lib/db";
-import { MemoryRepositoryFactory, type RepositoryFactory } from "@lib/repository";
+import { getRepositoryFactory, makeRepositoryFactory } from "@lib/db";
+import type { RepositoryFactory } from "@lib/repository";
 import { appAuthEnabled, usernameFromCookie, userData, SESSION_COOKIE } from "@lib/auth-session";
 import { ContentService, PresentationSkill, defaultComposer, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
 import { configureClassifierLexicon, resolveClassifier } from "@modules/compliance";
@@ -100,10 +100,11 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
     sourceFile: `${brand.displayName}_MedicalInfo_v1.pptx`,
   });
 
-  // Canonical persistence: in-memory (default) or embedded Postgres (PGlite) when
-  // NEXUSREP_DATA_DRIVER=postgres. Persist across restarts by setting PGLITE_DATA_DIR;
-  // default it to a local data dir so the postgres demo is durable out of the box.
-  if (env.dataDriver === "postgres" && !process.env.PGLITE_DATA_DIR) {
+  // Canonical persistence: in-memory (default), managed Postgres (node-pg) when DATABASE_URL is set,
+  // or embedded Postgres (PGlite) when NEXUSREP_DATA_DRIVER=postgres. For the PGlite path, default
+  // PGLITE_DATA_DIR to a local data dir so it's durable out of the box — but NOT when DATABASE_URL is
+  // set (node-pg needs no local dir and would otherwise spin up an unused PGlite too).
+  if (env.dataDriver === "postgres" && !env.databaseUrl && !process.env.PGLITE_DATA_DIR) {
     process.env.PGLITE_DATA_DIR = ".nexusrep-data";
   }
   // Tests inject a shared factory to prove restart semantics (seed-if-absent).
@@ -359,14 +360,12 @@ function containerCache(): Map<string, Promise<AppContainer>> {
   return containerGlobal.__nexusrepContainers;
 }
 
-/** Each signed-in user gets an ISOLATED store. On the Postgres driver it's a per-user table
- *  namespace (u_<user>_*) in the same PGlite database, so their data PERSISTS across restarts;
- *  otherwise an isolated in-memory store (resets on restart — fine for local/dev). */
+/** Each signed-in user gets an ISOLATED store. On a Postgres driver (managed node-pg OR embedded
+ *  PGlite) it's a per-user TABLE NAMESPACE (u_<user>_*) in the ONE shared database, so their data
+ *  PERSISTS across restarts and no user can read another's rows; otherwise an isolated in-memory
+ *  store (resets on restart — fine for local/dev). Same 3-way driver precedence as the default store. */
 function perUserRepos(userId: string): RepositoryFactory {
-  if (env.dataDriver === "postgres") {
-    return new ResilientPgRepositoryFactory(`u_${userId.toLowerCase().replace(/[^a-z0-9]/g, "_")}_`);
-  }
-  return new MemoryRepositoryFactory();
+  return makeRepositoryFactory(`u_${userId.toLowerCase().replace(/[^a-z0-9]/g, "_")}_`);
 }
 
 /** Build options for a signed-in user, or {} for the shared default (auth off / public doctor

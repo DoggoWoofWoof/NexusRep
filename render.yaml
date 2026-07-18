@@ -24,11 +24,14 @@ services:
     buildCommand: npm ci && npm run build
     startCommand: npm run start
     healthCheckPath: /api/brand
-    # NOTE: embedded Postgres (PGlite) needs ~600MB — it does NOT fit the Starter 512MB
-    # instance (measured). So Starter uses the in-memory driver below (no disk needed).
-    # For durable state today: bump to a >=2GB instance, set NEXUSREP_DATA_DRIVER=postgres +
-    # PGLITE_DATA_DIR=/var/data/nexusrep, and attach this disk (single-instance).
-    # (DATABASE_URL → managed-Postgres is NOT wired yet — see docs/PRODUCTIONIZATION.md blocker 4.)
+    # PERSISTENCE (pick one; without one, state re-seeds on every restart):
+    #  (A) RECOMMENDED — managed Postgres: set the DATABASE_URL secret below to a hosted Postgres
+    #      (Render Postgres / Neon / Supabase). Works on the 512MB Starter (no 600MB PGlite WASM),
+    #      survives restarts, and is the only option that survives scaling past one instance. Schema
+    #      is auto-created (CREATE TABLE IF NOT EXISTS) on first use.
+    #  (B) embedded PGlite on a disk: PGlite needs ~600MB so it does NOT fit Starter (measured) —
+    #      bump to a >=2GB instance, set NEXUSREP_DATA_DRIVER=postgres + PGLITE_DATA_DIR=/var/data/nexusrep,
+    #      and uncomment the disk below (single-instance only).
     # disk:
     #   name: nexusrep-data
     #   mountPath: /var/data
@@ -58,8 +61,9 @@ services:
       # ---- secrets: set values in the Render dashboard (sync: false) ----
       - key: NEXUSREP_SESSION_SECRET # REQUIRED when NEXUSREP_AUTH=1: a long random string. Signs the
         sync: false #                  session cookie; without it cookies are forgeable and the brand API 503s.
-      - key: ANTHROPIC_API_KEY # grounded answer composition + classifier (optional)
-        sync: false
+      - key: DATABASE_URL # managed Postgres (persistence path A above). When set, ALL canonical state
+        sync: false #        persists here instead of the in-memory/PGlite driver. SSL is auto-enabled
+        #                    for non-localhost hosts. Leave blank to keep the NEXUSREP_DATA_DRIVER above.
       - key: ANTHROPIC_API_KEY # grounded answer composition + classifier (optional)
         sync: false
       - key: OPENAI_API_KEY # alternate composer/classifier (optional)
