@@ -260,7 +260,7 @@ async function recorderSnapshot(page) {
   });
 }
 
-async function waitForReplicaStop(page, timeoutMs) {
+async function _waitForReplicaStop(page, timeoutMs) {
   const before = await stoppedCount(page);
   await waitForReplicaStopAfter(page, before, timeoutMs);
 }
@@ -277,7 +277,7 @@ async function waitForTimingAfter(page, type, before, timeoutMs) {
   );
 }
 
-async function waitForReplicaStart(page, before, timeoutMs) {
+async function _waitForReplicaStart(page, before, timeoutMs) {
   await page.waitForFunction(
     (count) => (window.__nexusrepEvents || []).filter((e) => /replica\.started_speaking/i.test(e.type)).length > count,
     before,
@@ -297,7 +297,7 @@ async function stoppedCount(page) {
   return page.evaluate(() => (window.__nexusrepEvents || []).filter((e) => /replica\.stopped_speaking/i.test(e.type)).length);
 }
 
-async function startedCount(page) {
+async function _startedCount(page) {
   return page.evaluate(() => (window.__nexusrepEvents || []).filter((e) => /replica\.started_speaking/i.test(e.type)).length);
 }
 
@@ -458,7 +458,7 @@ function textScore(a, b) {
   return hit / Math.max(aw.size, bw.size, 1);
 }
 
-function estimatedTurnGap(turn) {
+function _estimatedTurnGap(turn) {
   const words = String(turn?.text ?? "").trim().split(/\s+/).filter(Boolean).length;
   if (turn?.speaker === "hcp") return Math.min(4.5, Math.max(1.2, words / 4));
   return Math.min(24, Math.max(3, words / 2.6));
