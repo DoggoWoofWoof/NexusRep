@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { btnGhost, btnPrimary } from "./NexusRepApp";
 import { card, eyebrow, h1 } from "./ui";
+import { useFetchOnce } from "@lib/use-fetch-once";
 
 type FollowUpRow = { id: number; hcp: string; reason: string; owner: string; target: string; status: string };
 
@@ -11,24 +12,9 @@ export function FollowUps() {
   const [sel, setSel] = useState(0);
   const [jsonOpen, setJsonOpen] = useState(false);
   // Real follow-ups only (created automatically after each session) — no fake rows.
-  const [baseRows, setBaseRows] = useState<FollowUpRow[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await fetch("/api/followups");
-        if (!res.ok) return;
-        const json = (await res.json()) as { rows?: FollowUpRow[] };
-        if (alive) setBaseRows(json.rows ?? []);
-      } catch {
-        /* leave empty → honest empty state */
-      } finally {
-        if (alive) setLoaded(true);
-      }
-    })();
-    return () => { alive = false; };
-  }, []);
+  const { data, loading } = useFetchOnce<{ rows?: FollowUpRow[] }>("/api/followups");
+  const baseRows = data?.rows ?? [];
+  const loaded = !loading;
   const events = baseRows.map((e) => ({ ...e, status: statuses[e.id] ?? e.status }));
   const selected = events[Math.min(sel, events.length - 1)];
   const retryAll = () => { const m: Record<number, string> = {}; events.forEach((e) => { if (e.status !== "Sent to CRM") m[e.id] = "Retrying"; }); setStatuses((s) => ({ ...s, ...m })); setTimeout(() => { const d: Record<number, string> = {}; events.forEach((e) => (d[e.id] = "Sent to CRM")); setStatuses(d); }, 1100); };

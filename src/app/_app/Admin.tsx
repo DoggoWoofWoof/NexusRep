@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { card, h1 } from "./ui";
 import { CRM_CONNECTORS, VENDOR_STACK } from "./data";
+import { useFetchOnce } from "@lib/use-fetch-once";
 
 interface IntegrationsSnap {
   seats: { role: string; vendor: string; status: "connected" | "simulated" | "not_configured"; detail?: string }[];
@@ -19,15 +19,7 @@ const INTEGRATION_BADGE: Record<string, { label: string; bg: string; color: stri
 export function Admin() {
   // REAL integration status from the container (mock → "Simulated", missing key →
   // "Not connected") — never hardcoded "Connected" badges.
-  const [integrations, setIntegrations] = useState<IntegrationsSnap | null>(null);
-  useEffect(() => {
-    let alive = true;
-    fetch("/api/integrations")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: IntegrationsSnap | null) => { if (alive && d) setIntegrations(d); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
+  const { data: integrations } = useFetchOnce<IntegrationsSnap>("/api/integrations");
   return (
     <div style={{ padding: "24px 30px 40px", maxWidth: 1100 }}>
       <div style={{ display: "inline-flex", alignItems: "center", gap: 8, font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".08em", textTransform: "uppercase", color: "#fff", background: "#475569", padding: "5px 10px", borderRadius: 6, marginBottom: 12 }}>Internal · Platform Admin</div>

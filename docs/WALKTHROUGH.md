@@ -49,11 +49,20 @@ realtime cores that were extracted.
   the `/api/tavus/llm` OpenAI-shim route into `src/modules/realtime/fragment-buffer.ts`. Verbatim move;
   the one direct map write is encapsulated. `tests/fragment-buffer.test.ts` (5). Full suite **470 pass**.
 
-**Still open (deferred):** consolidate the LLM *HTTP clients* further (the classifier/responder still
-own their own fetch/stream code — only the config is shared now) and the composer's `llmText`; and the
-larger StudioScreen mode-component split (BuildMode/TrainMode/etc.), which needs a `studio-types.ts`
-expansion first (medium risk). The audit's remaining items are lower-value polish (magic-number naming,
-the debug-global bridge in VideoAgentStage, the orphaned `/api/presentation/overview` route).
+- **Stage 7 — remaining safe dedups.** (a) `estimateSpeechMs`: the doctor preview + overview route
+  shared an identical local copy → `src/lib/pacing.ts` (`estimateSegmentSpeechMs`); browser-speech's
+  different TTS formula stays separate (the cross-screen inconsistency is documented, not silently
+  changed). (b) StudioScreen: 8 inline `card` box literals now spread `./ui` `card`. (c) New
+  `src/lib/use-fetch-once.ts` (`useFetchOnce`) centralizes the repeated `let alive = true` fetch-once
+  guard; retrofitted the uniform single-fetch screens (Sessions, FollowUps, Admin). Analytics (four
+  conditional states) + the multi-endpoint hooks were intentionally left — the hook doesn't fit them
+  cleanly and forcing it would risk their fallback behavior.
+
+**Still open (deferred, by choice):** the LLM *HTTP/SDK client code* itself (classifier JSON vs
+responder SSE vs composer one-shot — the shapes genuinely differ; only the config is shared); the
+larger StudioScreen mode-component split (needs a `studio-types.ts` expansion first, medium risk); and
+lower-value polish (magic-number naming, the `__nexusrep*` debug-global bridge, the orphaned
+`/api/presentation/overview` route). Not everything is deduplicated — these are the deliberate stops.
 
 ### Training — coaching doesn't jump to the bottom + coached rules are compact (2026-07-17)
 

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { type AppState } from "./NexusRepApp";
 import { card, cell, eyebrow, h1 } from "./ui";
 import { compStyle, TRAIN_SEED_KEY } from "./data";
+import { useFetchOnce } from "@lib/use-fetch-once";
 
 export type SessionRow = {
   id: number | string;
@@ -20,24 +20,9 @@ export type SessionRow = {
 export function Sessions({ app }: { app: AppState }) {
   // Start empty and show ONLY real sessions from the API — never fabricated demo
   // rows (clicking a fake row would 404 into the illustrative view with no video).
-  const [rows, setRows] = useState<SessionRow[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await fetch("/api/sessions");
-        if (!res.ok) return;
-        const json = (await res.json()) as { rows?: SessionRow[] };
-        if (alive) setRows(json.rows ?? []);
-      } catch {
-        /* leave empty → honest empty state */
-      } finally {
-        if (alive) setLoaded(true);
-      }
-    })();
-    return () => { alive = false; };
-  }, []);
+  const { data, loading } = useFetchOnce<{ rows?: SessionRow[] }>("/api/sessions");
+  const rows = data?.rows ?? [];
+  const loaded = !loading;
   return (
     <div style={{ padding: "24px 30px 40px", maxWidth: 1340 }}>
       <div style={eyebrow}>Sessions</div>
