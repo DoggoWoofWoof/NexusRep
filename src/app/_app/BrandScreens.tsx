@@ -24,8 +24,20 @@ export function BrandScreens({ app }: { app: AppState }) {
     case "analytics": return <Analytics />;
     case "audit": return <SessionDetail app={app} />;
     case "crm": return <FollowUps />;
-    case "admin": return <Admin />;
-    case "activity": return <ActivityDashboard />;
+    // Internal oversight surfaces — admins only (the server also enforces this via requireAdminUser,
+    // so this is defense-in-depth + UX, not the security boundary).
+    case "admin": return app.isAdmin ? <Admin /> : <NotAuthorized />;
+    case "activity": return app.isAdmin ? <ActivityDashboard /> : <NotAuthorized />;
     default: return null;
   }
+}
+
+/** Shown if a non-admin's nav state somehow lands on an admin-only screen (the nav entries are hidden
+ *  for them, so this is a fallback). Deliberately plain — no internal detail leaked. */
+function NotAuthorized() {
+  return (
+    <div style={{ padding: "48px 28px", font: "500 13px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>
+      This area is restricted to administrators.
+    </div>
+  );
 }

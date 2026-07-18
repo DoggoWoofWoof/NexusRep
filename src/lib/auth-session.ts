@@ -18,21 +18,29 @@ export const SESSION_COOKIE = "nexusrep_session";
 
 export type UserData = "demo" | "clean";
 
+/** Permission role — ORTHOGONAL to `data` (which demo to seed). "admin" additionally unlocks the
+ *  internal oversight surfaces (Platform Admin, the cross-user Activity monitor); "member" is a
+ *  normal brand user who builds/runs their own rep. Gating is enforced server-side (requireAdminUser),
+ *  not just by hiding nav. */
+export type UserRole = "admin" | "member";
+
 export interface DemoUser {
   username: string;
   password: string;
   name: string;
   /** "demo" → clone the seeded demo (rep + content + history); "clean" → unbuilt studio. */
   data: UserData;
+  /** Permission tier. Defaults to "member"; only explicit admins reach the internal surfaces. */
+  role: UserRole;
 }
 
 export const DEMO_USERS: DemoUser[] = [
-  { username: "mahek", password: "mahek123", name: "Mahek", data: "demo" },
-  { username: "lorick", password: "lorick123", name: "Lorick", data: "demo" },
-  { username: "nimit", password: "nimit123", name: "Nimit", data: "demo" },
-  { username: "ashwin", password: "ashwin123", name: "Ashwin", data: "demo" },
-  { username: "swastik", password: "swastik123", name: "Swastik", data: "clean" },
-  { username: "clean", password: "clean123", name: "Clean", data: "clean" },
+  { username: "mahek", password: "mahek123", name: "Mahek", data: "demo", role: "member" },
+  { username: "lorick", password: "lorick123", name: "Lorick", data: "demo", role: "member" },
+  { username: "nimit", password: "nimit123", name: "Nimit", data: "demo", role: "member" },
+  { username: "ashwin", password: "ashwin123", name: "Ashwin", data: "demo", role: "member" },
+  { username: "swastik", password: "swastik123", name: "Swastik", data: "clean", role: "admin" },
+  { username: "clean", password: "clean123", name: "Clean", data: "clean", role: "member" },
 ];
 
 export function appAuthEnabled(): boolean {
@@ -48,6 +56,18 @@ export function findUser(username: string): DemoUser | undefined {
 export function userData(username: string | null): UserData | null {
   if (!username) return null;
   return findUser(username)?.data ?? null;
+}
+
+/** A user's permission role (null when unknown / not signed in). Unknown users are never admins. */
+export function userRole(username: string | null): UserRole | null {
+  if (!username) return null;
+  return findUser(username)?.role ?? null;
+}
+
+/** True only for a known user whose role is "admin". Used by requireAdminUser to gate the internal
+ *  Platform Admin + Activity surfaces. A missing/unknown user is never an admin. */
+export function isAdminUser(username: string | null): boolean {
+  return userRole(username) === "admin";
 }
 
 function hmac(secret: string, data: string): Buffer {

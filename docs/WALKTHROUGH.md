@@ -10,7 +10,25 @@
 
 ## 1. Current build status
 
-### Latest: Managed-Postgres persistence via node-postgres (2026-07-18)
+### Latest: Permission roles — admin-only internal surfaces (2026-07-18)
+
+Part of blocker #6. Until now every signed-in user could reach the internal oversight surfaces
+(Platform Admin, the cross-user Activity monitor). Now there's a real permission role.
+- **Added:** `DemoUser.role` (`admin` | `member`, ORTHOGONAL to the `data` seed profile) +
+  `userRole()` / `isAdminUser()` (`auth-session.ts`); `requireAdminUser()` (`require-auth.ts`) — a
+  signed-in non-admin gets **403** (401 unauth, open when auth is off for dev/E2E).
+- **Gated:** `/api/activity` + `/api/integrations` now require admin; the client hides the "Activity
+  log" + "Platform Admin" nav for members and `BrandScreens` renders a "restricted" notice if reached.
+  `/api/auth` returns `isAdmin` so the UI can gate (server still enforces).
+- **Roles:** `swastik` = admin; everyone else = member.
+- **Verified live** (dev server, auth on): the 401/403/200 matrix — no cookie → 401, member cookie →
+  403 on both admin routes (200 on a normal brand route), admin cookie → 200. Plus unit tests
+  (`require-auth.test.ts` requireAdminUser branches; `auth-session.test.ts` role assignment).
+- **Still deferred (rest of #6):** a real DB-backed user store + password hashing (bcrypt/argon2) —
+  the in-source demo directory + plaintext demo passwords remain.
+- **Verified:** typecheck 0, lint 0 errors, 497 tests, build green.
+
+### Managed-Postgres persistence via node-postgres (2026-07-18)
 
 `DATABASE_URL` now points the app at a hosted Postgres (Neon / Supabase / Render / RDS) — the last
 productionization blocker (#4). Before this, `env.databaseUrl` was parsed but unused and the only

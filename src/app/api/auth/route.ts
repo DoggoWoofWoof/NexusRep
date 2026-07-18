@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { appAuthEnabled, verifyCredentials, sessionCookieFor, usernameFromCookie, findUser, SESSION_COOKIE } from "@lib/auth-session";
+import { appAuthEnabled, verifyCredentials, sessionCookieFor, usernameFromCookie, findUser, isAdminUser, SESSION_COOKIE } from "@lib/auth-session";
 import { recordActivity } from "@modules/activity";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +20,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     authed: Boolean(user),
     username: user?.username ?? null,
     name: user?.name ?? null,
+    // When auth is OFF the whole console is open (dev/demo), so the internal surfaces show too;
+    // when ON, only an admin user sees them. The client uses this to gate the nav (server still
+    // enforces via requireAdminUser).
+    isAdmin: !appAuthEnabled() || (user ? isAdminUser(user.username) : false),
   });
 }
 
@@ -41,8 +45,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const password = typeof body.password === "string" ? body.password : "";
   const user = verifyCredentials(username, password);
   if (user) {
-    recordActivity({ user: user.username, surface: "brand", category: "auth", action: "Signed in", metadata: { name: user.name } });
-    const res = NextResponse.json({ ok: true, authed: true, username: user.username, name: user.name });
+    recordActivity({ user: user.username, surface: "brand", category: "auth", action: "Signed in", metadata: { name: user.name, role: user.role } });
+    const res = NextResponse.json({ ok: true, authed: true, username: user.username, name: user.name, isAdmin: user.role === "admin" });
     res.cookies.set(SESSION_COOKIE, sessionCookieFor(user.username), {
       httpOnly: true,
       sameSite: "lax",

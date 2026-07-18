@@ -11,8 +11,8 @@ Remaining before real users: the 🟠 Important items below — chiefly **PII re
 
 ## 🔴 Blockers (must fix before real users / real data)
 
-_Progress (2026-07-18): blockers 1, 2, 3, 4, 5 are DONE; 6 skipped by request. All five "do these"
-blockers are complete._
+_Progress (2026-07-18): blockers 1, 2, 3, 4, 5 DONE; 6 PARTIAL (roles done; real user store + password
+hashing still deferred)._
 
 1. ✅ **DONE — Server-side auth.** `requireBrandUser()` (`lib/require-auth.ts`) gates every brand-console
    route (studio/sessions/analytics/mlr/followups/integrations/content-*/audience/train-preview/
@@ -38,8 +38,13 @@ blockers are complete._
    remains available for single-instance deploys.
 5. ✅ **DONE — CI.** `.github/workflows/ci.yml`: `checks` (typecheck + lint + vitest + build) and `e2e`
    (playwright chromium), Node 22.12.0, `NEXUSREP_EMBEDDINGS=lexical` so runners need no model download.
-6. ⏭️ **SKIPPED (by request)** — real user store + password hashing + roles. The in-source demo directory
-   (`auth-session.ts`) stays for now; Platform Admin + Activity gate on being a signed-in user, not a role.
+6. 🟡 **PARTIAL — roles DONE; user store + hashing still deferred.** Roles now exist: `DemoUser.role`
+   (`admin` | `member`), `requireAdminUser()` gates the internal surfaces — Platform Admin
+   (`/api/integrations`) and the cross-user Activity monitor (`/api/activity`) return **403** for a
+   signed-in non-admin (verified live: 401 unauth / 403 member / 200 admin), and the nav hides them.
+   `swastik` is the admin; everyone else is a member. Still deferred: a **real user store** (accounts
+   in the DB, not the in-source `auth-session.ts` directory) and **password hashing** (bcrypt/argon2 —
+   demo passwords are still plaintext). Those are the remaining slice of #6.
 
 ## 🟠 Important
 

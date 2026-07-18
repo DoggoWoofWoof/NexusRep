@@ -83,13 +83,16 @@ export interface AppState {
   setSelectedSessionId: (id: string | null) => void;
   /** Signed-in user's display name (null when auth is off — falls back to the demo operator). */
   userName: string | null;
+  /** Whether the signed-in user is an admin (true when auth is off). Gates the internal Platform
+   *  Admin + Activity surfaces in the UI; the server enforces the same via requireAdminUser. */
+  isAdmin: boolean;
 }
 
 /** Shared-password gate for the brand console — a light, standalone sign-in in the DocNexus
  *  house style. Doctors never see this; they open the rep from their invite link. The password
  *  is entered by the user; on success the server sets an httpOnly session cookie and we reveal
  *  the console. */
-function LoginScreen({ onSuccess }: { onSuccess: (name: string | null) => void }) {
+function LoginScreen({ onSuccess }: { onSuccess: (name: string | null, isAdmin: boolean) => void }) {
   const [user, setUser] = useState("");
   const [pw, setPw] = useState("");
   const [err, setErr] = useState("");
@@ -101,7 +104,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (name: string | null) => void }
     setErr("");
     try {
       const res = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "login", username: user, password: pw }) });
-      if (res.ok) { const d = (await res.json().catch(() => ({}))) as { name?: string }; onSuccess(typeof d.name === "string" ? d.name : null); return; }
+      if (res.ok) { const d = (await res.json().catch(() => ({}))) as { name?: string; isAdmin?: boolean }; onSuccess(typeof d.name === "string" ? d.name : null, !!d.isAdmin); return; }
       setErr("Incorrect username or password.");
     } catch {
       setErr("Couldn't reach the server — try again.");
@@ -186,13 +189,13 @@ export function NexusRepApp() {
   // Simple console auth: ask /api/auth whether a password gate is on and whether this browser
   // already holds a valid session. null = still checking. Fails OPEN if the check errors so a
   // transient blip never locks a legitimately-open (ungated) deployment out of its own console.
-  const [auth, setAuth] = useState<{ enabled: boolean; authed: boolean; name?: string | null } | null>(null);
+  const [auth, setAuth] = useState<{ enabled: boolean; authed: boolean; name?: string | null; isAdmin?: boolean } | null>(null);
   useEffect(() => {
     let alive = true;
     fetch("/api/auth")
       .then((r) => r.json())
-      .then((d) => { if (alive) setAuth({ enabled: !!d.enabled, authed: !!d.authed, name: d.name ?? null }); })
-      .catch(() => { if (alive) setAuth({ enabled: false, authed: true, name: null }); });
+      .then((d) => { if (alive) setAuth({ enabled: !!d.enabled, authed: !!d.authed, name: d.name ?? null, isAdmin: !!d.isAdmin }); })
+      .catch(() => { if (alive) setAuth({ enabled: false, authed: true, name: null, isAdmin: true }); }); // fail open = ungated deploy → full access
     return () => { alive = false; };
   }, []);
   const logout = async () => {
@@ -207,16 +210,16 @@ export function NexusRepApp() {
     return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--dn-bg)", color: "var(--dn-fg-subtle)", font: "500 13px/1 var(--dn-font-sans)" }}>Loading…</div>;
   }
   if (auth.enabled && !auth.authed) {
-    return <LoginScreen onSuccess={(name) => { invalidateBrandCache(); setAuth({ enabled: true, authed: true, name }); }} />;
+    return <LoginScreen onSuccess={(name, isAdmin) => { invalidateBrandCache(); setAuth({ enabled: true, authed: true, name, isAdmin }); }} />;
   }
 
   // Keyed by the signed-in user so EVERY data hook inside (brand, studio meta, attention, and the
   // screens) mounts fresh and fetches with THIS user's session cookie — never the pre-login /
   // default container a shared top-level mount would have cached before login.
-  return <AuthedConsole key={auth.name ?? "console"} name={auth.name ?? null} authEnabled={auth.enabled} onLogout={logout} />;
+  return <AuthedConsole key={auth.name ?? "console"} name={auth.name ?? null} isAdmin={auth.isAdmin ?? false} authEnabled={auth.enabled} onLogout={logout} />;
 }
 
-function AuthedConsole({ name, authEnabled, onLogout }: { name: string | null; authEnabled: boolean; onLogout: () => void }) {
+function AuthedConsole({ name, isAdmin, authEnabled, onLogout }: { name: string | null; isAdmin: boolean; authEnabled: boolean; onLogout: () => void }) {
   const [mode, setMode] = useState<"brand" | "hcp">("brand");
   const [nav, setNavState] = useState<Screen>("overview");
   const [studioMode, setStudioMode] = useState("setup");
@@ -247,7 +250,7 @@ function AuthedConsole({ name, authEnabled, onLogout }: { name: string | null; a
     setActivation((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
 
   const account = name
-    ? { initials: initials(name), name, role: "Brand user" }
+    ? { initials: initials(name), name, role: isAdmin ? "Administrator" : "Brand user" }
     : { initials: DEMO_USER.initials, name: DEMO_USER.shortName, role: DEMO_USER.role };
 
   const app: AppState = {
@@ -255,6 +258,7 @@ function AuthedConsole({ name, authEnabled, onLogout }: { name: string | null; a
     drawerId, setDrawerId, sessionHcpId, setSessionHcpId, studioMode, setStudioMode,
     selectedSessionId, setSelectedSessionId,
     userName: name,
+    isAdmin,
   };
 
   if (mode === "hcp") {
@@ -298,6 +302,7 @@ function AuthedConsole({ name, authEnabled, onLogout }: { name: string | null; a
           {!navCollapsed && <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".12em", color: "rgba(255,255,255,.38)", padding: "8px 12px 7px" }}>ACTIVITY</div>}
           {NAV_GOVERN.map((item) => <NavRow key={item.id} item={item} active={nav === item.id} collapsed={navCollapsed} onClick={() => setNav(item.id)} />)}
         </nav>
+        {isAdmin && (
         <div style={{ padding: navCollapsed ? "8px 8px" : "8px 10px", borderTop: "1px solid rgba(255,255,255,.08)" }}>
           <div onClick={() => setNav("activity")} title={navCollapsed ? "Activity log" : undefined} data-activity="Activity log nav" style={{ display: "flex", alignItems: "center", justifyContent: navCollapsed ? "center" : "flex-start", gap: 10, padding: navCollapsed ? "10px 0" : "10px 13px", minHeight: 38, borderRadius: 9, cursor: "pointer", font: "500 13px/1.2 var(--dn-font-sans)", color: nav === "activity" ? "#fff" : "rgba(255,255,255,.6)", background: nav === "activity" ? "rgba(96,165,250,.18)" : "transparent" }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", boxShadow: "0 0 0 3px rgba(34,197,94,.18)" }} />{!navCollapsed && "Activity log"}
@@ -308,6 +313,7 @@ function AuthedConsole({ name, authEnabled, onLogout }: { name: string | null; a
             {!navCollapsed && <span style={{ font: "500 9.5px/1 var(--dn-font-sans)", color: "rgba(255,255,255,.4)", marginLeft: "auto" }}>INTERNAL</span>}
           </div>
         </div>
+        )}
         <div style={{ padding: navCollapsed ? "10px 8px" : "11px 14px", borderTop: "1px solid rgba(255,255,255,.08)", display: "flex", alignItems: "center", justifyContent: navCollapsed ? "center" : "flex-start", gap: 10 }}>
           <div style={{ width: 30, height: 30, borderRadius: "50%", background: "var(--dn-brand-light)", display: "flex", alignItems: "center", justifyContent: "center", font: "600 12px/1 var(--dn-font-sans)", color: "#fff" }}>{account.initials}</div>
           {!navCollapsed && <div style={{ lineHeight: 1.3 }}>

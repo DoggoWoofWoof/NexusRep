@@ -6,13 +6,13 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireBrandUser } from "@lib/require-auth";
+import { requireAdminUser } from "@lib/require-auth";
 import { queryActivity } from "@modules/activity";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request): Promise<NextResponse> {
-  const _auth = await requireBrandUser();
+  const _auth = await requireAdminUser(); // cross-user observability → admins only
   if (!_auth.ok) return _auth.res;
   const u = new URL(req.url).searchParams;
   const num = (k: string): number | undefined => {

@@ -41,6 +41,22 @@ describe("multi-user console auth", () => {
     expect(a.userData(null)).toBeNull();
   });
 
+  it("assigns a permission role ORTHOGONAL to the data profile (admin unlocks internal surfaces)", async () => {
+    const a = await freshAuth();
+    // swastik is the admin (a "clean"-data user who is ALSO an admin → role and data are independent).
+    expect(a.userRole("swastik")).toBe("admin");
+    expect(a.isAdminUser("swastik")).toBe(true);
+    // Everyone else is a normal member — including "demo"-data users.
+    for (const u of ["mahek", "lorick", "nimit", "ashwin", "clean"]) {
+      expect(a.userRole(u)).toBe("member");
+      expect(a.isAdminUser(u)).toBe(false);
+    }
+    // Unknown / signed-out is never an admin.
+    expect(a.userRole("nobody")).toBeNull();
+    expect(a.isAdminUser("nobody")).toBe(false);
+    expect(a.isAdminUser(null)).toBe(false);
+  });
+
   it("signs a cookie that round-trips the username; tampered / cross-secret rejected", async () => {
     const a = await freshAuth();
     const cookie = a.sessionCookieFor("nimit");

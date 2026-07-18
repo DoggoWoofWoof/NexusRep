@@ -15,7 +15,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { appAuthEnabled } from "@lib/auth-session";
+import { appAuthEnabled, isAdminUser } from "@lib/auth-session";
 import { currentUserId } from "@lib/container";
 import { env } from "@lib/env";
 
@@ -41,4 +41,20 @@ export async function requireBrandUser(): Promise<BrandAuth> {
   const user = await currentUserId();
   if (!user) return { ok: false, res: NextResponse.json({ error: "authentication required" }, { status: 401 }) };
   return { ok: true, user };
+}
+
+/**
+ * Like requireBrandUser, but additionally requires the ADMIN role — the gate for the internal
+ * oversight surfaces (Platform Admin `/api/integrations`, the cross-user Activity monitor
+ * `/api/activity`). A signed-in non-admin gets 403 (authenticated but not authorized). When auth is
+ * OFF (dev / E2E / tests) it's open, same as requireBrandUser, so those flows keep full access.
+ */
+export async function requireAdminUser(): Promise<BrandAuth> {
+  const base = await requireBrandUser();
+  if (!base.ok) return base; // 503 (misconfig) or 401 (no session) already handled
+  if (!appAuthEnabled()) return base; // auth off → open (base.user === "local")
+  if (!isAdminUser(base.user)) {
+    return { ok: false, res: NextResponse.json({ error: "administrator access required" }, { status: 403 }) };
+  }
+  return base;
 }
