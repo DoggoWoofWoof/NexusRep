@@ -10,7 +10,28 @@
 
 ## 1. Current build status
 
-### Latest: Architecture cleanup — 6 staged, behavior-preserving refactors (2026-07-17)
+### Latest: Streaming session recording + honest review messaging (2026-07-18)
+
+Recording no longer uploads one multi-MB blob at the end (which aborted on tab-close → blank pane).
+MediaRecorder now runs on a **2s timeslice** and each chunk POSTs to `/api/sessions/recording/chunk`
+**as the call happens**, appended server-side into one growing WebM (`recording-store.appendChunk`).
+- **Fast finalize:** a clean "End video" only flushes the last chunk + a tiny finalize marker
+  (duration) — verified live ~450ms in dev; the bulk already streamed during the call.
+- **Survives abrupt end:** the URL attaches on chunk 0, so a tab-close still shows everything that
+  streamed (only the last ~2s missing) instead of nothing. Bare/script capture keeps the whole-blob path.
+- **Honest Session review** (no more generic "no recording"): distinguishes recording-shorter-than-
+  transcript ("video switched off early / clip cut short — later turns are in the transcript+audit",
+  using the authoritative `recordingDurationMs`), a clip that won't load ("truncated/corrupted or not
+  on this instance"), and genuinely no recording. All paths log `[recording] …`.
+- Tests: `tests/session-recording.test.ts` +2 (chunk order / attach-on-chunk-0 / duration-on-final /
+  served concatenation / bad-input rejects). Full suite **472 pass**.
+
+A full **production-readiness audit** was run (see `docs/PRODUCTIONIZATION.md`): the compliance core +
+vendor seams are production-grade; the gaps are conventional web hardening — server-side auth (the
+login is currently client-only), a required session secret, gating `/api/activity`, real persistence
+(the `DATABASE_URL` adapter is advertised but unbuilt), CI, and observability.
+
+### Architecture cleanup — 6 staged, behavior-preserving refactors (2026-07-17)
 
 A staged cleanup pass (from a full read-only audit). Each stage: typecheck + full suite + build green,
 committed separately. No behavior change in any stage; new unit tests lock in the two compliance/
