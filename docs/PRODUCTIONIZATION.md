@@ -7,23 +7,32 @@ conventional web-app hardening around it: **real auth, real persistence, CI, obs
 
 ## 🔴 Blockers (must fix before real users / real data)
 
-1. **Server-side auth.** The login is UI-only — `NexusRepApp` conditionally renders the login screen
-   and *fails open* on error (`NexusRepApp.tsx`). Brand API routes call `getContainer()` with no
-   authorization, so `curl /api/sessions|/api/studio|/api/analytics` returns/mutates brand data
-   unauthenticated. Add a `middleware.ts` / shared `requireUser()` that rejects server-side.
-2. **Require `NEXUSREP_SESSION_SECRET`** (fail boot if unset in prod) and set it in `render.yaml`. The
-   cookie HMAC secret defaults to a hardcoded string (`env.ts`), so every user's cookie is forgeable.
-3. **Gate `/api/activity`** — currently an unauthenticated cross-user read of everyone's actions
-   (`activity/route.ts`). Behind an admin role.
-4. **Real persistence.** On the current deploy `NEXUSREP_DATA_DRIVER=memory` → sessions, audit, rules,
-   launch state, follow-ups, CRM outbox, activity log all reset on restart. The advertised
+_Progress (2026-07-18): blockers 1, 2, 3, 5 are DONE + verified live; 6 skipped by request; 4 (real
+persistence) is the one remaining blocker._
+
+1. ✅ **DONE — Server-side auth.** `requireBrandUser()` (`lib/require-auth.ts`) gates every brand-console
+   route (studio/sessions/analytics/mlr/followups/integrations/content-*/audience/train-preview/
+   activity/presentation-plan/models/arena-stream/setup-chat) — 401 unauthenticated. Uses a shared guard
+   (not `middleware.ts`) so the doctor/Tavus/realtime/conversation/recording paths stay open by design.
+   Verified live: brand routes 401, open routes 200.
+2. ✅ **DONE — `NEXUSREP_SESSION_SECRET` required.** In prod + auth-on, if the secret is the built-in
+   default (public/forgeable) the brand API returns **503** and boot logs a loud `[auth] SECURITY …`
+   warning (`require-auth.ts`, `instrumentation.ts`, `env.sessionSecretIsDefault`). `render.yaml` sets
+   `NEXUSREP_AUTH=1` + declares `NEXUSREP_SESSION_SECRET` (sync:false — **set it in the Render dashboard**).
+3. ✅ **DONE — `/api/activity` gated.** Now a gated brand route (401 unauthenticated). The write-only
+   client beacon `/api/activity/ingest` stays open by design.
+4. ⏳ **REMAINING — Real persistence.** On the current deploy `NEXUSREP_DATA_DRIVER=memory` → sessions,
+   audit, rules, launch state, follow-ups, CRM outbox, activity log all reset on restart. The advertised
    `DATABASE_URL` → managed-Postgres path is **unbuilt** (`env.databaseUrl` is parsed but unused; the
-   "postgres" driver is PGlite-only, which needs ~600 MB / a disk the Starter instance lacks). Build a
-   `pg`+pgvector adapter (preferred) or provision a ≥2 GB instance + disk; add migrations.
-5. **CI.** No `.github/` at all — nothing runs typecheck/lint/vitest/playwright on PR. Add a workflow.
-6. **Real user store + password hashing + roles** to replace the in-source demo directory
-   (`auth-session.ts`, plaintext passwords, no bcrypt, `UserData` is a seed profile not a role). Gate
-   Platform Admin + the Activity monitor on role.
+   "postgres" driver is PGlite-only, which needs ~600 MB / a disk the Starter instance lacks). Two paths:
+   **(a)** build a `pg` (node-postgres) adapter selected on `DATABASE_URL` — the scalable answer, but
+   needs a provisioned Postgres to develop + validate against (don't ship untested DB code); or **(b)**
+   the existing PGlite-on-disk path (`NEXUSREP_DATA_DRIVER=postgres` + `PGLITE_DATA_DIR` + a disk on a
+   ≥2 GB instance) — durable but single-instance. Add migrations either way.
+5. ✅ **DONE — CI.** `.github/workflows/ci.yml`: `checks` (typecheck + lint + vitest + build) and `e2e`
+   (playwright chromium), Node 22.12.0, `NEXUSREP_EMBEDDINGS=lexical` so runners need no model download.
+6. ⏭️ **SKIPPED (by request)** — real user store + password hashing + roles. The in-source demo directory
+   (`auth-session.ts`) stays for now; Platform Admin + Activity gate on being a signed-in user, not a role.
 
 ## 🟠 Important
 

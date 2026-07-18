@@ -26,8 +26,9 @@ services:
     healthCheckPath: /api/brand
     # NOTE: embedded Postgres (PGlite) needs ~600MB — it does NOT fit the Starter 512MB
     # instance (measured). So Starter uses the in-memory driver below (no disk needed).
-    # For durable state, either (a) bump to a >=2GB instance and switch the driver to
-    # "postgres" + attach this disk, or (b) point DATABASE_URL at a hosted Postgres.
+    # For durable state today: bump to a >=2GB instance, set NEXUSREP_DATA_DRIVER=postgres +
+    # PGLITE_DATA_DIR=/var/data/nexusrep, and attach this disk (single-instance).
+    # (DATABASE_URL → managed-Postgres is NOT wired yet — see docs/PRODUCTIONIZATION.md blocker 4.)
     # disk:
     #   name: nexusrep-data
     #   mountPath: /var/data
