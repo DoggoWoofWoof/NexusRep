@@ -124,3 +124,36 @@ describe("activeSteering — only ACTIVE coaching steers; style guidance reaches
     expect(s.leadTopics.join(" ")).toContain("program");
   });
 });
+
+describe("'you didn't mention X' surfaces X via ordering, not a weak style nudge", () => {
+  const active = <T extends { status: string }>(r: T) => ({ ...r, status: "active" as const });
+
+  // These natural phrasings used to fall through to persona_style (advisory, LLM-only, no retrieval
+  // bias). Now they classify as ordering with a topic → a leadTopic that biases retrieval toward X.
+  const surface = [
+    "You didn't mention the ISI.",
+    "Make sure to cover the dosing schedule.",
+    "Forgot to bring up the trial data.",
+    "Should have highlighted the mechanism.",
+    "Be sure to include the safety information.",
+  ];
+  for (const fb of surface) {
+    it(`routes "${fb}" to topic-ordering with an extracted topic`, () => {
+      const r = generateRule({ feedback: fb, seed: fb });
+      expect(r.type).toBe("conversation_ordering");
+      expect(r.topic && r.topic.length).toBeTruthy(); // a concrete topic → becomes a leadTopic
+    });
+  }
+
+  it("once active, actually biases retrieval (a clean leadTopic, no 'you' noise)", () => {
+    const r = active(generateRule({ feedback: "You didn't mention warfarin interactions.", seed: "m1" }));
+    const s = activeSteering([r]);
+    expect(s.leadTopics.join(" ")).toContain("warfarin");
+    expect(s.leadTopics.join(" ")).not.toContain("you"); // pronoun stripped from the topic
+  });
+
+  it("does NOT collide with the opposite intent: 'don't mention X' stays blocked", () => {
+    const r = generateRule({ feedback: "Don't mention warfarin.", seed: "m2" });
+    expect(r.type).toBe("blocked_topic");
+  });
+});

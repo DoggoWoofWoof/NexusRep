@@ -188,6 +188,15 @@ function inferType(
     // Capture WHAT to block so the rule is enforceable at runtime (not just advisory).
     return { type: "blocked_topic", defaultScope: "campaign", topic: input.topic ?? extractTopic(fb, blockedTrigger) };
   }
+  // "You didn't mention X" / "make sure to cover X" / "forgot to bring up X" — a request to SURFACE
+  // more of X. It is the OPPOSITE of blocked ("don't mention", handled above and wins) and otherwise
+  // reads as persona_style — a weak advisory nudge that can't fetch X. Treat it as ordering so the
+  // topic becomes a leadTopic that biases (semantic, ingested-content) retrieval toward X. Fully
+  // dynamic: X is pulled from the coaching text and matched against retrieval, never a hardcoded list.
+  const emphasisTrigger = /did(?:n'?t| not) (?:mention|cover|bring up|include|discuss|talk about|highlight|raise|address)|forgot to (?:mention|cover|bring up|include|raise|address)|make sure (?:to|you) (?:mention|cover|bring up|include|highlight|raise|address)|should have (?:mentioned|covered|brought up|included|highlighted|raised|led|addressed)|be sure to (?:mention|cover|include|raise|address)|needs? to (?:mention|cover|include|highlight|raise|address)|remember to (?:mention|cover|include|raise)/;
+  if (emphasisTrigger.test(fb)) {
+    return { type: "conversation_ordering", defaultScope: "campaign", topic: input.topic ?? extractTopic(fb, emphasisTrigger) };
+  }
   const orderTrigger = /lead with|start with|open with|prioriti(?:ze|se)|earlier|first|before|order/;
   if (orderTrigger.test(fb)) {
     return { type: "conversation_ordering", defaultScope: "campaign", topic: input.topic ?? extractTopic(fb, /lead with|start with|open with|prioriti(?:ze|se)/) };
@@ -210,7 +219,7 @@ function extractTopic(fb: string, trigger: RegExp): string | undefined {
     .toLowerCase()
     .replace(trigger, " ")
     .replace(/[.?!,]/g, " ")
-    .replace(/\b(the|a|an|any|all|at all|about|our|your|please|when|asks?|for|with|it|this|that|topic|unless|approved|response|exists?|to|of|and|or|in|on|doctors?|hcps?)\b/g, " ")
+    .replace(/\b(the|a|an|any|all|at all|about|our|your|you|we|they|please|when|asks?|for|with|it|this|that|topic|unless|approved|response|exists?|to|of|and|or|in|on|doctors?|hcps?)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return s || undefined;
