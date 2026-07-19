@@ -7,31 +7,36 @@
 #      by default and the app still runs.
 #   2. NEXUSREP_PUBLIC_URL must be the service's own public URL — Tavus calls
 #      back into /api/tavus/llm through it for the compliance-gated replies.
-#   3. Storage: the free tier's disk is EPHEMERAL — a deploy/restart wipes
-#      .nexusrep-data. Attach a paid persistent disk (below, commented) and set
-#      PGLITE_DATA_DIR to the mount path to keep sessions/uploads durable, or
-#      run NEXUSREP_DATA_DRIVER=memory and treat every boot as a fresh demo.
+#   3. Persistence: set the DATABASE_URL secret to a managed Postgres (Neon / Supabase / Render PG).
+#      All canonical state (sessions, follow-ups, content, audit) AND the usage + activity ledgers then
+#      survive restarts. Without it, the app runs on in-memory data that re-seeds on every boot.
 
 services:
   - type: web
     name: nexusrep
     runtime: node
-    plan: starter # bump if the embedded model (Transformers.js) needs more memory
-    # MUST stay a single instance: the app keeps per-process state (embedded PGlite store,
-    # the active Tavus call slot, per-session write serialization). Scaling out would split
-    # sessions across processes. Multi-instance needs a managed Postgres + shared call registry.
+    # 2 GB (standard) gives headroom for the neural embedding model's boot-time load (MiniLM via
+    # Transformers.js). Now that DATABASE_URL/Neon has replaced the ~600 MB embedded PGlite, steady-state
+    # is only ~256 MB — so "starter" (512 MB) is worth a try and halves the cost. To test it: switch the
+    # plan in the dashboard, redeploy, and watch /api/health + the memory graph for ~2 min; if the model
+    # OOM-crash-loops at boot (health never 200), revert to standard. Keep neural (embeddings=auto) either way.
+    plan: standard
+    # MUST stay a single instance: the app keeps per-process state — the active Tavus call slot,
+    # per-session write serialization, and the in-memory usage/activity ledgers (snapshotted to Postgres,
+    # but served from memory). Canonical data is already in Postgres; scaling out still needs a shared
+    # call registry + a shared rate-limit store first.
     numInstances: 1
     buildCommand: npm ci && npm run build
     startCommand: npm run start
-    healthCheckPath: /api/brand
-    # PERSISTENCE (pick one; without one, state re-seeds on every restart):
-    #  (A) RECOMMENDED — managed Postgres: set the DATABASE_URL secret below to a hosted Postgres
-    #      (Render Postgres / Neon / Supabase). Works on the 512MB Starter (no 600MB PGlite WASM),
-    #      survives restarts, and is the only option that survives scaling past one instance. Schema
-    #      is auto-created (CREATE TABLE IF NOT EXISTS) on first use.
-    #  (B) embedded PGlite on a disk: PGlite needs ~600MB so it does NOT fit Starter (measured) —
-    #      bump to a >=2GB instance, set NEXUSREP_DATA_DRIVER=postgres + PGLITE_DATA_DIR=/var/data/nexusrep,
-    #      and uncomment the disk below (single-instance only).
+    # /api/health reports "up + DB connected" and does NOT depend on auth (unlike /api/brand, which can
+    # 503 until the session secret is set), so it's a truer liveness signal.
+    healthCheckPath: /api/health
+    # PERSISTENCE: this deploy uses managed Postgres — the DATABASE_URL secret below points at Neon, so
+    # all canonical state + the usage/activity ledgers survive restarts, the schema auto-creates
+    # (CREATE TABLE IF NOT EXISTS), and there is no on-disk WASM footprint. Embedded PGlite on a
+    # persistent disk is only the fallback if you ever unset DATABASE_URL: it needs ~600 MB (a >=2 GB
+    # instance) + NEXUSREP_DATA_DRIVER=postgres + PGLITE_DATA_DIR=/var/data/nexusrep + the disk below.
+    # With Neon set, none of that applies.
     # disk:
     #   name: nexusrep-data
     #   mountPath: /var/data
@@ -39,15 +44,15 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 22.12.0
-      # In-memory store — fits the 512MB Starter instance (PGlite needs ~600MB). State
-      # re-seeds on every restart. On a >=2GB instance, set this to "postgres", add
-      # PGLITE_DATA_DIR=/var/data/nexusrep, and uncomment the disk above for persistence.
+      # IGNORED while DATABASE_URL is set — managed Postgres (Neon) takes precedence over this driver.
+      # It only applies as the fallback if DATABASE_URL is ever blanked: "memory" (re-seeds each boot) or
+      # "postgres" (embedded PGlite, which needs the disk above + a >=2 GB instance).
       - key: NEXUSREP_DATA_DRIVER
         value: memory
-      # "auto" = neural semantic embeddings (Transformers.js / MiniLM), falling back to lexical only
-      # if the model can't load. Needs a >=2GB instance (the model OOMs a 512MB Starter at boot) AND
-      # an HF_TOKEN secret (HF 403s anonymous downloads from Render). On a 512MB Starter set this to
-      # "lexical" instead — same validation + compliance gate, just keyword ranking.
+      # "auto" = neural semantic embeddings (Transformers.js / MiniLM) — keep this. Needs an HF_TOKEN
+      # secret (HF 403s anonymous datacenter downloads) and enough RAM for the boot-time model load. With
+      # PGlite gone (Neon), steady-state is small (~256 MB), so it fits comfortably on 2 GB and is worth
+      # testing on 512 MB. It auto-falls back to lexical ONLY if the model genuinely can't load.
       - key: NEXUSREP_EMBEDDINGS
         value: auto
       # Flip to "tavus" once TAVUS_* secrets are set to enable the live video rep.
@@ -70,12 +75,12 @@ services:
       # only generates once (stable across deploys). To rotate: delete it in the dashboard + redeploy.
       - key: NEXUSREP_SESSION_SECRET
         generateValue: true
-      - key: DATABASE_URL # managed Postgres (persistence path A above). When set, ALL canonical state
-        sync: false #        persists here instead of the in-memory/PGlite driver. SSL is auto-enabled
-        #                    for non-localhost hosts. Leave blank to keep the NEXUSREP_DATA_DRIVER above.
+      - key: DATABASE_URL # managed Postgres (Neon) — SET. ALL canonical state + the usage/activity
+        sync: false #        ledgers persist here and survive restarts. SSL auto-enabled for non-local
+        #                    hosts. Point this at your PROD (main) branch; use a separate dev branch locally.
       - key: ANTHROPIC_API_KEY # grounded answer composition + classifier (optional)
         sync: false
-      - key: OPENAI_API_KEY # alternate composer/classifier (optional)
+      - key: OPENAI_API_KEY # alternate composer/classifier + off-video TTS (optional)
         sync: false
       # Real CRM handoff: set NEXUSREP_CRM_ADAPTER=veeva|salesforce (in the value block above) AND this
       # intake URL to POST follow-up events to a real CRM; a scheduled worker retries failures.
@@ -87,8 +92,8 @@ services:
         sync: false
       - key: TAVUS_LLM_KEY # bearer Tavus uses to call back into /api/tavus/llm
         sync: false
-      - key: HF_TOKEN # read-only Hugging Face token — only needed if you flip NEXUSREP_EMBEDDINGS
-        sync: false # to "auto" on a >=2GB instance (HF 403s anonymous downloads from Render)
+      - key: HF_TOKEN # read-only Hugging Face token — REQUIRED for neural (NEXUSREP_EMBEDDINGS=auto) on
+        sync: false #   Render (HF 403s anonymous datacenter downloads). Without it, retrieval falls to lexical.
       - key: NEXUSREP_PUBLIC_URL # https://<this-service>.onrender.com
         sync: false
       - key: DOCNEXUS_ADVANCED_SEARCH_URL # live HCP cohort (optional — modeled without it)
