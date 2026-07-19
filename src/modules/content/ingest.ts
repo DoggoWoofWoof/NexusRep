@@ -28,6 +28,8 @@ import type {
   MlrMetadata,
   SafetyStatement,
 } from "./types";
+import { deriveLexicon, scoreLexiconCoverage, type Lexicon } from "./lexicon";
+import { logger } from "@lib/logger";
 import { isPptx, parsePptx } from "./parsers/pptx";
 import { isPdf, parsePdf } from "./parsers/pdf";
 
@@ -47,6 +49,9 @@ export interface IngestResult {
   answers: ApprovedAnswer[];
   slides: DetailAidSlide[];
   safety: SafetyStatement[];
+  /** Vocabulary LEARNED from this source's blocks (productTerms + per-topic synonyms). Union it with
+   *  the brand's hand-authored lexicon for runtime; benchmark against that reference to tune it. */
+  derivedLexicon: Lexicon;
 }
 
 // GENERIC clinical topic terms only. Brand vocabulary (trial names, target pathway…)
@@ -162,7 +167,7 @@ export function parseBlocks(text: string): string[] {
  * deterministic for tests/seeding. ISI sources become verbatim SafetyStatements;
  * all other kinds become ApprovedAnswers with a detail-aid slide each.
  */
-export function ingestSource(raw: RawSource, idPrefix: string, opts?: { topicHints?: TopicHints }): IngestResult {
+export function ingestSource(raw: RawSource, idPrefix: string, opts?: { topicHints?: TopicHints; referenceLexicon?: Lexicon }): IngestResult {
   const assetId = asId<"content_asset_id">(`${idPrefix}_asset`) as ContentAssetId;
   const asset: ContentAsset = {
     id: assetId,
@@ -221,5 +226,17 @@ export function ingestSource(raw: RawSource, idPrefix: string, opts?: { topicHin
     });
   });
 
-  return { asset, answers, slides, safety };
+  // Learn this brand's vocabulary FROM the ingested blocks (dynamic, no hardcoded terms here). When the
+  // caller passes the hand-authored lexicon, log how much of it the derivation recovered — the benchmark
+  // that says how close "learned at ingest" is to needing no authoring. The hand-authored set stays a
+  // floor (union it via mergeLexicon downstream); this never replaces it.
+  const derivedLexicon = deriveLexicon(answers.map((a) => ({ topic: a.topic, text: a.text })));
+  if (opts?.referenceLexicon && answers.length) {
+    const cov = scoreLexiconCoverage(derivedLexicon, opts.referenceLexicon);
+    logger.child("lexicon").info(
+      `learned from ${answers.length} block(s): recovered ${Math.round(cov.productTermRecall * 100)}% of hand-authored product terms, ${Math.round(cov.topicSynonymRecall * 100)}% of topic synonyms`,
+      { found: cov.productTermsFound, missed: cov.productTermsMissed, extraCandidates: cov.productTermsExtra.slice(0, 10) },
+    );
+  }
+  return { asset, answers, slides, safety, derivedLexicon };
 }
