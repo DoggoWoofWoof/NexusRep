@@ -3,12 +3,13 @@
 Status of a full read-only audit (2026-07-18). **Bottom line:** the hard part is done — the
 compliance engine is genuinely production-grade (fail-safe, single-choke-point final gate on every
 turn, ~490 tests incl. red-team) and the vendor-adapter seams are real and swappable. What's left is
-conventional web-app hardening around it. **Update (2026-07-18): blockers 1–5 are DONE** (server-side
-auth, the session-secret gate, `/api/activity` gating, managed-Postgres persistence, CI), **plus 🟠
-Important items 7–10** (PII redaction at the vendor boundary, a real HTTP CRM adapter + scheduled outbox
-flush, structured logging + error capture, rate limiting) **and the roles half of blocker 6**. Remaining:
-Important **11** (Tavus webhook auth), **12** (LLM timeouts on the ingest path), **13** (auth E2E), the
-real user store + password hashing (rest of #6), and the 🟢 Nice-to-haves.
+conventional web-app hardening around it. **Update (2026-07-18): blockers 1–5 and the ENTIRE 🟠 Important
+tier (7–13) are DONE**, plus the roles half of blocker 6. That covers server-side auth, the
+session-secret gate, `/api/activity` gating, managed-Postgres persistence, CI, PII redaction, a real CRM
+adapter + scheduled flush, structured logging + error capture, rate limiting (built; shipped OFF pending
+session-keying), Tavus webhook auth, LLM timeouts, and auth/multi-tenancy E2E. **Remaining: only the
+deferred-by-request real user store + password hashing (rest of #6) and the 🟢 Nice-to-haves** (dead env
+switches, security headers, `/api/healthz`, durable activity log, greeting-gate defense-in-depth).
 
 ## 🔴 Blockers (must fix before real users / real data)
 
@@ -49,8 +50,10 @@ hashing still deferred)._
 
 ## 🟠 Important
 
-_Progress (2026-07-18): items 7, 8, 9, 10 DONE. Remaining: 11 (Tavus webhook auth), 12 (LLM timeouts on
-the ingest path), 13 (auth E2E)._
+_Progress (2026-07-18): items 7–13 DONE. The entire 🟠 Important tier is complete. Rate limiting (10) is
+built + tested but shipped OFF by default (`NEXUSREP_RATELIMIT=1` to enable) until the doctor endpoints
+are keyed by session rather than IP — HCPs share IPs (hospital NAT). Remaining work is only the
+deferred-by-request user store + password hashing (rest of blocker 6) and the 🟢 Nice-to-haves._
 
 7. ✅ **DONE — PII redaction.** `lib/pii-redact.ts` scrubs identifiers (email/phone/SSN/MRN/DOB/member
    IDs/titled names) at the 4 vendor request builders (Claude+OpenAI classifier + composer); keyword
@@ -66,12 +69,17 @@ the ingest path), 13 (auth E2E)._
    not previews) — the vendor rule is enforced by #7, not by redacting our logs.
 10. ✅ **DONE — Rate limiting.** `lib/rate-limit.ts` token-bucket on the public doctor endpoints +
     `voice/speak` (IP-keyed) and the Tavus callback (session-keyed high ceiling). `NEXUSREP_RATELIMIT`.
-11. **Tavus webhook auth** fails open when the key is unset and passes the key as `?k=` in the URL
-    (lands in logs) — require it + move to a header (`tavus/webhook/route.ts`).
-12. **Timeouts on `llmComplete`/`llmText`** (composer) — called on the `content/ingest` request path
-    with no abort, so a hung LLM call hangs the upload.
-13. **Auth/multi-tenancy E2E** — Playwright currently runs with `NEXUSREP_AUTH=0`, so the auth path has
-    zero end-to-end coverage.
+11. ✅ **DONE — Tavus webhook auth.** Fails CLOSED (no key → 401); the callback URL now carries a
+    per-owner HMAC signature (`lib/tavus-webhook-auth`) instead of the master key, so the secret never
+    lands in access logs; a raw key via header is also accepted. Constant-time compare.
+12. ✅ **DONE — LLM helper timeouts.** `llmText`/`llmComplete` (setup inference, rule compaction on the
+    `content/ingest` path) now pass `AbortSignal.timeout(env.llmHelperTimeoutMs)` and degrade to null on
+    timeout/error instead of hanging the upload.
+13. ✅ **DONE — Auth/multi-tenancy E2E.** A second Playwright server (auth ON + a real session secret) +
+    an `auth` project (`e2e/auth.spec.ts`): unauthenticated → login/401 + doctor link ungated, member →
+    403 on the admin surfaces + nav hidden, admin → 200 + nav visible, bad-creds → 401, and per-user
+    isolation (demo user has seeded sessions, clean user is empty). Also pinned `DATABASE_URL=""` in the
+    E2E env so the suite is deterministic regardless of a local `.env.local`.
 
 ## 🟢 Nice-to-have
 

@@ -10,7 +10,25 @@
 
 ## 1. Current build status
 
-### Latest: Real CRM adapter + scheduled outbox flush (2026-07-18)
+### Latest: Final Important-tier hardening — webhook auth, LLM timeouts, auth E2E (2026-07-18)
+
+The last three 🟠 Important items (11–13), completing the tier.
+- **11 — Tavus webhook auth** (`lib/tavus-webhook-auth.ts`): fails CLOSED (no key → 401, was: skipped →
+  open); the callback URL now carries a per-owner HMAC signature instead of the master `TAVUS_LLM_KEY`
+  (so the secret never lands in access logs; a leaked sig only forges callbacks for that one owner), with
+  a header path for proxies. Constant-time compare; webhook logs via the structured logger.
+- **12 — LLM helper timeouts** (`composer.llmText`): the non-grounded helpers (setup inference, rule
+  compaction) run on request paths (`content/ingest`) and had NO abort — a hung provider hung the upload.
+  Now `AbortSignal.timeout(env.llmHelperTimeoutMs)` (default 30s) + try/catch → null, so ingest degrades.
+- **13 — Auth/multi-tenancy E2E**: a SECOND Playwright server (auth ON + a real `NEXUSREP_SESSION_SECRET`
+  so the brand API 401s not 503s under `next start`/production) + an `auth` project (`e2e/auth.spec.ts`,
+  5 tests): unauthenticated gating, member 403 on the admin surfaces + hidden nav, admin 200 + visible
+  nav, bad-creds 401, per-user isolation. Verified locally — 5/5 pass. Also pinned `DATABASE_URL=""` in
+  the E2E env so the suite (both servers) is deterministic regardless of a local `.env.local` (a broken
+  local Postgres URL was making the E2E routes 500 with ECONNREFUSED).
+- **Verified:** typecheck 0, lint 0, 534 unit tests + the 5-test auth E2E project, build green.
+
+### Real CRM adapter + scheduled outbox flush (2026-07-18)
 
 🟠 Important item. CRM handoff was always the MockCrmAdapter, and the outbox retry `flush()` was never
 scheduled — so with a real CRM a failed delivery would never retry.
