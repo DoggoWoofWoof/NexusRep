@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { env } from "@lib/env";
 import { POST as tavusWebhook } from "@/app/api/tavus/webhook/route";
 import { getContainerForUser } from "@lib/container";
+import { tavusWebhookToken } from "@lib/tavus-webhook-auth";
 
 const recordingReady = (convId: string, url: string) =>
   JSON.stringify({ event_type: "recording_ready", conversation_id: convId, properties: { recording_url: url } });
@@ -24,7 +25,7 @@ describe("Tavus recording webhook attaches the video to the OWNER's session", ()
     const s = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
     await c.sessions.setVendorConversation(s.id, "conv_wh_a");
 
-    const res = await tavusWebhook(new Request(`http://localhost/api/tavus/webhook?k=test-llm-key&u=${user}`, {
+    const res = await tavusWebhook(new Request(`http://localhost/api/tavus/webhook?k=${tavusWebhookToken(user)}&u=${user}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: recordingReady("conv_wh_a", "https://cdn.example/rec_a.mp4"),
@@ -42,7 +43,8 @@ describe("Tavus recording webhook attaches the video to the OWNER's session", ()
     await c.sessions.setVendorConversation(s.id, "conv_wh_b");
 
     // No &u= → the webhook falls back to the default container, which doesn't hold this session.
-    const res = await tavusWebhook(new Request(`http://localhost/api/tavus/webhook?k=test-llm-key`, {
+    // (Signature is over the empty owner, matching a public-link callback.)
+    const res = await tavusWebhook(new Request(`http://localhost/api/tavus/webhook?k=${tavusWebhookToken("")}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: recordingReady("conv_wh_b", "https://cdn.example/rec_b.mp4"),

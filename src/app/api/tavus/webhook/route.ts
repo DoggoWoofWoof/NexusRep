@@ -6,9 +6,12 @@
  */
 
 import { NextResponse } from "next/server";
-import { env } from "@lib/env";
 import { getContainer, getContainerForUser } from "@lib/container";
 import { logServerActivity } from "@lib/activity-log";
+import { verifyTavusWebhook } from "@lib/tavus-webhook-auth";
+import { logger } from "@lib/logger";
+
+const log = logger.child("tavus-webhook");
 
 export const dynamic = "force-dynamic";
 
@@ -41,13 +44,13 @@ function recordingUrl(body: TavusCallback): string | null {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
-  // When the shared key is configured, callbacks must carry it (we register the
-  // callback URL ourselves with ?k=<key> at conversation start). Without the check,
-  // anyone who learned a conversation id could attach an arbitrary recording URL.
+  // Fail CLOSED: no key configured → refuse (was: skip the check → accept anyone). Auth is a per-owner
+  // signature in ?k= (or the raw key via header) — never the master key in the URL. See
+  // lib/tavus-webhook-auth. Without this, anyone who learned a conversation id could attach an
+  // arbitrary recording URL to a session.
+  const auth = verifyTavusWebhook(req);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const params = new URL(req.url).searchParams;
-  if (env.tavusLlmKey) {
-    if (params.get("k") !== env.tavusLlmKey) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
   // The container OWNER the conversation-start encoded on the callback URL. The recording lives in
   // that user's per-user store; loading the default container here would never find the session.
   const owner = params.get("u");
@@ -55,7 +58,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   const event = String(body.event_type ?? body.message_type ?? "");
   const convId = body.conversation_id ?? (body.properties?.conversation_id as string | undefined);
 
-  console.log("[tavus webhook]", event, convId ?? "(no conversation_id)");
+  log.info("event", { event, conversationId: convId ?? null, owner: owner ?? null });
   // Feed the video lifecycle (replica_joined / pal_joined / shutdown / transcription_ready /
   // recording_ready) into the activity monitor so the operator sees the live call unfold.
   void logServerActivity({
@@ -77,12 +80,12 @@ export async function POST(req: Request): Promise<NextResponse> {
       if (!attached) {
         // Session lookup failed (e.g. store reset since the call) — say so instead of
         // claiming success. 200 keeps Tavus from retry-storming; the status is honest.
-        console.error("[tavus webhook] recording_ready for unknown conversation:", convId);
+        log.error("recording_ready for unknown conversation", { conversationId: convId });
         return NextResponse.json({ ok: false, attached: false, error: "no matching session for conversation_id" });
       }
       return NextResponse.json({ ok: true, attached: true, sessionId: attached.id });
     }
-    console.error("[tavus webhook] recording_ready without a recognizable recording URL");
+    log.error("recording_ready without a recognizable recording URL", { conversationId: convId });
     return NextResponse.json({ ok: false, attached: false, error: "no recording url in payload" });
   }
   return NextResponse.json({ ok: true });

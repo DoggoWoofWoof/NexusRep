@@ -9,6 +9,7 @@
 
 import { NextResponse } from "next/server";
 import { limited } from "@lib/rate-limit";
+import { tavusWebhookToken } from "@lib/tavus-webhook-auth";
 import { asId } from "@lib/ids";
 import { getContainerForUser, currentUserId } from "@lib/container";
 import { env } from "@lib/env";
@@ -182,8 +183,11 @@ async function startConversation(body: { hcpId?: unknown }, ownerUserId: string 
   // in the default container, never finds the session, and the recording is silently dropped (the
   // "everything recorded except the video" bug). Owner is the internal username, gated by the key.
   const cbParams = new URLSearchParams();
-  if (env.tavusLlmKey) cbParams.set("k", env.tavusLlmKey);
+  // Sign the callback with a per-owner HMAC signature, NOT the raw TAVUS_LLM_KEY — so the master key
+  // never lands in access/proxy logs (see lib/tavus-webhook-auth). `u` must be set before signing so
+  // the webhook recomputes the same signature.
   if (ownerUserId) cbParams.set("u", ownerUserId);
+  if (env.tavusLlmKey) cbParams.set("k", tavusWebhookToken(ownerUserId ?? ""));
   const startArgs = {
       record: true,
       callbackUrl: `${env.publicBaseUrl}/api/tavus/webhook${cbParams.toString() ? `?${cbParams.toString()}` : ""}`,
