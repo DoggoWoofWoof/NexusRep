@@ -19,6 +19,70 @@ const COMP_LABEL: Record<string, string> = { approved: "Approved", needs_review:
 const TRACE = ["Input (text / ASR)", "Intent + risk classifier", "Policy router", "Approved retrieval + source validation", "Response builder / grounding", "Final compliance gate", "Output + audit + follow-up"];
 const REVIEW_SLIDE_CUE_DELAY_SEC = 1.1;
 
+type UsageRollup = { vendor: string; operation: string; requests: number; inputTokens: number; outputTokens: number; chars: number; seconds: number; estCostUsd: number };
+type UsageResp = { summary: { totalCostUsd: number; rollups: UsageRollup[] } };
+const VENDOR_LABEL: Record<string, string> = { anthropic: "Claude", openai: "OpenAI", tavus: "Tavus", elevenlabs: "ElevenLabs", other: "Other" };
+const OP_LABEL: Record<string, string> = { classify: "Classifier", compose: "Answer LLM", setup: "Setup helper", tts: "Voice (TTS)", asr: "Transcription", video: "Video" };
+function fmtUsd(n: number): string {
+  if (!n) return "$0";
+  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}
+function usageCell(r: UsageRollup): string {
+  if (r.operation === "tts") return `${r.chars.toLocaleString()} chars`;
+  if (r.operation === "video") return `${(r.seconds / 60).toFixed(1)} min`;
+  if (r.inputTokens || r.outputTokens) return `${r.inputTokens.toLocaleString()} in · ${r.outputTokens.toLocaleString()} out`;
+  return "—";
+}
+
+/** Admin-only per-session vendor cost panel. Reads /api/usage?sessionId — token/char/minute counts
+ *  are exact (vendor-reported); the $ is a directional list-price estimate. */
+function SessionCost({ sessionId }: { sessionId: string }) {
+  const [data, setData] = useState<UsageResp | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setData(null);
+    setLoaded(false);
+    (async () => {
+      try {
+        const res = await fetch(`/api/usage?sessionId=${encodeURIComponent(sessionId)}`);
+        if (res.ok && alive) setData((await res.json()) as UsageResp);
+      } catch {
+        /* usage is best-effort; a failure just hides the panel */
+      } finally {
+        if (alive) setLoaded(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, [sessionId]);
+
+  if (!loaded) return null;
+  const rollups = data?.summary.rollups ?? [];
+  return (
+    <div style={{ ...card, padding: "13px 16px", marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+        <div style={eyebrow}>Vendor usage &amp; cost</div>
+        <strong style={{ font: "700 14px/1 var(--dn-font-sans)", color: "var(--dn-fg)", fontVariantNumeric: "tabular-nums" }}>{fmtUsd(data?.summary.totalCostUsd ?? 0)}</strong>
+      </div>
+      {rollups.length === 0 ? (
+        <div style={{ font: "400 11.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 6 }}>No paid vendor calls recorded — mock vendors, or answers served without an LLM/TTS key.</div>
+      ) : (
+        <div style={{ marginTop: 10 }}>
+          {rollups.map((r, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "5px 0", borderTop: i ? "1px solid var(--dn-border)" : "none", font: "400 11.5px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>
+              <span style={{ flex: "1.1 1 0", fontWeight: 600, color: "var(--dn-fg)" }}>{VENDOR_LABEL[r.vendor] ?? r.vendor}{r.requests > 1 ? ` ×${r.requests}` : ""}</span>
+              <span style={{ flex: "1 1 0" }}>{OP_LABEL[r.operation] ?? r.operation}</span>
+              <span style={{ flex: "1.7 1 0", fontVariantNumeric: "tabular-nums" }}>{usageCell(r)}</span>
+              <span style={{ minWidth: 66, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--dn-fg)", fontWeight: 600 }}>{fmtUsd(r.estCostUsd)}</span>
+            </div>
+          ))}
+          <div style={{ font: "400 10px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 8 }}>Counts are vendor-reported (exact); $ is a list-price estimate.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SessionDetail({ app }: { app: AppState }) {
   const [sel, setSel] = useState(0);
   const [detail, setDetail] = useState<SessionDetailData | null>(null);
@@ -216,6 +280,7 @@ export function SessionDetail({ app }: { app: AppState }) {
             </span>
           ))}
         </div>
+        {app.isAdmin && app.selectedSessionId && <SessionCost sessionId={app.selectedSessionId} />}
         {/* Symmetric 2×2 replay — four equal blocks: recorded rep · approved slide (top row),
             turn evidence · click-through transcript (bottom row). Slides + transcript follow the
             recording timeline; click any line to jump the video. */}
