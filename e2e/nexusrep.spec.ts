@@ -139,7 +139,9 @@ test.describe("Studio — Train / coach / rules (self-serve)", () => {
     await page.getByRole("button", { name: "Ask" }).click();
     await expect(page.getByText(/investigational|Factor XIa|LIBREXIA/i).first()).toBeVisible({ timeout: 15_000 });
     // Coach the answer → the rep tries again. The coaching note stays VISIBLE in the thread.
-    // (The asked exchange is the LAST one; the seeded greeting exchange is first.)
+    // (The asked exchange is the LAST one; the seeded greeting exchange is first.) The coach box is
+    // COLLAPSED by default (training rework) — click "Coach this line ✎" to reveal the textarea first.
+    await page.getByText(/Coach this line/i).last().click();
     await page.getByPlaceholder(/Coach this answer/i).last().fill("Don't mention warfarin.");
     await page.getByRole("button", { name: /Coach & re-answer/i }).last().click();
     await expect(page.getByText(/You coached/i).first()).toBeVisible({ timeout: 15_000 });
@@ -148,7 +150,8 @@ test.describe("Studio — Train / coach / rules (self-serve)", () => {
     // card lives in Pitch & Script / the Rules tab now — assert it landed in Rules.
     await page.getByRole("button", { name: /^Accept/i }).last().click();
     await page.getByText("Rules", { exact: true }).click();
-    await expect(page.getByText(/Do not raise/i).first()).toBeVisible({ timeout: 10_000 });
+    // The coached rule references the topic ("warfarin") however the compaction phrases it.
+    await expect(page.getByText(/warfarin|do not raise|don't mention/i).first()).toBeVisible({ timeout: 10_000 });
   });
 
   test("Training push-to-talk applies ASR correction before routing preview answers", async ({ page }) => {
