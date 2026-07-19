@@ -6,10 +6,11 @@ import { card, eyebrow, h1 } from "./ui";
 import { TRAIN_SEED_KEY } from "./data";
 import { SlideView } from "../_components/SlideView";
 import { mmss } from "@lib/format";
+import { endReasonText } from "@lib/tavus-events";
 import { type SessionRow } from "./Sessions";
 
 type SessionDetailData = {
-  session: { hcp: string; startedAt: string; durationSeconds: number; questionCount: number; complianceStatus: string; recordingUrl?: string | null; recordingDurationMs?: number | null; timelineSource?: "recorded" | null };
+  session: { hcp: string; startedAt: string; durationSeconds: number; questionCount: number; complianceStatus: string; recordingUrl?: string | null; recordingDurationMs?: number | null; timelineSource?: "recorded" | null; endReason?: string | null };
   turns: { speaker: "hcp" | "rep"; text: string; sourceIds: string[]; detailAidSlideId?: string | null; at?: string | null }[];
   audit: { seq: number; type: string; payload: Record<string, unknown> }[];
   hasTurnDetail: boolean;
@@ -112,6 +113,8 @@ export function SessionDetail({ app }: { app: AppState }) {
       { label: "Gated outputs", value: `${approved}/${gate.length || exchanges.length}`, color: "var(--dn-success)" },
       { label: "Sources cited", value: String(sourcesCited), color: "var(--dn-brand-base)" },
       { label: "Compliance", value: COMP_LABEL[s.complianceStatus] ?? s.complianceStatus, color: "var(--dn-fg)" },
+      // Why the call ended (a deliberate End vs a timeout/disconnect/max-duration) — only when recorded.
+      ...(s.endReason ? [{ label: "Ended", value: endReasonText(s.endReason), color: "var(--dn-fg-muted)" }] : []),
     ];
     // Align the timeline to session.startedAt. For recorded showcase sessions the local recorder
     // resequences startedAt to the MediaRecorder start, and each turn.at to the actual caption/audio

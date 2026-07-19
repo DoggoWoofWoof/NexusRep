@@ -43,6 +43,9 @@ export interface ConversationSession {
   /** Tavus conversation id backing this session (for recording callbacks). */
   /** The realtime vendor's conversation id for this call (whichever provider ran it). */
   vendorConversationId?: string;
+  /** WHY the call ended — a normalized reason so Session review + the admin activity feed can tell a
+   *  deliberate "End" from a timeout/disconnect/max-duration. First meaningful reason wins. */
+  endReason?: string;
   /** Playback recording URL once Tavus's recording_ready callback lands. */
   recordingUrl?: string;
   /** Length of the captured recording in ms (client MediaRecorder clock). Lets Session review detect
@@ -242,11 +245,27 @@ export class SessionService {
     return this.sessions.update(sessionId, { vendorConversationId });
   }
 
+  /** Find the session linked to a Tavus conversation id (reverse of setVendorConversation). */
+  async getByVendorConversation(vendorConversationId: string): Promise<ConversationSession | null> {
+    if (!vendorConversationId) return null;
+    const [match] = await this.sessions.list({ where: { vendorConversationId } });
+    return match ?? null;
+  }
+
   /** Attach a playback recording URL, keyed by the Tavus conversation id. */
   async attachRecording(vendorConversationId: string, recordingUrl: string): Promise<ConversationSession | null> {
-    const [match] = await this.sessions.list({ where: { vendorConversationId } });
+    const match = await this.getByVendorConversation(vendorConversationId);
     if (!match) return null;
     return this.sessions.update(match.id, { recordingUrl });
+  }
+
+  /** Record WHY the call ended, keyed by the Tavus conversation id. First meaningful reason wins — a
+   *  deliberate "End" recorded by the client shouldn't be overwritten by a later Tavus timeout sweep. */
+  async setEndReason(vendorConversationId: string, endReason: string): Promise<ConversationSession | null> {
+    const match = await this.getByVendorConversation(vendorConversationId);
+    if (!match) return null;
+    if (match.endReason) return match; // don't clobber an already-recorded reason
+    return this.sessions.update(match.id, { endReason });
   }
 
   /** Attach a playback recording URL directly by session id — used by the client-side capture

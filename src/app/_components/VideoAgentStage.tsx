@@ -270,7 +270,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
       void fetch("/api/realtime/conversation/end", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId: cid }),
+        body: JSON.stringify({ conversationId: cid, reason: "ended_by_doctor" }), // deliberate End click
         keepalive: true,
       });
     } catch { /* best-effort */ }
@@ -728,7 +728,7 @@ export const VideoAgentStage = forwardRef<VideoAgentStageHandle, VideoAgentStage
         void fetch("/api/realtime/conversation/end", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversationId }),
+          body: JSON.stringify({ conversationId, reason: "cleanup" }), // silent unmount/tab-close backstop
           keepalive: true,
         });
       } catch { /* best-effort */ }

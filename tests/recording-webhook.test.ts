@@ -11,6 +11,7 @@ import { env } from "@lib/env";
 import { POST as tavusWebhook } from "@/app/api/tavus/webhook/route";
 import { getContainerForUser } from "@lib/container";
 import { tavusWebhookToken } from "@lib/tavus-webhook-auth";
+import { clearActivity, queryActivity } from "@modules/activity";
 
 const recordingReady = (convId: string, url: string) =>
   JSON.stringify({ event_type: "recording_ready", conversation_id: convId, properties: { recording_url: url } });
@@ -51,6 +52,28 @@ describe("Tavus recording webhook attaches the video to the OWNER's session", ()
     }));
     expect(((await res.json()) as { attached?: boolean }).attached).toBe(false);
     expect((await c.sessions.get(s.id))?.recordingUrl).toBeUndefined();
+  });
+
+  it("a shutdown webhook records WHY the call ended on the session + a human activity line", async () => {
+    const user = "wh_shutdown_a";
+    const c = await getContainerForUser(user);
+    const s = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId: c.demo.hcpId });
+    await c.sessions.setVendorConversation(s.id, "conv_wh_shutdown");
+    clearActivity();
+
+    const res = await tavusWebhook(new Request(`http://localhost/api/tavus/webhook?k=${tavusWebhookToken(user)}&u=${user}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_type: "system.shutdown", conversation_id: "conv_wh_shutdown", properties: { shutdown_reason: "participant_left_timeout" } }),
+    }));
+    expect(res.status).toBe(200);
+    // The reason is stamped on the session (Session review can show it)…
+    expect((await c.sessions.get(s.id))?.endReason).toBe("participant_left_timeout");
+    // …and the admin Activity feed shows a HUMAN line linked to the session, not "Tavus system.shutdown".
+    const { events } = queryActivity({ sessionId: String(s.id) });
+    const shutdown = events.find((e) => e.action.startsWith("Video call ended"));
+    expect(shutdown?.action).toBe("Video call ended — the doctor left / disconnected");
+    expect(shutdown?.metadata?.reason).toBe("participant_left_timeout");
   });
 
   it("rejects a callback missing the shared key (401)", async () => {

@@ -50,6 +50,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       recordingUrl: session.recordingUrl ?? null,
       recordingDurationMs: session.recordingDurationMs ?? null,
       timelineSource: session.timelineSource ?? null,
+      endReason: session.endReason ?? null,
     },
     turns,
     audit: audit.map((a) => ({ seq: a.seq, type: a.type, payload: a.payload })),

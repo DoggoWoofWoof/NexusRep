@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { getContainer, getContainerForUser } from "@lib/container";
 import { logServerActivity } from "@lib/activity-log";
 import { verifyTavusWebhook } from "@lib/tavus-webhook-auth";
+import { describeTavusEvent, shutdownReasonText } from "@lib/tavus-events";
 import { logger } from "@lib/logger";
 
 const log = logger.child("tavus-webhook");
@@ -57,25 +58,34 @@ export async function POST(req: Request): Promise<NextResponse> {
   const body = (await req.json().catch(() => ({}))) as TavusCallback;
   const event = String(body.event_type ?? body.message_type ?? "");
   const convId = body.conversation_id ?? (body.properties?.conversation_id as string | undefined);
+  const desc = describeTavusEvent(event, body.properties ?? {});
 
-  log.info("event", { event, conversationId: convId ?? null, owner: owner ?? null });
-  // Feed the video lifecycle (replica_joined / pal_joined / shutdown / transcription_ready /
-  // recording_ready) into the activity monitor so the operator sees the live call unfold.
+  log.info("event", { event, conversationId: convId ?? null, owner: owner ?? null, ...(desc.reason ? { reason: desc.reason } : {}) });
+
+  // Resolve the SAME container that owns the call's session (per-user when auth is on) once — used to
+  // link the activity to Session review, stamp the end reason, and attach the recording.
+  const c = owner ? await getContainerForUser(owner) : await getContainer();
+  const session = convId ? await c.sessions.getByVendorConversation(convId) : null;
+
+  // On a shutdown, record WHY the call ended on the session (first meaningful reason wins, so a
+  // client-recorded deliberate "End" is never clobbered by a later Tavus timeout sweep).
+  if (desc.reason && convId) await c.sessions.setEndReason(convId, desc.reason);
+
+  // Feed the video lifecycle into the admin Activity monitor as a HUMAN line ("Video call ended — the
+  // doctor left / disconnected") with the reason + a link to the session, not "Tavus system.shutdown".
   void logServerActivity({
     user: owner ?? "system",
     category: "video",
-    action: `Tavus ${event || "event"}`,
+    action: desc.action,
     target: convId ?? undefined,
-    severity: /shutdown|error|fail/i.test(event) ? "notice" : "info",
-    metadata: { conversationId: convId, event },
+    sessionId: session?.id ? String(session.id) : undefined,
+    severity: desc.severity,
+    metadata: { conversationId: convId, event, ...(desc.reason ? { reason: desc.reason, reasonText: shutdownReasonText(desc.reason) } : {}) },
   });
 
   if (convId && /recording_ready|recording\.ready/i.test(event)) {
     const url = recordingUrl(body);
     if (url) {
-      // Reload the SAME container that owns the call's session (per-user when auth is on), so the
-      // recording attaches to the session the operator actually sees — not the default store.
-      const c = owner ? await getContainerForUser(owner) : await getContainer();
       const attached = await c.sessions.attachRecording(convId, url);
       if (!attached) {
         // Session lookup failed (e.g. store reset since the call) — say so instead of
