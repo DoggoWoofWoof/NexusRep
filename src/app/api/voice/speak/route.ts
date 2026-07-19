@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { limited } from "@lib/rate-limit";
 import { clampNum } from "@lib/env";
 import { getContainerForUser } from "@lib/container";
+import { DEFAULT_OWNER_KEY } from "@lib/active-call";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +78,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     void getContainerForUser(null)
       .then((c) => c.usage.record({
         sessionId: typeof body.sessionId === "string" ? body.sessionId : undefined,
+        owner: DEFAULT_OWNER_KEY,
         vendor: "openai",
         operation: "tts",
         model: process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts",

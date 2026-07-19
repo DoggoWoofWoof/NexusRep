@@ -29,6 +29,8 @@ export interface UsageEvent {
   at: string; // ISO
   /** The conversation this spend belongs to, when known (TTS/among others may lack one). */
   sessionId?: string;
+  /** The brand user / tenant whose container made the call — per-user cost attribution. */
+  owner?: string;
   vendor: UsageVendor;
   operation: UsageOperation;
   /** Concrete model/engine, e.g. "claude-haiku-4-5", "gpt-4o-mini", "tts-1", "tavus-cvi". */
@@ -138,8 +140,11 @@ export interface UsageRollup {
 export interface UsageSummary {
   events: number;
   totalCostUsd: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
   byVendor: Record<string, number>; // vendor -> est USD
   byOperation: Record<string, number>; // operation -> est USD
+  byUser: Record<string, number>; // owner -> est USD
   rollups: UsageRollup[]; // grouped detail, highest cost first
 }
 
@@ -150,12 +155,18 @@ function rollupKey(e: UsageEvent): string {
 function summarize(events: UsageEvent[]): UsageSummary {
   const byVendor: Record<string, number> = {};
   const byOperation: Record<string, number> = {};
+  const byUser: Record<string, number> = {};
   const groups = new Map<string, UsageRollup>();
   let totalCostUsd = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
   for (const e of events) {
     totalCostUsd += e.estCostUsd;
+    totalInputTokens += e.inputTokens ?? 0;
+    totalOutputTokens += e.outputTokens ?? 0;
     byVendor[e.vendor] = (byVendor[e.vendor] ?? 0) + e.estCostUsd;
     byOperation[e.operation] = (byOperation[e.operation] ?? 0) + e.estCostUsd;
+    byUser[e.owner ?? "unknown"] = (byUser[e.owner ?? "unknown"] ?? 0) + e.estCostUsd;
     const key = rollupKey(e);
     const g = groups.get(key) ?? { vendor: e.vendor, operation: e.operation, model: e.model, requests: 0, inputTokens: 0, outputTokens: 0, chars: 0, seconds: 0, estCostUsd: 0 };
     g.requests += 1;
@@ -167,7 +178,7 @@ function summarize(events: UsageEvent[]): UsageSummary {
     groups.set(key, g);
   }
   const rollups = [...groups.values()].sort((a, b) => b.estCostUsd - a.estCostUsd || b.requests - a.requests);
-  return { events: events.length, totalCostUsd, byVendor, byOperation, rollups };
+  return { events: events.length, totalCostUsd, totalInputTokens, totalOutputTokens, byVendor, byOperation, byUser, rollups };
 }
 
 const MAX_EVENTS = 5000; // bound memory; oldest fall off (live monitoring, not archival billing)
@@ -228,6 +239,47 @@ export class UsageLedger {
       .map(([sessionId, t]) => ({ sessionId, ...t }))
       .sort((a, b) => b.estCostUsd - a.estCostUsd)
       .slice(0, limit);
+  }
+
+  /** Per-user (owner) cost totals, highest first — the per-user attribution the admin view needs. */
+  perUser(limit = 100): { owner: string; events: number; estCostUsd: number }[] {
+    const totals = new Map<string, { events: number; estCostUsd: number }>();
+    for (const e of this.events) {
+      const owner = e.owner ?? "unknown";
+      const t = totals.get(owner) ?? { events: 0, estCostUsd: 0 };
+      t.events += 1;
+      t.estCostUsd += e.estCostUsd;
+      totals.set(owner, t);
+    }
+    return [...totals.entries()]
+      .map(([owner, t]) => ({ owner, ...t }))
+      .sort((a, b) => b.estCostUsd - a.estCostUsd)
+      .slice(0, limit);
+  }
+
+  /** Daily buckets (UTC), oldest first, each carrying a running cumulative cost — for the trend graph.
+   *  Optionally scoped to one owner so the dashboard can chart a single user. */
+  perDay(opts?: { owner?: string }): { date: string; events: number; estCostUsd: number; inputTokens: number; outputTokens: number; chars: number; seconds: number; cumulativeCostUsd: number }[] {
+    const src = opts?.owner ? this.events.filter((e) => (e.owner ?? "unknown") === opts.owner) : this.events;
+    const days = new Map<string, { events: number; estCostUsd: number; inputTokens: number; outputTokens: number; chars: number; seconds: number }>();
+    for (const e of src) {
+      const date = e.at.slice(0, 10); // YYYY-MM-DD from the ISO timestamp (UTC)
+      const d = days.get(date) ?? { events: 0, estCostUsd: 0, inputTokens: 0, outputTokens: 0, chars: 0, seconds: 0 };
+      d.events += 1;
+      d.estCostUsd += e.estCostUsd;
+      d.inputTokens += e.inputTokens ?? 0;
+      d.outputTokens += e.outputTokens ?? 0;
+      d.chars += e.chars ?? 0;
+      d.seconds += e.seconds ?? 0;
+      days.set(date, d);
+    }
+    let cumulativeCostUsd = 0;
+    return [...days.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([date, d]) => {
+        cumulativeCostUsd += d.estCostUsd;
+        return { date, ...d, cumulativeCostUsd };
+      });
   }
 
   /** Most-recent events (newest first) for a live feed. */

@@ -78,7 +78,7 @@ configureClassifierLexicon([...baseBrand.lexicon.productTerms, ...baseBrand.pers
 configureRetrievalLexicon(baseBrand.lexicon.topicSynonyms);
 
 /** Build a fully-wired, demo-seeded container. Synchronous wiring; async seeding. */
-export async function createContainer(opts?: { seedHistory?: boolean; seedContent?: boolean; seedStudio?: "full" | "draft"; repos?: RepositoryFactory; brand?: BrandProfile }): Promise<AppContainer> {
+export async function createContainer(opts?: { seedHistory?: boolean; seedContent?: boolean; seedStudio?: "full" | "draft"; repos?: RepositoryFactory; brand?: BrandProfile; owner?: string }): Promise<AppContainer> {
   // Brand + its derived ids/context — per container, so a "clean" account can build from a BLANK
   // profile instead of inheriting Milvexian's deck / cohort / persona.
   const brand = opts?.brand ?? baseBrand;
@@ -126,7 +126,7 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
   // its token usage (live turn, video turn, and the slide walkthrough all go through this one path).
   const usage = getUsageLedger();
   const rawComposer = defaultComposer();
-  const composer = rawComposer ? withUsageLedger(rawComposer, usage) : null;
+  const composer = rawComposer ? withUsageLedger(rawComposer, usage, opts?.owner ?? DEFAULT_OWNER_KEY) : null;
   const presentation = new PresentationSkill(content, composer);
   const retrieval = new RetrievalService(getRetrievalProvider(index), content);
   const audit = new AuditService(repos);
@@ -389,8 +389,8 @@ function perUserRepos(userId: string): RepositoryFactory {
 function optsForUser(userId: string | null): Parameters<typeof createContainer>[0] {
   if (!userId) return {};
   return userData(userId) === "demo"
-    ? { seedHistory: true, seedContent: true, seedStudio: "full", repos: perUserRepos(userId) }
-    : { seedHistory: false, seedContent: false, seedStudio: "draft", repos: perUserRepos(userId), brand: BLANK_PROFILE };
+    ? { seedHistory: true, seedContent: true, seedStudio: "full", repos: perUserRepos(userId), owner: userId }
+    : { seedHistory: false, seedContent: false, seedStudio: "draft", repos: perUserRepos(userId), brand: BLANK_PROFILE, owner: userId };
 }
 
 /** Per-user container cache. Key DEFAULT_OWNER_KEY is the shared (auth-off / doctor-link) container. */

@@ -8,6 +8,7 @@
 
 import type { AppState } from "./NexusRepApp";
 import { ActivityDashboard } from "./ActivityDashboard";
+import { UsageDashboard } from "./UsageDashboard";
 import { Audience } from "./Audience";
 import { Launch } from "./Launch";
 import { Sessions } from "./Sessions";
@@ -28,6 +29,7 @@ export function BrandScreens({ app }: { app: AppState }) {
     // so this is defense-in-depth + UX, not the security boundary).
     case "admin": return app.isAdmin ? <Admin /> : <NotAuthorized />;
     case "activity": return app.isAdmin ? <ActivityDashboard /> : <NotAuthorized />;
+    case "usage": return app.isAdmin ? <UsageDashboard /> : <NotAuthorized />;
     default: return null;
   }
 }

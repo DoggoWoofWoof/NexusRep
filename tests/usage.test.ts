@@ -57,4 +57,19 @@ describe("UsageLedger", () => {
     expect(l.record({ vendor: "anthropic", operation: "compose", model: "x" })).toBeNull();
     expect(l.summary().events).toBe(0);
   });
+
+  it("attributes cost per user and buckets per day with a running cumulative", () => {
+    const l = new UsageLedger();
+    l.record({ owner: "alice", sessionId: "s1", vendor: "anthropic", operation: "compose", model: "claude-haiku-4-5", inputTokens: 1000, outputTokens: 200 }); // $0.002
+    l.record({ owner: "bob", sessionId: "s2", vendor: "anthropic", operation: "compose", model: "claude-haiku-4-5", inputTokens: 2000, outputTokens: 400 }); // $0.004
+
+    const per = l.perUser();
+    expect(per.map((u) => u.owner)).toEqual(["bob", "alice"]); // higher spender first
+    expect(l.summary().byUser.alice).toBeCloseTo(0.002, 6);
+
+    const days = l.perDay();
+    expect(days).toHaveLength(1); // one test run → one UTC day
+    expect(days[0]!.cumulativeCostUsd).toBeCloseTo(l.summary().totalCostUsd, 6);
+    expect(l.perDay({ owner: "alice" })[0]!.estCostUsd).toBeCloseTo(0.002, 6); // scoped to one user
+  });
 });

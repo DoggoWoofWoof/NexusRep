@@ -3,8 +3,9 @@
  * ledger (Claude/OpenAI tokens, TTS characters, Tavus video seconds) and returns a cost rollup.
  * Admins only — this is platform-cost observability, never reachable from the doctor view.
  *
- * GET /api/usage            → overall summary + per-session totals + recent events
+ * GET /api/usage            → overall summary + per-user + per-session totals + daily series + recent
  * GET /api/usage?sessionId= → one conversation's detailed breakdown (events + rollup)
+ * GET /api/usage?owner=      → daily series scoped to one brand user (for the per-user trend)
  */
 
 import { NextResponse } from "next/server";
@@ -18,7 +19,9 @@ export async function GET(req: Request): Promise<NextResponse> {
   if (!_auth.ok) return _auth.res;
 
   const ledger = getUsageLedger();
-  const sessionId = new URL(req.url).searchParams.get("sessionId") || undefined;
+  const params = new URL(req.url).searchParams;
+  const sessionId = params.get("sessionId") || undefined;
+  const owner = params.get("owner") || undefined;
 
   if (sessionId) {
     return NextResponse.json({
@@ -30,7 +33,9 @@ export async function GET(req: Request): Promise<NextResponse> {
 
   return NextResponse.json({
     summary: ledger.summary(),
+    perUser: ledger.perUser(),
     perSession: ledger.perSession(),
+    perDay: ledger.perDay(owner ? { owner } : undefined),
     recent: ledger.recent(200),
   });
 }

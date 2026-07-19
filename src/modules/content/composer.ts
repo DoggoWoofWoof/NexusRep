@@ -179,7 +179,7 @@ export function getComposer(name: string): GroundedComposer | undefined {
  * when the caller threads `sessionId` through ComposeInput; totals accrue either way. Recording is
  * best-effort and never alters the composed answer.
  */
-export function withUsageLedger(composer: GroundedComposer, ledger: UsageLedger): GroundedComposer {
+export function withUsageLedger(composer: GroundedComposer, ledger: UsageLedger, owner?: string): GroundedComposer {
   return {
     name: composer.name,
     available: () => composer.available(),
@@ -188,6 +188,7 @@ export function withUsageLedger(composer: GroundedComposer, ledger: UsageLedger)
       if (out.usage) {
         ledger.record({
           sessionId: input.sessionId,
+          owner,
           vendor: vendorForModel(out.usage.model),
           operation: "compose",
           model: out.usage.model,

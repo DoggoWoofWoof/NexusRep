@@ -80,7 +80,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     // the webhook ack). The call has ended here, so the derived duration is the billable span.
     if (session && !billedConversations.has(convId)) {
       billedConversations.add(convId);
-      c.usage.record({ sessionId: String(session.id), vendor: "tavus", operation: "video", model: "tavus-cvi", seconds: deriveSessionDurationSeconds(session) });
+      c.usage.record({ sessionId: String(session.id), owner: owner ?? undefined, vendor: "tavus", operation: "video", model: "tavus-cvi", seconds: deriveSessionDurationSeconds(session) });
     }
   }
 
