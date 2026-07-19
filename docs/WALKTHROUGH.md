@@ -10,7 +10,27 @@
 
 ## 1. Current build status
 
-### Latest: CI Playwright e2e made green — stale test + platform-specific visual baselines (2026-07-19)
+### Latest: Per-session vendor usage & cost ledger (Claude / OpenAI / TTS / Tavus) (2026-07-20)
+
+Detailed, per-conversation tracking of every PAID vendor call, so the admin can see what a session
+actually cost — token/char/minute counts (vendor-reported, exact) + a directional list-price $ estimate.
+- **Added `modules/usage`:** a process-global `UsageLedger` (single-instance, like the activity log)
+  recording a canonical `UsageEvent {sessionId, vendor, operation, model, inputTokens, outputTokens,
+  chars, seconds, estCostUsd}`, a `PRICES` table (env-overridable estimates), and per-session /
+  per-vendor / per-operation rollups.
+- **Capture points (4):** composer LLM tokens (Claude + OpenAI — `res.usage` was previously discarded),
+  OpenAI TTS characters (per real generation; cache hits free), Tavus video minutes (on call end, billed
+  once per conversation). `sessionId` threads through `ComposeInput`; `withUsageLedger()` wraps the
+  composer once in the container so every compose path (live turn, video, slide walkthrough) records.
+- **Surfaced:** admin `GET /api/usage` (overall + per-session + recent; `?sessionId=` for one convo) and
+  a "Vendor usage & cost" panel in Session review (admin-gated, empty-state when mock/keyless).
+- **Verified:** 7 new unit tests (pricing, vendor attribution, ledger rollups); 548 total pass;
+  typecheck + lint clean. Commits `bf5d0d0` (backend + API + tests) + `039145c` (Session-review panel).
+- **Known limits / next:** in-memory (resets on restart — durable with the managed-Postgres step); TTS
+  attributes to the default container; classifier-token + a dedicated admin Usage dashboard are the next
+  increments. Populated view needs real vendor keys (the mock/keyless demo shows the empty state).
+
+### CI Playwright e2e made green — stale test + platform-specific visual baselines (2026-07-19)
 
 The `playwright e2e` CI job had failed on **every** push (the source of the failure emails); the sibling
 `checks` job (typecheck·lint·test·build) always passed. Two independent, **pre-existing** causes — neither
