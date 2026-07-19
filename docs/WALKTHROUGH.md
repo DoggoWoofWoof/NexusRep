@@ -10,7 +10,32 @@
 
 ## 1. Current build status
 
-### Latest: Final Important-tier hardening — webhook auth, LLM timeouts, auth E2E (2026-07-18)
+### Latest: CI Playwright e2e made green — stale test + platform-specific visual baselines (2026-07-19)
+
+The `playwright e2e` CI job had failed on **every** push (the source of the failure emails); the sibling
+`checks` job (typecheck·lint·test·build) always passed. Two independent, **pre-existing** causes — neither
+introduced by the productionization work:
+- **Visual-regression baselines are per-OS.** Only Windows baselines (`…-win32.png`, generated on local
+  Windows dev) are committed; CI is Linux and needs `…-linux.png`, which don't exist → every screenshot
+  spec hit *"A snapshot doesn't exist … writing actual"* → guaranteed fail. **Changed:** `visual.spec.ts`
+  + the mutating rebrand/studio project now run **locally only** — skipped under `CI` (`chromiumIgnore`,
+  `playwright.config.ts`) — until Linux baselines are generated (a CI `--update-snapshots` run) and the
+  `…-chromium-linux.png` files committed. CI keeps the functional + auth/roles E2E (cross-platform-safe).
+- **One stale test.** The Training-coaching test (`e2e/nexusrep.spec.ts`) filled the "Coach this answer"
+  textarea, but the training rework (`8685002`) had made the coach box **collapsed by default** — it now
+  mounts only after clicking *"Coach this line ✎"* (`StudioScreen` `coachOpen[idx]` gate). The test waited
+  the full timeout for an absent element, then timed out (would fail locally too; the full two-server suite
+  isn't run locally). **Changed:** click *"Coach this line ✎"* to reveal the textarea before filling;
+  broadened the final rule assertion to match the coached topic (warfarin) however the rule is phrased.
+- **Slow-runner headroom.** The CI Linux runner is slower than a dev laptop, so a couple of multi-round-trip
+  flows (A/V spike, Training) needed more time: per-test `timeout` 120s on CI (30s local); A/V-spike "ended"
+  assert 60s.
+- **Verified:** CI run on `628030b` **green** — both jobs pass (`checks` 1m43s, `playwright e2e` 2m35s).
+  Commits `c72e201` + `628030b`.
+- **Known follow-up:** CI has no pixel-diff visual coverage until Linux baselines are committed (visual
+  regression still runs locally on Windows). Flip the `chromiumIgnore` CI branch back once they exist.
+
+### Final Important-tier hardening — webhook auth, LLM timeouts, auth E2E (2026-07-18)
 
 The last three 🟠 Important items (11–13), completing the tier.
 - **11 — Tavus webhook auth** (`lib/tavus-webhook-auth.ts`): fails CLOSED (no key → 401, was: skipped →
