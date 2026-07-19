@@ -20,8 +20,9 @@ export interface SqlHandle {
 
 type Row = { data: string };
 
-/** Only allow safe identifier characters in table/column names we interpolate. */
-function ident(name: string): string {
+/** Only allow safe identifier characters in table/column names we interpolate. Exported so the
+ *  dev session-demo route uses the SAME sanitizer — the interpolation guarantee must not drift. */
+export function ident(name: string): string {
   return `"${name.replace(/[^a-zA-Z0-9_]/g, "_")}"`;
 }
 

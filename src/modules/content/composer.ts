@@ -11,6 +11,7 @@
 
 import { env } from "@lib/env";
 import { redactPii } from "@lib/pii-redact";
+import { anthropicModel, OPENAI_PROVIDER, THINKING_MACHINES_PROVIDER, type OpenAiCompatibleProvider } from "@lib/llm-config";
 import type { ApprovedAnswer } from "./types";
 
 export const COMPOSER_SYSTEM = `You are an AI pharmaceutical representative answering a healthcare professional (HCP).
@@ -90,10 +91,6 @@ function blocksText(blocks: ApprovedAnswer[]): string {
   return blocks.map((b, i) => `[${i + 1}] (${b.topic}) ${b.text}`).join("\n");
 }
 
-function anthropicModel(): string {
-  return process.env.ANTHROPIC_MODEL || "claude-haiku-4-5";
-}
-
 const claudeComposer: GroundedComposer = {
   name: "claude",
   available: () => Boolean(process.env.ANTHROPIC_API_KEY),
@@ -114,9 +111,7 @@ const claudeComposer: GroundedComposer = {
   },
 };
 
-interface CompatCfg { name: string; baseUrl: () => string | undefined; apiKey: () => string | undefined; model: () => string }
-
-function makeOpenAiCompatibleComposer(cfg: CompatCfg): GroundedComposer {
+function makeOpenAiCompatibleComposer(cfg: OpenAiCompatibleProvider): GroundedComposer {
   return {
     name: cfg.name,
     available: () => Boolean(cfg.baseUrl()) && Boolean(cfg.apiKey()),
@@ -146,19 +141,8 @@ function makeOpenAiCompatibleComposer(cfg: CompatCfg): GroundedComposer {
   };
 }
 
-const openaiComposer = makeOpenAiCompatibleComposer({
-  name: "openai",
-  baseUrl: () => process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
-  apiKey: () => process.env.OPENAI_API_KEY,
-  model: () => process.env.OPENAI_MODEL || "gpt-4o-mini",
-});
-
-const thinkingMachinesComposer = makeOpenAiCompatibleComposer({
-  name: "thinking-machines",
-  baseUrl: () => process.env.THINKING_MACHINES_BASE_URL,
-  apiKey: () => process.env.THINKING_MACHINES_API_KEY,
-  model: () => process.env.THINKING_MACHINES_MODEL || "default",
-});
+const openaiComposer = makeOpenAiCompatibleComposer(OPENAI_PROVIDER);
+const thinkingMachinesComposer = makeOpenAiCompatibleComposer(THINKING_MACHINES_PROVIDER);
 
 const COMPOSERS: GroundedComposer[] = [claudeComposer, openaiComposer, thinkingMachinesComposer];
 
@@ -192,13 +176,13 @@ async function llmText(system: string, user: string): Promise<string | null> {
       );
       return res.content.find((b) => b.type === "text")?.text ?? "";
     }
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (apiKey) {
-      const baseUrl = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+    const apiKey = OPENAI_PROVIDER.apiKey();
+    const baseUrl = OPENAI_PROVIDER.baseUrl();
+    if (apiKey && baseUrl) {
       const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4o-mini", max_tokens: env.composerMaxTokens, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+        body: JSON.stringify({ model: OPENAI_PROVIDER.model(), max_tokens: env.composerMaxTokens, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
         signal: AbortSignal.timeout(env.llmHelperTimeoutMs),
       });
       if (!res.ok) return null;

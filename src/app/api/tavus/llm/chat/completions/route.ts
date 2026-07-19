@@ -12,11 +12,11 @@
 
 import { asId } from "@lib/ids";
 import { getContainer, getContainerForUser } from "@lib/container";
-import { env } from "@lib/env";
+import { env, clampNum } from "@lib/env";
 import { logger } from "@lib/logger";
 import { captureError } from "@lib/error-capture";
 import { limited } from "@lib/rate-limit";
-import { getActiveCall } from "@lib/active-call";
+import { getActiveCall, DEFAULT_OWNER_KEY } from "@lib/active-call";
 import { correctHcpAsrText } from "@lib/asr-correct";
 import { beginLiveTurn, failLiveTurn, finishLiveTurn } from "@lib/live-turn-guard";
 import {
@@ -27,21 +27,17 @@ import {
   rememberRecoveredFragmentReply,
   waitForRecoveredFragmentReply,
 } from "@modules/realtime";
+import { COMPLIANCE_LLM_MODEL } from "@modules/vendors";
 
 export const dynamic = "force-dynamic";
 
 interface ChatMessage { role: string; content: unknown }
 interface TimingStep { name: string; dur: number; at: number }
 
-function boundedMs(raw: string | undefined, fallback: number, min: number, max: number): number {
-  const n = Number(raw);
-  return Number.isFinite(n) && raw !== undefined && raw !== "" ? Math.max(min, Math.min(max, n)) : fallback;
-}
-
-const VOICE_CLASSIFIER_TIMEOUT_MS = boundedMs(process.env.NEXUSREP_TAVUS_CLASSIFIER_TIMEOUT_MS, 2400, 500, 6000);
-const VOICE_COMPOSER_TIMEOUT_MS = boundedMs(process.env.NEXUSREP_TAVUS_COMPOSER_TIMEOUT_MS, 2500, 500, 7000);
-const VOICE_COMPOSER_MAX_TOKENS = boundedMs(process.env.NEXUSREP_TAVUS_COMPOSER_MAX_TOKENS, 220, 80, 400);
-const VOICE_STREAM_CHUNK_WORDS = boundedMs(process.env.NEXUSREP_TAVUS_STREAM_CHUNK_WORDS, 80, 3, 500);
+const VOICE_CLASSIFIER_TIMEOUT_MS = clampNum(process.env.NEXUSREP_TAVUS_CLASSIFIER_TIMEOUT_MS, 2400, 500, 6000);
+const VOICE_COMPOSER_TIMEOUT_MS = clampNum(process.env.NEXUSREP_TAVUS_COMPOSER_TIMEOUT_MS, 2500, 500, 7000);
+const VOICE_COMPOSER_MAX_TOKENS = clampNum(process.env.NEXUSREP_TAVUS_COMPOSER_MAX_TOKENS, 220, 80, 400);
+const VOICE_STREAM_CHUNK_WORDS = clampNum(process.env.NEXUSREP_TAVUS_STREAM_CHUNK_WORDS, 80, 3, 500);
 
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
@@ -108,7 +104,7 @@ export async function POST(req: Request): Promise<Response> {
   const limit = limited(req, "tavusCallback", boundSessionId || boundUserId || "default");
   if (limit) return limit;
   const boundCall = boundSessionId
-    ? { sessionId: boundSessionId, userId: boundUserId && boundUserId !== "__default__" ? boundUserId : null }
+    ? { sessionId: boundSessionId, userId: boundUserId && boundUserId !== DEFAULT_OWNER_KEY ? boundUserId : null }
     : null;
 
   // Run the HCP turn through our compliance-gated orchestrator.
@@ -136,7 +132,7 @@ export async function POST(req: Request): Promise<Response> {
     // look up THAT owner's active call — never a single global, so a concurrent second account's call
     // can't steer this turn into the wrong container.
     const activeCall = boundCall ?? getActiveCall(boundUserId || null);
-    const sessionKey = activeCall?.sessionId ?? boundSessionId ?? "__default__";
+    const sessionKey = activeCall?.sessionId ?? boundSessionId ?? DEFAULT_OWNER_KEY;
     if (shouldIgnoreTrailingRecoveredFragment(sessionKey, text)) {
       // Tavus can call the LLM once for the recovered fragment ("What is the liberation,")
       // and immediately again for a tiny tail shard ("BRUE?"). If the empty shard returns first,
@@ -294,7 +290,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const created = Math.floor(Date.now() / 1000);
-  const model = "nexusrep-compliance";
+  const model = COMPLIANCE_LLM_MODEL;
   if (isAsrArtifact || isProbe) mark(isAsrArtifact ? "ignored_asr_artifact" : "connectivity_probe");
   // Full HCP transcript + rep reply are logged verbatim on OUR side (intentional — see logger.ts;
   // the "no patient data to vendors" rule is enforced at the vendor boundary, not here).

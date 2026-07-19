@@ -5,6 +5,7 @@
  * gate downstream still treats classification as advisory and fails safe).
  */
 
+import { clampNum } from "@lib/env";
 import type { Intent, RiskClassification } from "../types";
 
 export const CLASSIFIER_SYSTEM = `You are the intent and risk classifier for a pharmaceutical AI sales representative that speaks with healthcare professionals (HCPs). Classify the HCP's message. You are NOT answering — only classifying for a downstream compliance system.
@@ -46,9 +47,7 @@ const INTENTS: Intent[] = [
 /** Max output tokens for a classification (shared by every LLM classifier). Clamped to a sane band;
  *  NEXUSREP_CLASSIFIER_MAX_TOKENS overrides within [80, 512]. */
 export function classifierMaxTokens(): number {
-  const raw = process.env.NEXUSREP_CLASSIFIER_MAX_TOKENS;
-  const n = Number(raw);
-  return Number.isFinite(n) && raw !== undefined && raw !== "" ? Math.max(80, Math.min(512, n)) : 180;
+  return clampNum(process.env.NEXUSREP_CLASSIFIER_MAX_TOKENS, 180, 80, 512);
 }
 
 function clamp01(n: unknown): number {

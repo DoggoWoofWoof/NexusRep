@@ -12,16 +12,14 @@
  * exactly as before.
  */
 
+import { wordCount } from "@lib/pacing";
+
 export const FRAGMENT_WINDOW_MS = 2500;
 
 type FragmentState = { text: string; at: number };
 const pendingFragments = new Map<string, FragmentState>();
 const recoveredFragmentUntil = new Map<string, number>();
 const recoveredFragmentReplies = new Map<string, { reply: string; until: number }>();
-
-function wordCount(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
-}
 
 export function isLikelyIncompleteFragment(text: string): boolean {
   const t = text.trim();

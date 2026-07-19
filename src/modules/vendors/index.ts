@@ -84,7 +84,7 @@ export function getCrmAdapter(): CrmAdapter {
   // than silently dropping every handoff.
   if (env.crmAdapter === "veeva" || env.crmAdapter === "salesforce") {
     if (env.crmWebhookUrl) {
-      return new HttpCrmAdapter({ name: env.crmAdapter, url: env.crmWebhookUrl, token: env.crmWebhookToken });
+      return new HttpCrmAdapter({ name: env.crmAdapter, url: env.crmWebhookUrl, token: env.crmWebhookToken, timeoutMs: env.crmWebhookTimeoutMs });
     }
     logger.warn(`CRM adapter "${env.crmAdapter}" selected but NEXUSREP_CRM_WEBHOOK_URL is unset — using the mock (no events will be delivered)`, { scope: "crm" });
   }

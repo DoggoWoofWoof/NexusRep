@@ -34,7 +34,7 @@ export async function createNodePgHandle(url: string): Promise<SqlHandle & { end
     // A hosted DB waking up (Neon/Render cold start) can take a few seconds; don't fail the first
     // request too eagerly, but don't hang forever either.
     connectionTimeoutMillis: Number(process.env.NEXUSREP_PG_CONNECT_TIMEOUT_MS ?? 10_000),
-    idleTimeoutMillis: 30_000,
+    idleTimeoutMillis: Number(process.env.NEXUSREP_PG_IDLE_TIMEOUT_MS ?? 30_000),
   });
   // A pool 'error' on an idle client would otherwise crash the process; log and let the pool recover.
   pool.on("error", (e) => console.error("[pg] idle client error:", e instanceof Error ? e.message : e));

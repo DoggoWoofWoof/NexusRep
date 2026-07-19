@@ -13,9 +13,9 @@ import { tavusWebhookToken } from "@lib/tavus-webhook-auth";
 import { asId } from "@lib/ids";
 import { getContainerForUser, currentUserId } from "@lib/container";
 import { env } from "@lib/env";
-import { getRealtimeProvider, resolveDefaultAgentId } from "@modules/vendors";
+import { getRealtimeProvider, resolveDefaultAgentId, COMPLIANCE_LLM_MODEL } from "@modules/vendors";
 import { resolveBrandProfile, setupAnswersOf } from "@modules/brand";
-import { setActiveCall } from "@lib/active-call";
+import { setActiveCall, DEFAULT_OWNER_KEY } from "@lib/active-call";
 import { logServerActivity } from "@lib/activity-log";
 
 export const dynamic = "force-dynamic";
@@ -74,7 +74,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     const body = (await req.json().catch(() => ({}))) as { hcpId?: unknown; startNonce?: unknown };
     const ownerUserId = await currentUserId();
     const startNonce = typeof body.startNonce === "string" ? body.startNonce.trim().slice(0, 120) : "";
-    const dedupeKey = startNonce ? `${ownerUserId ?? "__default__"}:${startNonce}` : "";
+    const dedupeKey = startNonce ? `${ownerUserId ?? DEFAULT_OWNER_KEY}:${startNonce}` : "";
     if (dedupeKey) {
       const recent = recentStarts.get(dedupeKey);
       if (recent && Date.now() - recent.at < START_DEDUPE_MS) return NextResponse.json(recent.payload);
@@ -206,7 +206,7 @@ async function startConversation(body: { hcpId?: unknown }, ownerUserId: string 
         // cookie-less turn lands in the right container even with another account on video at once.
         baseUrl: tavusLlmBaseUrl(ownerUserId),
         apiKey: env.tavusLlmKey || undefined,
-        model: "nexusrep-compliance",
+        model: COMPLIANCE_LLM_MODEL,
       },
       agentId,
       hotwords: tavusHotwords,

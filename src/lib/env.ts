@@ -76,6 +76,8 @@ export const env = {
   crmWebhookUrl: process.env.NEXUSREP_CRM_WEBHOOK_URL ?? "",
   /** Optional bearer token for the CRM intake endpoint. */
   crmWebhookToken: process.env.NEXUSREP_CRM_WEBHOOK_TOKEN ?? "",
+  /** Per-delivery timeout (ms) for the real CRM HTTP adapter. Default 10s. */
+  crmWebhookTimeoutMs: Math.round(clampNum(process.env.NEXUSREP_CRM_WEBHOOK_TIMEOUT_MS, 10_000, 1_000, 60_000)),
   /** How often (ms) the background worker drains the CRM outbox to retry failed deliveries. 0 disables
    *  the scheduler (E2E/tests). Default 60s. */
   crmFlushIntervalMs: Math.round(clampNum(process.env.NEXUSREP_CRM_FLUSH_INTERVAL_MS, 60_000, 0, 3_600_000)),
@@ -209,7 +211,9 @@ export const env = {
   rateLimitEnabled: process.env.NEXUSREP_RATELIMIT === "1",
 } as const;
 
-function clampNum(raw: string | undefined, fallback: number, min: number, max: number): number {
+/** Parse a numeric env var and clamp it to [min, max]; a missing/blank/NaN value → fallback. Exported
+ *  as the one shared clamp (the Tavus-LLM route + classifier config previously re-declared it). */
+export function clampNum(raw: string | undefined, fallback: number, min: number, max: number): number {
   const n = Number(raw);
   return Number.isFinite(n) && raw !== undefined && raw !== "" ? Math.max(min, Math.min(max, n)) : fallback;
 }

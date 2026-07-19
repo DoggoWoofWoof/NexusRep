@@ -127,4 +127,4 @@ export function getActiveSqlHandle(): Promise<SqlHandle> {
 
 export { getDb, __resetDbForTests } from "./pglite";
 export { getNodePgDb, createNodePgHandle, __resetNodePgForTests } from "./pg-node";
-export { PgRepository, type SqlHandle } from "./pg-repository";
+export { PgRepository, ident, type SqlHandle } from "./pg-repository";

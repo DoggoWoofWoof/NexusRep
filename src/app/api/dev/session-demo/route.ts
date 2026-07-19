@@ -6,9 +6,10 @@
  */
 
 import { NextResponse } from "next/server";
-import { currentUserId, getContainer } from "@lib/container";
-import { getActiveSqlHandle } from "@lib/db";
+import { currentUserId, getContainer, userTablePrefix } from "@lib/container";
+import { getActiveSqlHandle, ident } from "@lib/db";
 import { env } from "@lib/env";
+import { wordCount } from "@lib/pacing";
 import { asId, newId } from "@lib/ids";
 import type { ConversationSession, ConversationTurn } from "@modules/sessions";
 import type { AuditRecord } from "@modules/audit";
@@ -16,12 +17,8 @@ import type { FollowUpTask, FollowUpType } from "@modules/followups";
 
 export const dynamic = "force-dynamic";
 
-function ident(name: string): string {
-  return `"${name.replace(/[^a-zA-Z0-9_]/g, "_")}"`;
-}
-
 function userPrefix(userId: string | null): string {
-  return userId ? `u_${userId.toLowerCase().replace(/[^a-z0-9]/g, "_")}_` : "";
+  return userId ? userTablePrefix(userId) : "";
 }
 
 /** True when canonical state actually persists across restarts (managed node-pg OR embedded PGlite).
@@ -223,7 +220,7 @@ export async function POST(req: Request): Promise<NextResponse> {
 }
 
 function turnSeconds(turn: ConversationTurn): number {
-  const words = turn.text.trim().split(/\s+/).filter(Boolean).length;
+  const words = wordCount(turn.text);
   if (turn.speaker === "hcp") return Math.min(7, Math.max(2.2, words / 3.2));
   return Math.min(32, Math.max(2.5, words / 2.5));
 }

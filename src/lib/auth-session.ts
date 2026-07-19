@@ -13,6 +13,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "./env";
+import { HMAC_FALLBACK_SECRET, timingSafeStrEqual } from "./crypto";
 
 export const SESSION_COOKIE = "nexusrep_session";
 
@@ -71,7 +72,7 @@ export function isAdminUser(username: string | null): boolean {
 }
 
 function hmac(secret: string, data: string): Buffer {
-  return createHmac("sha256", secret || "nexusrep").update(data).digest();
+  return createHmac("sha256", secret || HMAC_FALLBACK_SECRET).update(data).digest();
 }
 
 /** Constant-time credential check. Returns the user record on success, else null. */
@@ -98,9 +99,6 @@ export function usernameFromCookie(raw: string | undefined | null): string | nul
   if (dot < 0) return null;
   const username = decodeURIComponent(raw.slice(0, dot));
   const sig = raw.slice(dot + 1);
-  const expected = sign(username);
-  const a = Buffer.from(sig, "utf8");
-  const b = Buffer.from(expected, "utf8");
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  if (!timingSafeStrEqual(sig, sign(username))) return null;
   return findUser(username) ? username : null;
 }

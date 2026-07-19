@@ -5,6 +5,11 @@
  * (brief §19–20, CLAUDE.md). Mock implementations live in `./mock`.
  */
 
+/** The model id our compliance orchestrator presents as, to the realtime vendor's custom-LLM layer.
+ *  Shared so the producer (persona config), the callback (echoed reply), and the vendor adapter default
+ *  all agree — a mismatch would break the custom-LLM routing. */
+export const COMPLIANCE_LLM_MODEL = "nexusrep-compliance";
+
 // ── Realtime ────────────────────────────────────────────────────────────────
 export interface RealtimeSessionConfig {
   sessionId: string;

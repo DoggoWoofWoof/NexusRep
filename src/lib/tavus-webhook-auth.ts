@@ -13,19 +13,14 @@
  * key via header is also accepted, for a proxy or manual caller that CAN keep the secret out of the URL.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { env } from "./env";
+import { HMAC_FALLBACK_SECRET, timingSafeStrEqual } from "./crypto";
 
 /** Per-owner webhook signature = HMAC(TAVUS_LLM_KEY, "tavus-webhook:<owner>"). Goes in the callback
  *  URL's `?k=` in place of the raw key. `owner` is the internal username (or "" for a public link). */
 export function tavusWebhookToken(owner: string): string {
-  return createHmac("sha256", env.tavusLlmKey || "nexusrep").update(`tavus-webhook:${owner}`).digest("hex");
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const ba = Buffer.from(a, "utf8");
-  const bb = Buffer.from(b, "utf8");
-  return ba.length === bb.length && timingSafeEqual(ba, bb);
+  return createHmac("sha256", env.tavusLlmKey || HMAC_FALLBACK_SECRET).update(`tavus-webhook:${owner}`).digest("hex");
 }
 
 export type WebhookAuth = { ok: true } | { ok: false; status: number; error: string };
@@ -40,13 +35,13 @@ export function verifyTavusWebhook(req: Request): WebhookAuth {
 
   // Header path: a proxy or manual caller can keep the secret entirely out of the URL.
   const header = (req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? req.headers.get("x-nexusrep-webhook-key") ?? "").trim();
-  if (header && safeEqual(header, env.tavusLlmKey)) return { ok: true };
+  if (header && timingSafeStrEqual(header, env.tavusLlmKey)) return { ok: true };
 
   // Query path: Tavus POSTs to the URL we registered → ?k=<per-owner signature>&u=<owner>.
   const params = new URL(req.url).searchParams;
   const k = params.get("k") ?? "";
   const owner = params.get("u") ?? "";
-  if (k && safeEqual(k, tavusWebhookToken(owner))) return { ok: true };
+  if (k && timingSafeStrEqual(k, tavusWebhookToken(owner))) return { ok: true };
 
   return { ok: false, status: 401, error: "unauthorized" };
 }

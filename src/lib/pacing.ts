@@ -17,7 +17,9 @@ export const TTS_MS_PER_WORD = 400;
 export const REPLICA_MS_PER_WORD = 305;
 export const REPLICA_STARTUP_MS = 1_200;
 
-const wordCount = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length;
+/** Count whitespace-separated words. The one shared tokenizer (was re-inlined in browser-speech,
+ *  fragment-buffer, and the dev session-demo route). */
+export const wordCount = (text: string): number => text.trim().split(/\s+/).filter(Boolean).length;
 
 /**
  * Wall-clock ms for a LIVE Tavus replica to finish a turn: startup latency + speaking time. Paces the

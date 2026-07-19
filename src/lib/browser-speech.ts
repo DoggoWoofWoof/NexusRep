@@ -10,7 +10,7 @@
  * voices), `speak()` falls back to real-time pacing so the UI still flows.
  */
 
-import { TTS_MS_PER_WORD } from "@lib/pacing";
+import { TTS_MS_PER_WORD, wordCount } from "@lib/pacing";
 
 export interface SpeakOptions {
   rate?: number;
@@ -70,8 +70,7 @@ export function speechVoiceHint(): string {
 /** Video-off TTS voice (OpenAI/browser) speaking time — pure rate, floored for short chunks. The
  *  rate lives in @lib/pacing (TTS_MS_PER_WORD, measured ≈408 ms/word for gpt-4o-mini-tts / echo). */
 export function estimateSpeechMs(text: string): number {
-  const words = text.trim().split(/\s+/).filter(Boolean).length;
-  return Math.max(700, words * TTS_MS_PER_WORD);
+  return Math.max(700, wordCount(text) * TTS_MS_PER_WORD);
 }
 
 const hasSynthesis = (): boolean =>

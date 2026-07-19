@@ -27,6 +27,7 @@ import type {
   AgentSummary,
   ToolResult,
 } from "./types";
+import { COMPLIANCE_LLM_MODEL } from "./types";
 
 export interface TavusConfig {
   apiKey: string;
@@ -285,7 +286,7 @@ export class TavusRealtimeProvider implements RealtimeProvider, AgentCatalog, Ag
       // the live API). Our endpoint only enforces it when TAVUS_LLM_KEY is set, so a
       // non-empty placeholder is always safe.
       llm.api_key = config.customLlm.apiKey || "nexusrep";
-      llm.model = config.customLlm.model ?? "nexusrep-compliance";
+      llm.model = config.customLlm.model ?? COMPLIANCE_LLM_MODEL;
       // Keep this OFF by default for NexusRep. With a compliance-gated custom LLM, Tavus
       // speculative inference calls the endpoint on growing interim ASR text; that creates
       // multiple approved answers for one doctor utterance and can queue stale TTS. The rep should

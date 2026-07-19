@@ -18,7 +18,12 @@ export interface ActiveCall {
   userId: string | null;
 }
 
-const keyOf = (userId: string | null | undefined): string => userId ?? "__default__";
+/** The owner-key for the shared/default container (auth off, or a public doctor link with no cookie).
+ *  Exported so every producer/consumer of the per-owner keying uses the SAME sentinel — a drift would
+ *  route a cookie-less Tavus turn to the wrong container. */
+export const DEFAULT_OWNER_KEY = "__default__";
+
+const keyOf = (userId: string | null | undefined): string => userId ?? DEFAULT_OWNER_KEY;
 const activeCalls = new Map<string, ActiveCall>();
 
 export function setActiveCall(call: ActiveCall): void {

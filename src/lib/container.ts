@@ -11,6 +11,7 @@
 import { asId, type AiRepId, type BrandId, type CampaignId, type ContentAssetId, type DetailAidSlideId, type HcpId, type MlrApprovalId, type SessionId, type TenantId } from "@lib/ids";
 import { InMemoryVectorIndex } from "@lib/vector-index";
 import { getRepositoryFactory, makeRepositoryFactory } from "@lib/db";
+import { DEFAULT_OWNER_KEY } from "@lib/active-call";
 import type { RepositoryFactory } from "@lib/repository";
 import { appAuthEnabled, usernameFromCookie, userData, SESSION_COOKIE } from "@lib/auth-session";
 import { ContentService, PresentationSkill, defaultComposer, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
@@ -364,8 +365,15 @@ function containerCache(): Map<string, Promise<AppContainer>> {
  *  PGlite) it's a per-user TABLE NAMESPACE (u_<user>_*) in the ONE shared database, so their data
  *  PERSISTS across restarts and no user can read another's rows; otherwise an isolated in-memory
  *  store (resets on restart — fine for local/dev). Same 3-way driver precedence as the default store. */
+/** The per-user table-name prefix (e.g. "u_swastik_") a signed-in user's rows live under on a Postgres
+ *  driver. THE source of truth for tenant table isolation — the dev session-demo route imports this so
+ *  it can never recompute a divergent prefix and read/wipe the wrong user's tables. */
+export function userTablePrefix(userId: string): string {
+  return `u_${userId.toLowerCase().replace(/[^a-z0-9]/g, "_")}_`;
+}
+
 function perUserRepos(userId: string): RepositoryFactory {
-  return makeRepositoryFactory(`u_${userId.toLowerCase().replace(/[^a-z0-9]/g, "_")}_`);
+  return makeRepositoryFactory(userTablePrefix(userId));
 }
 
 /** Build options for a signed-in user, or {} for the shared default (auth off / public doctor
@@ -378,9 +386,9 @@ function optsForUser(userId: string | null): Parameters<typeof createContainer>[
     : { seedHistory: false, seedContent: false, seedStudio: "draft", repos: perUserRepos(userId), brand: BLANK_PROFILE };
 }
 
-/** Per-user container cache. Key "__default__" is the shared (auth-off / doctor-link) container. */
+/** Per-user container cache. Key DEFAULT_OWNER_KEY is the shared (auth-off / doctor-link) container. */
 export function getContainerForUser(userId: string | null): Promise<AppContainer> {
-  const key = userId ?? "__default__";
+  const key = userId ?? DEFAULT_OWNER_KEY;
   const cache = containerCache();
   if (!cache.has(key)) {
     cache.set(key, createContainer(optsForUser(userId)).catch((error) => { cache.delete(key); throw error; }));

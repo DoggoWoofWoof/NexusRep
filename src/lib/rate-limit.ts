@@ -49,6 +49,7 @@ interface Bucket {
 
 const buckets = new Map<string, Bucket>();
 const MAX_KEYS = 50_000; // backstop against unbounded growth from unique IP keys
+const BUCKET_IDLE_MS = 10 * 60_000; // an idle bucket has refilled to full → dropping it is harmless
 
 /** Pure token-bucket check (no env gate). Exported for testing; routes use limited() below. */
 export function rateLimit(key: string, cfg: LimitConfig, now: number): { ok: boolean; retryAfterSec: number } {
@@ -70,7 +71,7 @@ export function rateLimit(key: string, cfg: LimitConfig, now: number): { ok: boo
 
 /** Drop buckets idle > 10 min (they'd have refilled to full anyway → losing them is harmless). */
 function evictIdle(now: number): void {
-  const cutoff = now - 10 * 60_000;
+  const cutoff = now - BUCKET_IDLE_MS;
   for (const [k, b] of buckets) if (b.last < cutoff) buckets.delete(k);
 }
 

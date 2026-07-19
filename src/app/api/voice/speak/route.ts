@@ -8,8 +8,12 @@
 
 import { NextResponse } from "next/server";
 import { limited } from "@lib/rate-limit";
+import { clampNum } from "@lib/env";
 
 export const dynamic = "force-dynamic";
+
+/** OpenAI TTS generation timeout (whole clip, server-side). Default 20s; NEXUSREP_TTS_TIMEOUT_MS tunes. */
+const TTS_TIMEOUT_MS = clampNum(process.env.NEXUSREP_TTS_TIMEOUT_MS, 20_000, 2_000, 60_000);
 
 const VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"];
 const TONE_INSTRUCTIONS: Record<string, string> = {
@@ -61,7 +65,7 @@ export async function POST(req: Request): Promise<NextResponse> {
         instructions: TONE_INSTRUCTIONS[tone],
         response_format: "mp3",
       }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
     });
     if (!res.ok) return new NextResponse(null, { status: 204 }); // e.g. bad key → browser fallback
     const buf = Buffer.from(await res.arrayBuffer());
