@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { UsageLedger, estimateCostUsd, priceKey, vendorForModel } from "@modules/usage";
+import { dumpActivity, loadActivity, recordActivity, clearActivity, queryActivity } from "@modules/activity";
 
 describe("usage pricing", () => {
   it("normalizes model strings to a price key (TTS matched before chat)", () => {
@@ -71,5 +72,38 @@ describe("UsageLedger", () => {
     expect(days).toHaveLength(1); // one test run → one UTC day
     expect(days[0]!.cumulativeCostUsd).toBeCloseTo(l.summary().totalCostUsd, 6);
     expect(l.perDay({ owner: "alice" })[0]!.estCostUsd).toBeCloseTo(0.002, 6); // scoped to one user
+  });
+});
+
+describe("ledger durability (dump / load for Postgres snapshots)", () => {
+  it("usage dump/load round-trips and only fills an EMPTY ledger (first-write-wins)", () => {
+    const l = new UsageLedger();
+    l.record({ owner: "alice", vendor: "anthropic", operation: "compose", model: "claude-haiku-4-5", inputTokens: 1000, outputTokens: 200 });
+    const snap = l.dumpEvents();
+    expect(snap).toHaveLength(1);
+
+    const restored = new UsageLedger();
+    restored.loadEvents(snap);
+    expect(restored.summary().events).toBe(1);
+    expect(restored.summary().byUser.alice).toBeCloseTo(0.002, 6);
+
+    restored.loadEvents([{ ...snap[0]!, id: "dupe" }]); // non-empty → ignored, so a live event isn't clobbered
+    expect(restored.summary().events).toBe(1);
+  });
+
+  it("activity dump/load round-trips and won't clobber a live log", () => {
+    clearActivity();
+    recordActivity({ category: "system", action: "boot" });
+    const snap = dumpActivity();
+    expect(snap).toHaveLength(1);
+
+    clearActivity();
+    loadActivity(snap);
+    expect(queryActivity().summary.total).toBe(1);
+
+    recordActivity({ category: "system", action: "live event" }); // store now non-empty
+    loadActivity(snap); // ignored — must not drop the live event
+    expect(queryActivity().summary.total).toBe(2);
+    clearActivity();
   });
 });

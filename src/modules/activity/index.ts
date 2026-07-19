@@ -195,3 +195,17 @@ export function clearActivity(): void {
   s.events = [];
   s.seq = 0;
 }
+
+/** Snapshot every retained event — for durable persistence (see lib/ledger-persistence.ts). */
+export function dumpActivity(): ActivityEvent[] {
+  return store().events.slice();
+}
+
+/** Restore events from a persisted snapshot at boot. Only fills an EMPTY log, so a live event recorded
+ *  before hydrate completes is never clobbered (first-write-wins). Keeps the seq counter monotonic. */
+export function loadActivity(events: ActivityEvent[]): void {
+  const s = store();
+  if (s.events.length || !Array.isArray(events) || !events.length) return;
+  s.events = events.slice(-MAX_EVENTS);
+  s.seq = s.events.reduce((m, e) => Math.max(m, e.seq ?? 0), 0);
+}

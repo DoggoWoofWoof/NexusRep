@@ -287,6 +287,19 @@ export class UsageLedger {
     return this.events.slice(-limit).reverse();
   }
 
+  /** Snapshot every retained event — for durable persistence (see lib/ledger-persistence.ts). */
+  dumpEvents(): UsageEvent[] {
+    return this.events.slice();
+  }
+
+  /** Restore events from a persisted snapshot at boot. Only fills an EMPTY ledger, so a live event
+   *  recorded before hydrate completes is never clobbered (first-write-wins). */
+  loadEvents(events: UsageEvent[]): void {
+    if (this.events.length || !Array.isArray(events) || !events.length) return;
+    this.events = events.slice(-MAX_EVENTS);
+    this.seq = this.events.length; // keep new ids monotonic; collisions are benign (id isn't a key)
+  }
+
   /** Test-only reset so cases don't bleed into each other. */
   __reset(): void {
     this.events = [];

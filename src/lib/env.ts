@@ -81,6 +81,9 @@ export const env = {
   /** How often (ms) the background worker drains the CRM outbox to retry failed deliveries. 0 disables
    *  the scheduler (E2E/tests). Default 60s. */
   crmFlushIntervalMs: Math.round(clampNum(process.env.NEXUSREP_CRM_FLUSH_INTERVAL_MS, 60_000, 0, 3_600_000)),
+  /** How often (ms) to snapshot the in-memory usage + activity ledgers to Postgres so they survive a
+   *  restart. 0 disables (E2E/tests). Only active when DATABASE_URL is set. Default 30s. */
+  ledgerFlushMs: Math.round(clampNum(process.env.NEXUSREP_LEDGER_FLUSH_MS, 30_000, 0, 3_600_000)),
   retrievalProvider: pick<RetrievalProviderName>(
     process.env.NEXUSREP_RETRIEVAL_PROVIDER,
     ["memory-vector", "pgvector"],

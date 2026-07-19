@@ -15,12 +15,13 @@
 type InstrumentationGlobal = typeof globalThis & {
   __nexusrepErrHandlers?: boolean;
   __nexusrepCrmFlush?: ReturnType<typeof setInterval>;
+  __nexusrepLedgerFlush?: ReturnType<typeof setInterval>;
 };
 
 export async function register(): Promise<void> {
   // transformers.js is Node-only; skip the edge runtime and any non-server context.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  const [{ warmupEmbeddings }, { getContainerForUser, flushAllOutboxes }, { DEMO_USERS, appAuthEnabled }, { env }, { logger }, { captureError, warnIfUnwiredTracker }, { isRealCrmConfigured }] = await Promise.all([
+  const [{ warmupEmbeddings }, { getContainerForUser, flushAllOutboxes }, { DEMO_USERS, appAuthEnabled }, { env }, { logger }, { captureError, warnIfUnwiredTracker }, { isRealCrmConfigured }, { hydrateLedgers, persistLedgers }] = await Promise.all([
     import("@lib/embeddings"),
     import("@lib/container"),
     import("@lib/auth-session"),
@@ -28,6 +29,7 @@ export async function register(): Promise<void> {
     import("@lib/logger"),
     import("@lib/error-capture"),
     import("@modules/vendors"),
+    import("@lib/ledger-persistence"),
   ]);
   const boot = logger.child("boot");
 
@@ -61,6 +63,17 @@ export async function register(): Promise<void> {
         .catch((e) => captureError(e, { phase: "crm.flush" }));
     }, env.crmFlushIntervalMs);
     g.__nexusrepCrmFlush.unref?.();
+  }
+
+  // Durable observability ledgers (usage cost + activity feed): load any persisted snapshot at boot,
+  // then snapshot back to Postgres on a timer so they survive restarts. No-op without DATABASE_URL.
+  // Fire-and-forget hydrate — loadEvents only fills an empty store, so an early request can't be lost.
+  void hydrateLedgers();
+  if (!g.__nexusrepLedgerFlush && env.databaseUrl && env.ledgerFlushMs > 0) {
+    g.__nexusrepLedgerFlush = setInterval(() => {
+      void persistLedgers().catch((e) => captureError(e, { phase: "ledger.flush" }));
+    }, env.ledgerFlushMs);
+    g.__nexusrepLedgerFlush.unref?.();
   }
 
   // Fail-closed heads-up: a production deploy with auth on MUST set a private NEXUSREP_SESSION_SECRET —
