@@ -11,12 +11,15 @@ import { useEffect, useState } from "react";
 import { card, eyebrow, h1 } from "./ui";
 
 type Day = { date: string; events: number; estCostUsd: number; inputTokens: number; outputTokens: number; chars: number; seconds: number; cumulativeCostUsd: number };
+type CacheStat = { name: string; hits: number; misses: number; total: number; hitRate: number; entries: number | null };
 type UsageResp = {
   summary: { events: number; totalCostUsd: number; totalInputTokens: number; totalOutputTokens: number; byVendor: Record<string, number>; byOperation: Record<string, number>; byUser: Record<string, number>; rollups: { vendor: string; operation: string; requests: number; chars: number; seconds: number; estCostUsd: number }[] };
   perUser: { owner: string; events: number; estCostUsd: number }[];
   perSession: { sessionId: string; events: number; estCostUsd: number }[];
   perDay: Day[];
+  caches: CacheStat[];
 };
+const CACHE_LABEL: Record<string, string> = { "tts-clips": "Voice clips (TTS)", "agent-preview": "Video previews", "llm-probe": "LLM availability" };
 
 const VENDOR_LABEL: Record<string, string> = { anthropic: "Claude", openai: "OpenAI", tavus: "Tavus", elevenlabs: "ElevenLabs", other: "Other" };
 const VENDOR_COLOR: Record<string, string> = { anthropic: "#d97757", openai: "#10a37f", tavus: "#6366f1", elevenlabs: "#f59e0b", other: "#94a3b8" };
@@ -188,6 +191,27 @@ export function UsageDashboard() {
               ))}
             </div>
           </Panel>
+
+          {/* Cache savings — a hit is a vendor call NOT made (served free from memory) */}
+          {(data!.caches?.length ?? 0) > 0 && (
+            <Panel title="Cache — vendor calls saved" right={`${data!.caches.reduce((n, c) => n + c.hits, 0)} served free`}>
+              <div>
+                {data!.caches.map((c, i) => (
+                  <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderTop: i ? "1px solid var(--dn-border)" : "none", font: "400 12px/1.3 var(--dn-font-sans)" }}>
+                    <span style={{ flex: "1 1 0", fontWeight: 600, color: "var(--dn-fg)" }}>{CACHE_LABEL[c.name] ?? c.name}{c.entries != null ? <span style={{ color: "var(--dn-fg-subtle)", fontWeight: 400 }}> · {num(c.entries)} cached</span> : null}</span>
+                    <span style={{ color: "var(--dn-fg-muted)", fontVariantNumeric: "tabular-nums" }}>{num(c.hits)} free · {num(c.misses)} generated</span>
+                    <div style={{ width: 110, display: "flex", alignItems: "center", gap: 7 }}>
+                      <div style={{ flex: 1, background: "var(--dn-surface)", borderRadius: 4, height: 6, overflow: "hidden" }}>
+                        <div style={{ width: `${Math.round(c.hitRate * 100)}%`, height: "100%", background: "var(--dn-success)", borderRadius: 4 }} />
+                      </div>
+                      <span style={{ width: 34, textAlign: "right", fontWeight: 700, color: "var(--dn-success)", fontVariantNumeric: "tabular-nums" }}>{Math.round(c.hitRate * 100)}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ font: "400 10px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 8 }}>A hit is a repeated line served from memory — no vendor call, no charge. Hit rate = share of cacheable requests served free.</div>
+            </Panel>
+          )}
 
           <div style={{ font: "400 10.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-subtle)" }}>
             Token / character / minute counts are reported by the vendor (exact). Dollar figures are directional estimates from a list-price table (editable per model). Ledger is in-memory and resets on restart — it becomes a durable history with the managed-Postgres step.

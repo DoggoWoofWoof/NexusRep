@@ -11,6 +11,7 @@ import { limited } from "@lib/rate-limit";
 import { clampNum } from "@lib/env";
 import { getContainerForUser } from "@lib/container";
 import { DEFAULT_OWNER_KEY } from "@lib/active-call";
+import { recordCacheHit, recordCacheMiss, registerCacheSize } from "@lib/cache-stats";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,7 @@ const TONE_INSTRUCTIONS: Record<string, string> = {
 
 /** Process-wide cache of generated mp3s, keyed by (voice, tone, text). */
 const clipCache = new Map<string, Buffer>();
+registerCacheSize("tts-clips", () => clipCache.size);
 
 function toneKey(t: unknown): keyof typeof TONE_INSTRUCTIONS {
   return t === "warm" || t === "clinical" ? t : "professional";
@@ -51,7 +53,7 @@ export async function POST(req: Request): Promise<NextResponse> {
   const key = `${voice}::${tone}::${text}`;
 
   const hit = clipCache.get(key);
-  if (hit) return audio(hit);
+  if (hit) { recordCacheHit("tts-clips"); return audio(hit); } // served free — no OpenAI call
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || !/^sk-[A-Za-z0-9_-]+$/.test(apiKey)) return new NextResponse(null, { status: 204 });
@@ -73,6 +75,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     const buf = Buffer.from(await res.arrayBuffer());
     if (!buf.length) return new NextResponse(null, { status: 204 });
     clipCache.set(key, buf);
+    recordCacheMiss("tts-clips"); // a real (billable) generation — this line wasn't cached
     // Usage/cost: OpenAI TTS bills per character, and only on a REAL generation (cache hits above are
     // free). Best-effort into the default container's ledger — never blocks or breaks the audio reply.
     void getContainerForUser(null)

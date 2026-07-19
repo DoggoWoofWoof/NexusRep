@@ -11,6 +11,7 @@
 import { NextResponse } from "next/server";
 import { requireAdminUser } from "@lib/require-auth";
 import { getUsageLedger } from "@modules/usage";
+import { cacheStatsSnapshot } from "@lib/cache-stats";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,7 @@ export async function GET(req: Request): Promise<NextResponse> {
     perUser: ledger.perUser(),
     perSession: ledger.perSession(),
     perDay: ledger.perDay(owner ? { owner } : undefined),
+    caches: cacheStatsSnapshot(),
     recent: ledger.recent(200),
   });
 }
