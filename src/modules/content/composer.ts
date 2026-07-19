@@ -179,25 +179,36 @@ export async function llmComplete(system: string, user: string): Promise<string 
 }
 
 async function llmText(system: string, user: string): Promise<string | null> {
-  if (process.env.ANTHROPIC_API_KEY) {
-    const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic();
-    const res = await client.messages.create({ model: anthropicModel(), max_tokens: env.composerMaxTokens, system, messages: [{ role: "user", content: user }] });
-    return res.content.find((b) => b.type === "text")?.text ?? "";
+  // Hard timeout + catch: these helpers run on request paths (content/ingest, setup/chat), and had NO
+  // abort — a hung provider call hung the whole upload. On timeout/error we degrade to null (callers
+  // fall back to non-LLM behavior) instead of hanging or throwing into the request.
+  try {
+    if (process.env.ANTHROPIC_API_KEY) {
+      const { default: Anthropic } = await import("@anthropic-ai/sdk");
+      const client = new Anthropic();
+      const res = await client.messages.create(
+        { model: anthropicModel(), max_tokens: env.composerMaxTokens, system, messages: [{ role: "user", content: user }] },
+        { signal: AbortSignal.timeout(env.llmHelperTimeoutMs), maxRetries: 0 },
+      );
+      return res.content.find((b) => b.type === "text")?.text ?? "";
+    }
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (apiKey) {
+      const baseUrl = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+      const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4o-mini", max_tokens: env.composerMaxTokens, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+        signal: AbortSignal.timeout(env.llmHelperTimeoutMs),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+      return data.choices?.[0]?.message?.content ?? "";
+    }
+    return null;
+  } catch {
+    return null;
   }
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (apiKey) {
-    const baseUrl = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4o-mini", max_tokens: env.composerMaxTokens, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    return data.choices?.[0]?.message?.content ?? "";
-  }
-  return null;
 }
 
 /**

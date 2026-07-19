@@ -173,6 +173,10 @@ export const env = {
   groundingMinCoverage: clampNum(process.env.NEXUSREP_GROUNDING_MIN_COVERAGE, 0.5, 0.1, 1),
   /** Max tokens per composed answer (default 400). */
   composerMaxTokens: Math.round(clampNum(process.env.NEXUSREP_COMPOSER_MAX_TOKENS, 400, 50, 4000)),
+  /** Hard timeout (ms) for the NON-grounded LLM helpers (setup inference, rule compaction, greeting)
+   *  used on request paths like content/ingest — so a hung LLM call degrades to a null result instead
+   *  of hanging the upload. Default 30s. */
+  llmHelperTimeoutMs: Math.round(clampNum(process.env.NEXUSREP_LLM_TIMEOUT_MS, 30_000, 2_000, 120_000)),
 
   // ── Brand-console auth (multi-user demo directory) ───────────────────────────
   // The gate is ON by default (any deploy asks for sign-in) and only OFF when explicitly
