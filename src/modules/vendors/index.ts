@@ -91,6 +91,13 @@ export function getCrmAdapter(): CrmAdapter {
   return new MockCrmAdapter();
 }
 
+/** True when a REAL CRM intake is fully wired (a veeva/salesforce adapter AND a URL to POST to);
+ *  the mock runs otherwise. Exported so callers can tell real deliveries apart from the mock merely
+ *  settling seeded/demo outbox entries in-memory (e.g. the boot outbox-flush log). */
+export function isRealCrmConfigured(): boolean {
+  return (env.crmAdapter === "veeva" || env.crmAdapter === "salesforce") && Boolean(env.crmWebhookUrl);
+}
+
 export function getRetrievalProvider(index?: VectorIndex): RetrievalProvider {
   return new MockRetrievalProvider(index ?? new InMemoryVectorIndex());
 }

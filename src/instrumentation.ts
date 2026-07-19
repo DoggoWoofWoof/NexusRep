@@ -20,13 +20,14 @@ type InstrumentationGlobal = typeof globalThis & {
 export async function register(): Promise<void> {
   // transformers.js is Node-only; skip the edge runtime and any non-server context.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  const [{ warmupEmbeddings }, { getContainerForUser, flushAllOutboxes }, { DEMO_USERS, appAuthEnabled }, { env }, { logger }, { captureError, warnIfUnwiredTracker }] = await Promise.all([
+  const [{ warmupEmbeddings }, { getContainerForUser, flushAllOutboxes }, { DEMO_USERS, appAuthEnabled }, { env }, { logger }, { captureError, warnIfUnwiredTracker }, { isRealCrmConfigured }] = await Promise.all([
     import("@lib/embeddings"),
     import("@lib/container"),
     import("@lib/auth-session"),
     import("@lib/env"),
     import("@lib/logger"),
     import("@lib/error-capture"),
+    import("@modules/vendors"),
   ]);
   const boot = logger.child("boot");
 
@@ -46,9 +47,17 @@ export async function register(): Promise<void> {
   // (backoff + attempt cap live in CrmOutbox). Guarded against double-scheduling (dev HMR); unref'd so
   // the timer never keeps the process alive. Disable with NEXUSREP_CRM_FLUSH_INTERVAL_MS=0 (E2E/tests).
   if (!g.__nexusrepCrmFlush && env.crmFlushIntervalMs > 0) {
+    // Config is fixed per process, so decide the log level once at boot. With NO real CRM wired the
+    // flush is just the mock marking seeded/demo events done (nothing leaves our infra) → debug noise;
+    // a real intake actually delivering IS operationally meaningful → info.
+    const realCrm = isRealCrmConfigured();
     g.__nexusrepCrmFlush = setInterval(() => {
       void flushAllOutboxes()
-        .then((n) => { if (n) boot.info(`CRM outbox flush acted on ${n} entr${n === 1 ? "y" : "ies"}`); })
+        .then((n) => {
+          if (!n) return;
+          const msg = `CRM outbox flush ${realCrm ? "delivered" : "settled (mock adapter)"} ${n} entr${n === 1 ? "y" : "ies"}`;
+          if (realCrm) boot.info(msg); else boot.debug(msg);
+        })
         .catch((e) => captureError(e, { phase: "crm.flush" }));
     }, env.crmFlushIntervalMs);
     g.__nexusrepCrmFlush.unref?.();

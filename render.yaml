@@ -63,8 +63,13 @@ services:
       - key: NEXUSREP_RATELIMIT
         value: "0"
       # ---- secrets: set values in the Render dashboard (sync: false) ----
-      - key: NEXUSREP_SESSION_SECRET # REQUIRED when NEXUSREP_AUTH=1: a long random string. Signs the
-        sync: false #                  session cookie; without it cookies are forgeable and the brand API 503s.
+      # NEXUSREP_SESSION_SECRET signs the brand session cookie (HMAC-SHA256). REQUIRED when
+      # NEXUSREP_AUTH=1: without a PRIVATE value the built-in default is public → anyone can forge an
+      # "I'm admin" cookie with no password, so the brand API fails closed (503). generateValue makes
+      # Render mint a strong random value on first deploy — it never lands in the repo or in chat, and
+      # only generates once (stable across deploys). To rotate: delete it in the dashboard + redeploy.
+      - key: NEXUSREP_SESSION_SECRET
+        generateValue: true
       - key: DATABASE_URL # managed Postgres (persistence path A above). When set, ALL canonical state
         sync: false #        persists here instead of the in-memory/PGlite driver. SSL is auto-enabled
         #                    for non-localhost hosts. Leave blank to keep the NEXUSREP_DATA_DRIVER above.
