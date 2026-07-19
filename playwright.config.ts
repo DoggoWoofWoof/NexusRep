@@ -36,11 +36,26 @@ const baseServerEnv: Record<string, string> = {
   NEXUSREP_CRM_FLUSH_INTERVAL_MS: "0",
 };
 
+const IS_CI = !!process.env.CI;
+
+// Visual-regression snapshots are PLATFORM-SPECIFIC and committed only for win32 (local dev on
+// Windows). CI runs on Linux → there is no matching baseline → the screenshot specs would ALWAYS fail
+// ("A snapshot doesn't exist … writing actual"). So visual regression runs LOCALLY only (visual.spec +
+// the mutating visual-studio/rebrand project); CI runs the functional + auth E2E, which is
+// cross-platform-safe. To restore CI visual coverage later, generate Linux baselines (a CI
+// --update-snapshots run) and commit the *-linux.png files.
+const chromiumIgnore = IS_CI
+  ? /rebrand\.spec\.ts|visual-studio\.spec\.ts|auth\.spec\.ts|visual\.spec\.ts/
+  : /rebrand\.spec\.ts|visual-studio\.spec\.ts|auth\.spec\.ts/;
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
-  forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  forbidOnly: IS_CI,
+  retries: IS_CI ? 1 : 0,
+  // The A/V-spike + Training flows do several server round-trips; the CI runner is much slower than a
+  // dev laptop, so give every test generous headroom there (fast tests still finish fast).
+  timeout: IS_CI ? 120_000 : 30_000,
   reporter: [["html", { open: "never" }], ["list"]],
   use: {
     baseURL: BASE_URL,
@@ -54,10 +69,11 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 900 } },
-      // auth.spec runs against the auth-ON server (own project); keep it out of the auth-OFF suite.
-      testIgnore: /rebrand\.spec\.ts|visual-studio\.spec\.ts|auth\.spec\.ts/,
+      // auth.spec runs against the auth-ON server (own project); visual.spec is local-only in CI.
+      testIgnore: chromiumIgnore,
     },
-    {
+    // The mutating project is entirely visual-regression (studio shots + rebrand) → local only.
+    ...(IS_CI ? [] : [{
       // Tests that MUTATE global server state (e.g. the brand name) run AFTER the parallel
       // suite — a rename window mid-run corrupts visual snapshots and brand assertions.
       name: "mutating",
@@ -66,7 +82,7 @@ export default defineConfig({
       // Serial: the studio shots must not race the re-brand mutation.
       fullyParallel: false,
       dependencies: ["chromium"],
-    },
+    }]),
     {
       // Auth / roles / multi-tenancy — runs against the auth-ON server (AUTH_BASE_URL).
       name: "auth",

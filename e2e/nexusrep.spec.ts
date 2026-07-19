@@ -80,9 +80,10 @@ test.describe("A/V spike (Stage 2)", () => {
     await expect(page.getByRole("heading", { name: /Rehearsal/i })).toBeVisible();
     await page.getByRole("button", { name: /Start rehearsal/i }).click();
     // Brand-driven script: the AI disclosure greeting, then a public-info detail aid.
-    await expect(page.getByText(/publicly-available information|AI representative/i).first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(/Factor XIa|LIBREXIA/i).first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId("spike-ended")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/publicly-available information|AI representative/i).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/Factor XIa|LIBREXIA/i).first()).toBeVisible({ timeout: 30_000 });
+    // The scripted A/V walk paces each segment; on the slow CI runner it needs well over the old 20s.
+    await expect(page.getByTestId("spike-ended")).toBeVisible({ timeout: 60_000 });
   });
 });
 
