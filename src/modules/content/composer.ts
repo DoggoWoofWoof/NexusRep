@@ -13,6 +13,7 @@ import { env } from "@lib/env";
 import { redactPii } from "@lib/pii-redact";
 import { anthropicModel, OPENAI_PROVIDER, THINKING_MACHINES_PROVIDER, type OpenAiCompatibleProvider } from "@lib/llm-config";
 import type { ApprovedAnswer } from "./types";
+import { type UsageLedger, vendorForModel } from "@modules/usage";
 
 export const COMPOSER_SYSTEM = `You are an AI pharmaceutical representative answering a healthcare professional (HCP).
 
@@ -49,6 +50,8 @@ export interface ComposeInput {
   alreadyDisclosed?: boolean;
   /** Optional per-call generation budget. Live voice uses a smaller budget than coaching drafts. */
   maxTokens?: number;
+  /** The conversation this compose belongs to — lets the usage ledger attribute token cost per session. */
+  sessionId?: string;
 }
 
 /** Build the composer system prompt: absolute rules + approved blocks + required safety + coaching. */
@@ -81,10 +84,17 @@ function lengthConstraint(notes: string[]): string {
   return "";
 }
 
+/** Token usage from a grounded compose call, when the provider reports it — fed to the UsageLedger. */
+export interface ComposeUsage {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface GroundedComposer {
   readonly name: string;
   available(): boolean;
-  compose(input: ComposeInput): Promise<{ text: string; latencyMs: number; truncated?: boolean }>;
+  compose(input: ComposeInput): Promise<{ text: string; latencyMs: number; truncated?: boolean; usage?: ComposeUsage }>;
 }
 
 function blocksText(blocks: ApprovedAnswer[]): string {
@@ -107,7 +117,12 @@ const claudeComposer: GroundedComposer = {
       messages: [{ role: "user", content: redactPii(question) }],
     });
     const text = res.content.find((b) => b.type === "text")?.text ?? "";
-    return { text, latencyMs: Date.now() - t0, truncated: res.stop_reason === "max_tokens" };
+    return {
+      text,
+      latencyMs: Date.now() - t0,
+      truncated: res.stop_reason === "max_tokens",
+      usage: { model: anthropicModel(), inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens },
+    };
   },
 };
 
@@ -134,9 +149,17 @@ function makeOpenAiCompatibleComposer(cfg: OpenAiCompatibleProvider): GroundedCo
         }),
       });
       if (!res.ok) throw new Error(`${cfg.name}: HTTP ${res.status}`);
-      const data = (await res.json()) as { choices?: { message?: { content?: string }; finish_reason?: string }[] };
+      const data = (await res.json()) as {
+        choices?: { message?: { content?: string }; finish_reason?: string }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
       const choice = data.choices?.[0];
-      return { text: choice?.message?.content ?? "", latencyMs: Date.now() - t0, truncated: choice?.finish_reason === "length" };
+      return {
+        text: choice?.message?.content ?? "",
+        latencyMs: Date.now() - t0,
+        truncated: choice?.finish_reason === "length",
+        usage: { model: cfg.model(), inputTokens: data.usage?.prompt_tokens ?? 0, outputTokens: data.usage?.completion_tokens ?? 0 },
+      };
     },
   };
 }
@@ -148,6 +171,33 @@ const COMPOSERS: GroundedComposer[] = [claudeComposer, openaiComposer, thinkingM
 
 export function getComposer(name: string): GroundedComposer | undefined {
   return COMPOSERS.find((c) => c.name === name);
+}
+
+/**
+ * Wrap a composer so every grounded compose records its token usage to the ledger — one capture
+ * point that covers all callers (live turn, video turn, presentation). Attribution is per-session
+ * when the caller threads `sessionId` through ComposeInput; totals accrue either way. Recording is
+ * best-effort and never alters the composed answer.
+ */
+export function withUsageLedger(composer: GroundedComposer, ledger: UsageLedger): GroundedComposer {
+  return {
+    name: composer.name,
+    available: () => composer.available(),
+    async compose(input) {
+      const out = await composer.compose(input);
+      if (out.usage) {
+        ledger.record({
+          sessionId: input.sessionId,
+          vendor: vendorForModel(out.usage.model),
+          operation: "compose",
+          model: out.usage.model,
+          inputTokens: out.usage.inputTokens,
+          outputTokens: out.usage.outputTokens,
+        });
+      }
+      return out;
+    },
+  };
 }
 
 /**

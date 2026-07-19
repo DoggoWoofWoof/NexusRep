@@ -14,7 +14,8 @@ import { getRepositoryFactory, makeRepositoryFactory } from "@lib/db";
 import { DEFAULT_OWNER_KEY } from "@lib/active-call";
 import type { RepositoryFactory } from "@lib/repository";
 import { appAuthEnabled, usernameFromCookie, userData, SESSION_COOKIE } from "@lib/auth-session";
-import { ContentService, PresentationSkill, defaultComposer, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
+import { ContentService, PresentationSkill, defaultComposer, withUsageLedger, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
+import { getUsageLedger, type UsageLedger } from "@modules/usage";
 import { configureClassifierLexicon, resolveClassifier } from "@modules/compliance";
 import { env } from "@lib/env";
 import { configureRetrievalLexicon, RetrievalService } from "@modules/retrieval";
@@ -47,6 +48,7 @@ export interface AppContainer {
   audienceRuntime: { readonly source: string; readonly degraded: boolean; refresh(): Promise<boolean>; reloadForBrandChange(): Promise<void> };
   analytics: AnalyticsService;
   metrics: RuntimeMetrics;
+  usage: UsageLedger;
   studio: StudioService;
   mlr: MlrService;
   /** The active brand profile — the single source of brand/campaign-specific config. */
@@ -120,7 +122,11 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
   // One composer choice shared by the live turn path AND the slide walkthrough, so both
   // LLM-compose from the KB when a provider key is present (env.composeMode auto-selects "llm"),
   // and both speak verbatim when not. null → deterministic.
-  const composer = defaultComposer();
+  // Per-container vendor usage & cost ledger. Wrap the composer so every grounded compose records
+  // its token usage (live turn, video turn, and the slide walkthrough all go through this one path).
+  const usage = getUsageLedger();
+  const rawComposer = defaultComposer();
+  const composer = rawComposer ? withUsageLedger(rawComposer, usage) : null;
   const presentation = new PresentationSkill(content, composer);
   const retrieval = new RetrievalService(getRetrievalProvider(index), content);
   const audit = new AuditService(repos);
@@ -342,6 +348,7 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
     targeting,
     analytics,
     metrics,
+    usage,
     studio,
     mlr,
     brand,

@@ -10,6 +10,11 @@ import { getContainer, getContainerForUser } from "@lib/container";
 import { logServerActivity } from "@lib/activity-log";
 import { verifyTavusWebhook } from "@lib/tavus-webhook-auth";
 import { describeTavusEvent, shutdownReasonText } from "@lib/tavus-events";
+import { deriveSessionDurationSeconds } from "@modules/sessions";
+
+// Tavus bills per minute of live video; a shutdown can be reported more than once (client "End" then a
+// server timeout sweep). Bill each conversation's minutes ONCE per process so we never double-count.
+const billedConversations = new Set<string>();
 import { logger } from "@lib/logger";
 
 const log = logger.child("tavus-webhook");
@@ -69,7 +74,15 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   // On a shutdown, record WHY the call ended on the session (first meaningful reason wins, so a
   // client-recorded deliberate "End" is never clobbered by a later Tavus timeout sweep).
-  if (desc.reason && convId) await c.sessions.setEndReason(convId, desc.reason);
+  if (desc.reason && convId) {
+    await c.sessions.setEndReason(convId, desc.reason);
+    // Record the video minutes for cost tracking — once per conversation, best-effort (never blocks
+    // the webhook ack). The call has ended here, so the derived duration is the billable span.
+    if (session && !billedConversations.has(convId)) {
+      billedConversations.add(convId);
+      c.usage.record({ sessionId: String(session.id), vendor: "tavus", operation: "video", model: "tavus-cvi", seconds: deriveSessionDurationSeconds(session) });
+    }
+  }
 
   // Feed the video lifecycle into the admin Activity monitor as a HUMAN line ("Video call ended — the
   // doctor left / disconnected") with the reason + a link to the session, not "Tavus system.shutdown".

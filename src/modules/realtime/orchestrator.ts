@@ -593,6 +593,7 @@ export class TurnOrchestrator {
             safety: isi?.text,
             alreadyDisclosed: disclosureGiven,
             maxTokens,
+            sessionId: ctx.sessionId,
           })
         : undefined;
       // Deterministic fallback (no LLM) speaks approved text + one brief slide cue; it cannot weave,
@@ -820,6 +821,7 @@ For anything beyond this, I can connect you with our medical information team.`;
           guidance,
           alreadyDisclosed: disclosureGiven,
           maxTokens: opts?.composerMaxTokens,
+          sessionId: ctx.sessionId,
         }),
         composerTimeoutMs,
         "composer_timeout",

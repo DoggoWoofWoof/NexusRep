@@ -9,6 +9,7 @@
 import { NextResponse } from "next/server";
 import { limited } from "@lib/rate-limit";
 import { clampNum } from "@lib/env";
+import { getContainerForUser } from "@lib/container";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +39,7 @@ function audio(buf: Buffer): NextResponse {
 export async function POST(req: Request): Promise<NextResponse> {
   const limit = limited(req, "tts");
   if (limit) return limit;
-  const body = (await req.json().catch(() => ({}))) as { text?: unknown; tone?: unknown; voice?: unknown };
+  const body = (await req.json().catch(() => ({}))) as { text?: unknown; tone?: unknown; voice?: unknown; sessionId?: unknown };
   const text = (typeof body.text === "string" ? body.text : "").trim().slice(0, 1200); // bounded (answer + ISI)
   if (!text) return new NextResponse(null, { status: 204 });
 
@@ -71,6 +72,17 @@ export async function POST(req: Request): Promise<NextResponse> {
     const buf = Buffer.from(await res.arrayBuffer());
     if (!buf.length) return new NextResponse(null, { status: 204 });
     clipCache.set(key, buf);
+    // Usage/cost: OpenAI TTS bills per character, and only on a REAL generation (cache hits above are
+    // free). Best-effort into the default container's ledger — never blocks or breaks the audio reply.
+    void getContainerForUser(null)
+      .then((c) => c.usage.record({
+        sessionId: typeof body.sessionId === "string" ? body.sessionId : undefined,
+        vendor: "openai",
+        operation: "tts",
+        model: process.env.OPENAI_TTS_MODEL || "gpt-4o-mini-tts",
+        chars: text.length,
+      }))
+      .catch(() => { /* observability must never break the flow it observes */ });
     return audio(buf);
   } catch {
     return new NextResponse(null, { status: 204 }); // network/timeout → browser fallback
