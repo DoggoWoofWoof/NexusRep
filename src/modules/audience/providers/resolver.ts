@@ -17,6 +17,11 @@
 
 import { docnexusAuthHeaders, type DocNexusConfig } from "./docnexus";
 
+// NOTE: this host is INTENTIONALLY different from DOCNEXUS_ADVANCED_SEARCH_URL / env.docnexusBaseUrl
+// ("advanced-search…" WITH a hyphen — the cohort QUERY service, POST /api/query, used by docnexus.ts).
+// This unhyphenated "advancedsearch…" host is a SEPARATE service: the ICD AUTOCOMPLETE API
+// (GET /autocompletes/diagnosis_description). Verified live (2026-07-19): the no-hyphen host returns the
+// expected {result:[…]} JSON here; the hyphenated host 404s this path. Do NOT "correct" the hostname.
 const RESOLVER_URL = process.env.DOCNEXUS_RESOLVER_URL ?? "https://advancedsearch.docnexus.ai";
 
 interface AutocompleteHit {
