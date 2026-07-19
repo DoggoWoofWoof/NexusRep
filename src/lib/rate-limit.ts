@@ -84,8 +84,9 @@ export function clientIp(req: Request): string {
 
 /**
  * Route helper: enforce a limit and return a ready 429 Response if exceeded, else null (caller
- * proceeds). No-op when NEXUSREP_RATELIMIT=0 (E2E/tests/local). Keyed by IP unless a keyOverride is
- * given (e.g. the Tavus callback keys by session id — never IP, which is shared across Tavus egress).
+ * proceeds). No-op unless NEXUSREP_RATELIMIT=1 (OPT-IN — off by default; see env.rateLimitEnabled for
+ * why). Keyed by IP unless a keyOverride is given (e.g. the Tavus callback keys by session id — never
+ * IP, which is shared across Tavus egress).
  */
 export function limited(req: Request, name: keyof typeof LIMITS, keyOverride?: string): NextResponse | null {
   if (!env.rateLimitEnabled) return null;

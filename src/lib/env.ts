@@ -197,9 +197,12 @@ export const env = {
   sentryDsn: process.env.NEXUSREP_SENTRY_DSN ?? "",
 
   // ── Rate limiting ────────────────────────────────────────────────────────────
-  /** In-process token-bucket limiting on the public endpoints. ON by default; set NEXUSREP_RATELIMIT=0
-   *  to disable (E2E/tests/local run open). Single-instance only (render.yaml pins numInstances: 1). */
-  rateLimitEnabled: process.env.NEXUSREP_RATELIMIT !== "0",
+  /** In-process token-bucket limiting on the public endpoints. OPT-IN (OFF by default): set
+   *  NEXUSREP_RATELIMIT=1 to enable. Disabled for now because the doctor endpoints are IP-keyed and
+   *  HCPs share IPs (hospital/clinic NAT, mobile CGNAT) — enabling as-is could 429 a legitimate doctor
+   *  (esp. the startCall limit). Re-enable once the doctor endpoints are keyed by session, not IP.
+   *  Single-instance only (render.yaml pins numInstances: 1). */
+  rateLimitEnabled: process.env.NEXUSREP_RATELIMIT === "1",
 } as const;
 
 function clampNum(raw: string | undefined, fallback: number, min: number, max: number): number {

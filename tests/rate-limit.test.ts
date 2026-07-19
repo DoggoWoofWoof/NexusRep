@@ -48,8 +48,7 @@ describe("clientIp", () => {
 describe("limited() — env-gated route wrapper", () => {
   async function freshLimiter(enabled: boolean) {
     vi.resetModules();
-    if (enabled) delete process.env.NEXUSREP_RATELIMIT;
-    else process.env.NEXUSREP_RATELIMIT = "0";
+    process.env.NEXUSREP_RATELIMIT = enabled ? "1" : "0"; // limiting is OPT-IN (off unless "1")
     return import("@lib/rate-limit");
   }
   afterEach(() => {

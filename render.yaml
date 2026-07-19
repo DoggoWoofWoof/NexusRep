@@ -58,6 +58,10 @@ services:
       # REQUIRED — the brand API returns 503 until it's set (the built-in default is public/forgeable).
       - key: NEXUSREP_AUTH
         value: "1"
+      # Rate limiting: OFF for now. The doctor endpoints are IP-keyed and HCPs share IPs (hospital NAT),
+      # so enabling as-is could 429 a legitimate doctor. Flip to "1" once they're keyed by session.
+      - key: NEXUSREP_RATELIMIT
+        value: "0"
       # ---- secrets: set values in the Render dashboard (sync: false) ----
       - key: NEXUSREP_SESSION_SECRET # REQUIRED when NEXUSREP_AUTH=1: a long random string. Signs the
         sync: false #                  session cookie; without it cookies are forgeable and the brand API 503s.

@@ -23,7 +23,7 @@ describe("HttpCrmAdapter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const a = new HttpCrmAdapter({ name: "veeva", url: "https://crm.example/intake", token: "tok" });
     expect(await a.deliver(payload)).toEqual({ status: "sent" });
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit & { headers: Record<string, string> }];
     expect(url).toBe("https://crm.example/intake");
     expect(init.method).toBe("POST");
     expect(init.headers.authorization).toBe("Bearer tok");
