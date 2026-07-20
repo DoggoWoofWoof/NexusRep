@@ -22,7 +22,8 @@ export type AuditEventType =
   | "coaching_rule_applied"
   | "correction"
   | "human_takeover"
-  | "human_reply";
+  | "human_reply"
+  | "hcp_memory_updated";
 
 export interface AuditRecord {
   id: AuditEventId;

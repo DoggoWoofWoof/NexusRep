@@ -5,7 +5,7 @@ import { btnGhost, btnPrimary } from "./NexusRepApp";
 import { card, eyebrow, h1 } from "./ui";
 import { useFetchOnce } from "@lib/use-fetch-once";
 
-type FollowUpRow = { id: number; hcp: string; reason: string; owner: string; target: string; status: string };
+type FollowUpRow = { id: number; hcp: string; reason: string; owner: string; target: string; status: string; context?: string | null };
 
 export function FollowUps() {
   const [statuses, setStatuses] = useState<Record<number, string>>({});
@@ -56,6 +56,12 @@ export function FollowUps() {
               <span style={{ font: "500 12px/1.4 var(--dn-font-sans)", color: "var(--dn-fg)", textAlign: "right" }}>{v}</span>
             </div>
           ))}
+          {selected.context && (
+            <div style={{ marginTop: 12, padding: "10px 12px", background: "var(--dn-surface-2)", border: "1px solid var(--dn-border)", borderLeft: "3px solid var(--dn-brand-base)", borderRadius: 8 }}>
+              <div style={{ font: "600 10px/1 var(--dn-font-sans)", letterSpacing: ".05em", textTransform: "uppercase", color: "var(--dn-fg-muted)", marginBottom: 5 }}>Prior sessions with this HCP</div>
+              <div style={{ font: "400 12px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)" }}>{selected.context}</div>
+            </div>
+          )}
           <button onClick={() => { setStatuses((s) => ({ ...s, [selected.id]: "Retrying" })); setTimeout(() => setStatuses((s) => ({ ...s, [selected.id]: "Sent to CRM" })), 1000); }} style={{ ...btnPrimary, width: "100%", marginTop: 14, padding: 11 }}>Push to CRM now</button>
           <div style={{ marginTop: 12 }}>
             <div onClick={() => setJsonOpen((v) => !v)} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", padding: "9px 0", borderTop: "1px solid var(--dn-surface-2)" }}>

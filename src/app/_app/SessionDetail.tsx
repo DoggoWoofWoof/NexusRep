@@ -15,6 +15,15 @@ type SessionDetailData = {
   turns: { speaker: "hcp" | "rep"; text: string; sourceIds: string[]; detailAidSlideId?: string | null; at?: string | null }[];
   audit: { seq: number; type: string; payload: Record<string, unknown> }[];
   hasTurnDetail: boolean;
+  hcpMemory?: {
+    sessionCount: number;
+    priorToThis: number;
+    topics: string[];
+    everRequestedHuman: boolean;
+    everReportedAe: boolean;
+    lastSessionAt: string;
+    recap: string;
+  } | null;
 };
 const COMP_LABEL: Record<string, string> = { approved: "Approved", needs_review: "Needs review", ae_routed: "AE routed", blocked_escalated: "Blocked + escalated" };
 const TRACE = ["Input (text / ASR)", "Intent + risk classifier", "Policy router", "Approved retrieval + source validation", "Response builder / grounding", "Final compliance gate", "Output + audit + follow-up"];
@@ -80,6 +89,36 @@ function SessionCost({ sessionId }: { sessionId: string }) {
           <div style={{ font: "400 10px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 8 }}>Counts are vendor-reported (exact); $ is a list-price estimate.</div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Continuity card — the HCP's prior-session memory we keep on OUR side (not Tavus). Shows only when
+ *  there IS earlier history for this HCP, so a first-time session stays clean. Non-PII recap + topics. */
+function HcpContextCard({ mem }: { mem: NonNullable<SessionDetailData["hcpMemory"]> }) {
+  if (mem.priorToThis < 1) return null;
+  const flag = (label: string, color: string, bg: string, border: string) => (
+    <span key={label} style={{ font: "600 10.5px/1 var(--dn-font-sans)", color, background: bg, border: `1px solid ${border}`, borderRadius: 20, padding: "5px 10px" }}>{label}</span>
+  );
+  return (
+    <div style={{ ...card, padding: "13px 16px", marginBottom: 14, borderLeft: "3px solid var(--dn-brand-base)" }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <div style={eyebrow}>Prior sessions with this HCP</div>
+        <span style={{ font: "700 12px/1 var(--dn-font-sans)", color: "var(--dn-brand-base)", fontVariantNumeric: "tabular-nums" }}>
+          {mem.priorToThis} before this{mem.lastSessionAt ? ` · last ${mem.lastSessionAt.slice(0, 10)}` : ""}
+        </span>
+      </div>
+      <div style={{ font: "400 12px/1.55 var(--dn-font-sans)", color: "var(--dn-fg-muted)", marginTop: 6 }}>{mem.recap}</div>
+      {(mem.topics.length > 0 || mem.everRequestedHuman || mem.everReportedAe) && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 9 }}>
+          {mem.topics.map((t) => flag(t, "var(--dn-fg-muted)", "var(--dn-surface-2)", "var(--dn-border)"))}
+          {mem.everRequestedHuman && flag("Asked for a human before", "#8a1f1f", "#fdecec", "#f0a3a3")}
+          {mem.everReportedAe && flag("AE raised in a prior session", "#7a4b00", "#fff8e6", "#f3c969")}
+        </div>
+      )}
+      <div style={{ font: "400 10px/1.4 var(--dn-font-sans)", color: "var(--dn-fg-subtle)", marginTop: 8 }}>
+        Kept across this HCP&apos;s sessions on our side — non-PII, aggregate only. Given to the rep as continuity context on the next call.
+      </div>
     </div>
   );
 }
@@ -282,6 +321,7 @@ export function SessionDetail({ app }: { app: AppState }) {
             </span>
           ))}
         </div>
+        {detail.hcpMemory && <HcpContextCard mem={detail.hcpMemory} />}
         {app.isAdmin && app.selectedSessionId && <SessionCost sessionId={app.selectedSessionId} />}
         {/* Symmetric 2×2 replay — four equal blocks: recorded rep · approved slide (top row),
             turn evidence · click-through transcript (bottom row). Slides + transcript follow the

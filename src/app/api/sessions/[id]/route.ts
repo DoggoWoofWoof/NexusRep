@@ -24,6 +24,20 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!session) return NextResponse.json({ error: "unknown session" }, { status: 404 });
 
   const audit = await c.audit.forSession(sessionId);
+  // Cross-session memory for THIS HCP (prior-session context we keep on our side). `priorToThis`
+  // excludes the current session (already folded in once ended) so the count reads honestly in review.
+  const mem = await c.hcpMemory.get(session.hcpId);
+  const hcpMemory = mem
+    ? {
+        sessionCount: mem.sessionIds.length,
+        priorToThis: mem.sessionIds.filter((sid) => sid !== String(sessionId)).length,
+        topics: mem.topics.slice(0, 6).map((t) => t.topic),
+        everRequestedHuman: mem.everRequestedHuman,
+        everReportedAe: mem.everReportedAe,
+        lastSessionAt: mem.lastSessionAt,
+        recap: mem.recap,
+      }
+    : null;
   // The replay's slide is driven by the detail-aid the rep actually showed — stored on
   // the turn. For turns recorded before that field existed, resolve it from the turn's
   // approved-answer id (its canonical slide), so old recordings still play the right slide.
@@ -59,5 +73,6 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     turns,
     audit: audit.map((a) => ({ seq: a.seq, type: a.type, payload: a.payload })),
     hasTurnDetail: session.turns.length > 0,
+    hcpMemory,
   });
 }

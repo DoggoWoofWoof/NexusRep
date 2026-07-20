@@ -19,6 +19,8 @@ import type { GroundedComposer } from "@modules/content";
 import type { RiskClassification } from "@modules/compliance";
 import type { ConversationSession, SessionService } from "@modules/sessions";
 import type { RuleSteering } from "@modules/rules";
+import type { HcpMemoryService } from "@modules/hcpMemory";
+import { distillSession } from "@modules/hcpMemory";
 import { canonicalizeProductNames } from "@modules/compliance";
 import { TurnOrchestrator, type TurnContext, type TurnOutput } from "./orchestrator";
 
@@ -34,6 +36,13 @@ export interface ConversationDeps {
   /** Optional: resolve an HCP's NPI (from the claims cohort) for CRM identity resolution.
    *  Unresolvable → the outbox surfaces "needs_mapping", the true unresolved-identity state. */
   npiFor?: (hcpId: string) => string | undefined;
+  /** Optional: per-HCP cross-session memory. When present, a finished session is distilled into it on
+   *  end(), and the HCP's prior-session recap is injected as advisory continuity context on the opening
+   *  AI turn of a new session. */
+  hcpMemory?: HcpMemoryService;
+  /** Resolve an approved-answer id to its topic LABEL (for distillation) — injected so this module
+   *  needn't depend on the content service directly. */
+  resolveAnswerTopic?: (sourceId: string) => Promise<string | undefined>;
 }
 
 export type TurnOpts = {
@@ -126,7 +135,21 @@ export class ConversationService {
 
     // Fold the rep's active coaching rules into runtime steering (default: none).
     const steering = this.deps.steeringFor ? await this.deps.steeringFor(turnCtx.hcpId) : undefined;
-    const output = await this.deps.orchestrator.handleTurn(turnCtx, { ...opts, steering });
+    // Cross-session continuity: on the OPENING AI turn of a session, inject the HCP's prior-session recap
+    // as ADVISORY context (never overrides grounding/gate) so the rep can pick up where it left off with a
+    // returning doctor instead of re-explaining the basics. `current` is the session BEFORE this turn — no
+    // rep turn yet ⇒ this is the opening. Memory holds only PRIOR sessions (this one is distilled on end).
+    let priorSessionContext: string[] | undefined;
+    const firstAiTurn = !current?.turns.some((t) => t.speaker === "rep");
+    if (firstAiTurn && this.deps.hcpMemory) {
+      const mem = await this.deps.hcpMemory.get(turnCtx.hcpId).catch(() => null);
+      if (mem?.recap && mem.sessionIds.length) {
+        priorSessionContext = [
+          `Continuity — you've spoken with this HCP before (context only; state nothing here as fact unless it is in the approved blocks): ${mem.recap} You may briefly acknowledge the prior conversation once; answer THIS question from the approved content.`,
+        ];
+      }
+    }
+    const output = await this.deps.orchestrator.handleTurn(turnCtx, { ...opts, steering, ...(priorSessionContext ? { priorSessionContext } : {}) });
 
     await this.deps.sessions.appendTurn(turnCtx.sessionId, {
       speaker: "rep",
@@ -184,6 +207,38 @@ export class ConversationService {
   }
 
   async end(sessionId: TurnContext["sessionId"], input?: { durationSeconds?: number; endedAt?: string }): Promise<ConversationSession | null> {
-    return this.deps.sessions.end(sessionId, input);
+    const ended = await this.deps.sessions.end(sessionId, input);
+    await this.distillToMemory(ended);
+    return ended;
+  }
+
+  /** Distill a finished session into the HCP's rolling cross-session memory + record it to the audit
+   *  trail ("log everything"). Best-effort and non-blocking: memory is advisory, so a failure here must
+   *  never fail ending a call. Skips brand-user PREVIEWS and sessions with no HCP question (nothing to
+   *  remember). Idempotent downstream (recordSession dedupes by session id). */
+  private async distillToMemory(ended: ConversationSession | null): Promise<void> {
+    if (!ended || ended.preview || !this.deps.hcpMemory || !this.deps.resolveAnswerTopic) return;
+    if (!ended.turns.some((t) => t.speaker === "hcp")) return;
+    try {
+      const audit = await this.deps.audit.forSession(ended.id);
+      const facts = await distillSession(
+        { id: ended.id, hcpId: ended.hcpId, startedAt: ended.startedAt, turns: ended.turns },
+        audit.map((a) => ({ type: a.type, payload: a.payload })),
+        this.deps.resolveAnswerTopic,
+      );
+      const mem = await this.deps.hcpMemory.recordSession(facts);
+      await this.deps.audit.record(ended.id, "hcp_memory_updated", {
+        hcpId: String(ended.hcpId),
+        sessionCount: mem.sessionIds.length,
+        topics: facts.topics,
+        intents: facts.intents,
+        routes: facts.routes,
+        requestedHuman: facts.requestedHuman,
+        reportedAe: facts.reportedAe,
+        recap: mem.recap,
+      });
+    } catch {
+      /* memory is advisory — never block ending a session */
+    }
   }
 }

@@ -10,7 +10,39 @@
 
 ## 1. Current build status
 
-### Latest: Human-in-the-loop takeover + live monitoring + realtime transcripts (2026-07-20)
+### Latest: Per-HCP cross-session memory — context + continuity on our side, not Tavus (2026-07-20)
+
+"Context and memory per HCP on our side without relying on Tavus." A new `modules/hcpMemory` keeps a
+rolling, HCP-LEVEL, **non-PII** record of every conversation and feeds it back into future ones.
+- **The module:** `distillSession` turns one finished session into non-PII facts (approved-topic LABELS
+  served — resolved from source ids, never raw HCP text — plus intents, route outcomes, and human/AE
+  flags). `foldMemory` accumulates them into one `HcpMemory` per HCP — idempotent (dedupes by session id)
+  and ordering-robust. `buildRecap` renders one prompt/console-safe line. Honors the patient-level rule:
+  only aggregate topic labels + counts, nothing patient-specific.
+- **Distilled on session end:** `ConversationService.end()` distills the session into the HCP's memory and
+  audits a `hcp_memory_updated` event ("log everything"). Best-effort — never blocks ending a call; skips
+  brand-user previews and question-less sessions.
+- **Injected into the NEXT session:** on the OPENING AI turn of a session, the HCP's prior-session recap is
+  passed to the orchestrator as `priorSessionContext` — advisory continuity guidance (same status as
+  coaching), so the rep can pick up where it left off instead of re-explaining. Subordinate to grounding +
+  the gate; it can never introduce an ungrounded claim.
+- **Attached to follow-ups:** `FollowUpService` gained an injected `contextFor(hcpId)` (mirrors `ownerFor`);
+  every follow-up now carries `context` — the HCP's prior-session recap captured at creation — so the next
+  human touch is informed. (Seeded follow-ups predate memory, so they correctly carry none.)
+- **Backfill:** after `seedDemoHistory`, memory is built from the seeded sessions (oldest-first) so a
+  returning demo HCP shows prior context immediately.
+- **Surfaced:** `GET /api/hcp/memory?hcpId` (brand-gated); `/api/sessions/[id]` returns an `hcpMemory`
+  projection (with `priorToThis` excluding the current session); Session review shows a "Prior sessions
+  with this HCP" card (recap + topic chips), and the Follow-ups detail panel shows the same context block.
+- **Verified:** 10 new unit + integration tests (distill, fold idempotency/ordering, end→memory→audit,
+  later-session follow-up context, seeded backfill); 578 total pass; typecheck clean. Driven live against a
+  running server: two real sessions for one HCP → the 2nd session's review + its follow-up both render
+  "2 prior sessions … Previously covered: mechanism, program, dosing under study."
+- **Known limits / next:** memory holds topic labels + counts, not a per-turn history; a human's free-text
+  takeover reply isn't distilled to a topic (no approved-source id). Cross-session memory persists on the
+  Postgres driver (in-memory resets on restart, as elsewhere).
+
+### Human-in-the-loop takeover + live monitoring + realtime transcripts (2026-07-20)
 
 A human brand rep can take over a live HCP conversation at any point; from then the AI stays silent and
 the human answers directly, with the whole exchange kept on **our** side (Postgres transcript + audit),

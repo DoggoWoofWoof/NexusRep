@@ -47,6 +47,9 @@ export async function GET(): Promise<NextResponse> {
       owner: f.owner,
       target,
       status: entry ? CRM_STATUS[entry.status] : "Created",
+      // Prior-session context for this HCP (from @modules/hcpMemory), captured at creation — so whoever
+      // works the follow-up sees the conversation history. Absent for a first-time HCP.
+      context: f.context ?? null,
     };
   });
   return NextResponse.json({ rows });

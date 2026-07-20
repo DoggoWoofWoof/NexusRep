@@ -21,6 +21,7 @@ import { env } from "@lib/env";
 import { configureRetrievalLexicon, RetrievalService } from "@modules/retrieval";
 import { AuditService } from "@modules/audit";
 import { FollowUpService } from "@modules/followups";
+import { HcpMemoryService, distillSession } from "@modules/hcpMemory";
 import { CrmOutbox } from "@modules/crm";
 import { getCrmAdapter, getRetrievalProvider } from "@modules/vendors";
 import { TurnOrchestrator, ConversationService } from "@modules/realtime";
@@ -39,6 +40,8 @@ export interface AppContainer {
   retrieval: RetrievalService;
   audit: AuditService;
   followups: FollowUpService;
+  /** Per-HCP cross-session memory: prior-session recap injected into new sessions + attached to follow-ups. */
+  hcpMemory: HcpMemoryService;
   crm: CrmOutbox;
   orchestrator: TurnOrchestrator;
   sessions: SessionService;
@@ -138,17 +141,24 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
   const retrieval = new RetrievalService(getRetrievalProvider(index), content);
   const audit = new AuditService(repos);
   const studio = new StudioService(repos);
+  // Per-HCP cross-session memory (distilled on session end; injected into new sessions + follow-ups).
+  const hcpMemory = new HcpMemoryService(repos);
   // Setup answers drive follow-up OWNERSHIP: the MSL / pharmacovigilance contacts the brand
   // user configured (by chat or in the escalation section) own the created tasks — the
   // generic labels are only the fallback when nothing is configured.
-  const followups = new FollowUpService(repos, async (type) => {
-    const answers = setupAnswersOf((await studio.get(aiRepId))?.draft);
-    if (type === "pharmacovigilance") return answers["ae_routing"];
-    if (type === "msl" || type === "medical_information") {
-      return answers["msl_contact"]?.replace(/ · (human handoff enabled|no human handoff)$/, "");
-    }
-    return undefined;
-  });
+  const followups = new FollowUpService(
+    repos,
+    async (type) => {
+      const answers = setupAnswersOf((await studio.get(aiRepId))?.draft);
+      if (type === "pharmacovigilance") return answers["ae_routing"];
+      if (type === "msl" || type === "medical_information") {
+        return answers["msl_contact"]?.replace(/ · (human handoff enabled|no human handoff)$/, "");
+      }
+      return undefined;
+    },
+    // Each follow-up carries the HCP's prior-session recap (non-PII) so the next human touch is informed.
+    async (hcpId) => (await hcpMemory.get(hcpId).catch(() => null))?.recap,
+  );
   const crm = new CrmOutbox(getCrmAdapter(), repos);
   // Answer composition: `composer` (resolved above) is the grounded LLM composer when a provider
   // key is present, else null → the deterministic verbatim builder. Same choice as the slide deck.
@@ -200,6 +210,9 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
     // CRM identity via the targeting service (prefix-tolerant, and self-healing when the
     // live cohort recovers). No NPI → truthful "needs_mapping" in the outbox.
     npiFor: (hcpId) => targeting.get(hcpId)?.npi,
+    // Cross-session memory: distill each finished session into it; inject the recap into the next.
+    hcpMemory,
+    resolveAnswerTopic: async (sourceId) => (await content.getAnswer(asId(sourceId)).catch(() => null))?.topic,
   });
   // Self-healing audience source: a boot-time fallback to the modeled cohort (timeout,
   // expired token) retries on demand — throttled — and swaps the LIVE cohort back into
@@ -335,6 +348,21 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
   // default so Sessions / Analytics / Follow-ups show ONLY real conversations.
   if (seedHistory) {
     await seedDemoHistory({ sessions, followups, crm, audit, aiRepId, brandId, campaignId });
+    // Backfill per-HCP memory from the seeded history so a RETURNING HCP shows prior context immediately
+    // (live sessions distill on end(); seeded ones never call it). Oldest-first so "last session" + counts
+    // are right; recordSession dedupes by session id, so this is idempotent across restarts.
+    const resolveTopic = async (id: string) => (await content.getAnswer(asId(id)).catch(() => null))?.topic;
+    const seededAsc = [...(await sessions.list())].sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0));
+    for (const s of seededAsc) {
+      if (s.preview || !s.turns.some((t) => t.speaker === "hcp")) continue;
+      const trail = await audit.forSession(s.id);
+      const facts = await distillSession(
+        { id: s.id, hcpId: s.hcpId, startedAt: s.startedAt, turns: s.turns },
+        trail.map((a) => ({ type: a.type, payload: a.payload })),
+        resolveTopic,
+      );
+      await hcpMemory.recordSession(facts);
+    }
   }
   // The rep: a full launch-ready build (persona, guardrails, sign-off, live) for "demo"/default
   // containers, or a bare DRAFT for "clean" users so their Studio renders (not a null snapshot)
@@ -348,6 +376,7 @@ export async function createContainer(opts?: { seedHistory?: boolean; seedConten
     retrieval,
     audit,
     followups,
+    hcpMemory,
     crm,
     orchestrator,
     sessions,

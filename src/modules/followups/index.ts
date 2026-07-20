@@ -26,6 +26,9 @@ export interface FollowUpTask {
   status: FollowUpStatus;
   dueAt: string | null;
   sourceSessionId: SessionId;
+  /** Prior-session context for this HCP (from @modules/hcpMemory), captured at creation so whoever acts
+   *  on the follow-up sees the conversation history. Non-PII recap only; absent for a first-time HCP. */
+  context?: string;
 }
 
 export class FollowUpService {
@@ -34,10 +37,18 @@ export class FollowUpService {
    *  Setup Assistant answers (msl_contact / ae_routing), so the configured contacts
    *  actually OWN the follow-ups instead of generic labels. */
   private readonly ownerFor?: (type: FollowUpType) => Promise<string | undefined>;
+  /** Optional per-HCP context resolution — wired by the container to @modules/hcpMemory, so each
+   *  follow-up carries the HCP's prior-session recap for the person who acts on it. */
+  private readonly contextFor?: (hcpId: HcpId) => Promise<string | undefined>;
 
-  constructor(repos: RepositoryFactory = new MemoryRepositoryFactory(), ownerFor?: (type: FollowUpType) => Promise<string | undefined>) {
+  constructor(
+    repos: RepositoryFactory = new MemoryRepositoryFactory(),
+    ownerFor?: (type: FollowUpType) => Promise<string | undefined>,
+    contextFor?: (hcpId: HcpId) => Promise<string | undefined>,
+  ) {
     this.tasks = repos.create<FollowUpTask>("followups");
     this.ownerFor = ownerFor;
+    this.contextFor = contextFor;
   }
 
   async create(input: {
@@ -49,6 +60,7 @@ export class FollowUpService {
     seed?: string;
   }): Promise<FollowUpTask> {
     const configured = input.owner ?? (await this.ownerFor?.(input.type).catch(() => undefined));
+    const context = await this.contextFor?.(input.hcpId).catch(() => undefined);
     return this.tasks.insert({
       id: newId<"follow_up_task_id">("fu", input.seed) as FollowUpTaskId,
       hcpId: input.hcpId,
@@ -57,6 +69,7 @@ export class FollowUpService {
       status: "created",
       dueAt: input.dueAt ?? null,
       sourceSessionId: input.sourceSessionId,
+      ...(context ? { context } : {}),
     });
   }
 

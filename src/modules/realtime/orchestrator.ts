@@ -374,6 +374,9 @@ export class TurnOrchestrator {
       composer?: GroundedComposer | null;
       /** Rehearsal coaching (style/emphasis) folded into the composer prompt for this turn. */
       coaching?: string[];
+      /** Cross-session continuity from the HCP's prior-session memory (@modules/hcpMemory). Advisory
+       *  guidance — same status as coaching, subordinate to grounding + the compliance gate. */
+      priorSessionContext?: string[];
       /** Runtime steering from the rep's ACTIVE coaching rules (see activeSteering). */
       steering?: RuleSteering;
       /** Rehearsal/coaching preview: still classifies, retrieves, composes, grounds and gates
@@ -588,7 +591,7 @@ export class TurnOrchestrator {
       // information or a fresh angle instead of re-stating the same few blocks. Deduped + capped so
       // the prompt stays lean. Advisory only (never overrides grounding/gate); deterministic ignores it.
       const antiRepeat = antiRepeatGuidance(priorEvents);
-      const guidance = [...(opts?.coaching ?? []), ...steeringGuidance, ...slideHint, ...antiRepeat];
+      const guidance = [...(opts?.coaching ?? []), ...(opts?.priorSessionContext ?? []), ...steeringGuidance, ...slideHint, ...antiRepeat];
       const composeFn = activeComposer?.available()
         ? (q: string, b: ApprovedAnswer[], extraGuidance: string[] = [], maxTokens = opts?.composerMaxTokens) => activeComposer.compose({
             question: q,
@@ -777,6 +780,7 @@ For anything beyond this, I can connect you with our medical information team.`;
     activeComposer: GroundedComposer,
     opts: {
       coaching?: string[];
+      priorSessionContext?: string[];
       steering?: RuleSteering;
       suppressRelatedSlide?: boolean;
       composerMaxTokens?: number;
@@ -813,6 +817,7 @@ For anything beyond this, I can connect you with our medical information team.`;
       );
       const guidance = [
         ...(opts?.coaching ?? []),
+        ...(opts?.priorSessionContext ?? []),
         ...steeringGuidance,
         ...slideGuidance(slideTitle, relatedTitle),
         ...antiRepeatGuidance(priorEvents),
