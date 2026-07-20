@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { distillSession, foldMemory, buildRecap, type SessionFacts } from "@modules/hcpMemory";
 import { asId, type HcpId, type SessionId } from "@lib/ids";
 import { createContainer } from "@lib/container";
+import type { GroundedComposer } from "@modules/content";
 
 type Ctr = Awaited<ReturnType<typeof createContainer>>;
 const sid = (s: string) => asId<"session_id">(s) as SessionId;
@@ -154,6 +155,40 @@ describe("hcpMemory — wired through the container", () => {
     expect(fu).toBeTruthy();
     expect(fu!.context).toBeTruthy();
     expect(fu!.context).toContain("prior session");
+  });
+
+  it("delivers the prior-session recap into the COMPOSER's guidance on the opening turn of a later session", async () => {
+    // This is what makes the rep actually ANSWER with the context: the recap rides in the composer's
+    // guidance (→ its system prompt). A stub composer captures the guidance it's handed, so we prove the
+    // delivery without an LLM key. (With the real LLM composer this guidance becomes a brief spoken
+    // continuity note; the deterministic no-LLM builder ignores guidance and stays verbatim.)
+    const c = await createContainer();
+    const hcpId = hid("hcp_mem_compose");
+    const base = { hcpId, audience: c.demo.audience, indication: c.demo.indication, market: c.demo.market, investigational: c.demo.investigational };
+    const captured: string[][] = [];
+    const stub: GroundedComposer = {
+      name: "capture",
+      available: () => true,
+      compose: async ({ guidance }) => {
+        captured.push(guidance ?? []);
+        return { text: "Milvexian is an investigational, orally administered Factor XIa inhibitor being studied as an anticoagulant.", latencyMs: 1, truncated: false };
+      },
+    };
+    const hasContinuity = (guides: string[][]) => guides.some((g) => g.some((s) => /prior session/i.test(s)));
+
+    // Session 1 (first-ever contact): the opening turn's composer guidance must NOT mention prior sessions.
+    const s1 = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId });
+    await c.conversation.turn({ sessionId: s1.id, ...base, text: "What is Milvexian?" }, { composer: stub });
+    expect(hasContinuity(captured)).toBe(false);
+    await c.conversation.end(s1.id, { durationSeconds: 20 });
+
+    // Session 2 (returning HCP): the opening turn's composer guidance now carries the prior-session recap.
+    const mark = captured.length;
+    const s2 = await c.conversation.start({ aiRepId: c.demo.aiRepId, hcpId });
+    await c.conversation.turn({ sessionId: s2.id, ...base, text: "What is Milvexian?" }, { composer: stub });
+    const s2Guidance = captured.slice(mark);
+    expect(hasContinuity(s2Guidance)).toBe(true);
+    expect(s2Guidance.some((g) => g.some((s) => /Continuity/i.test(s) && /Previously covered/i.test(s)))).toBe(true);
   });
 
   it("backfills memory from seeded history so a returning HCP has context immediately", async () => {
