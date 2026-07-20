@@ -16,6 +16,7 @@ import {
 } from "./data";
 import { BrandScreens } from "./BrandScreens";
 import { StudioScreen } from "./StudioScreen";
+import { LiveMonitor } from "./LiveMonitor";
 import { HcpExperience } from "./HcpExperience";
 import { useBrand, invalidateBrandCache } from "../_components/useBrand";
 import { installActivityCapture, logNavigation } from "@lib/activity-client";
@@ -366,6 +367,7 @@ function AuthedConsole({ name, isAdmin, authEnabled, onLogout }: { name: string 
           </div>
         </header>
 
+        <LiveMonitor app={app} />
         <main style={{ flex: 1, overflowY: "auto", position: "relative" }}>
           {nav === "overview" && <OverviewScreen app={app} />}
           {nav === "studio" && <StudioScreen app={app} />}
