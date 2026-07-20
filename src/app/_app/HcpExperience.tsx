@@ -288,15 +288,39 @@ export function HcpExperience({ app }: { app?: AppState }) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, sessionId, newSession: openNew, hcpId: inviteHcpId || undefined }),
       });
-      const data = (await res.json()) as { response: string; isiDelivered: boolean; followUp: string | null; detailAid: { title: string; label: string } | null; detailAidSlideId?: string | null; provider: string; latencyMs: number; sessionId?: string };
+      const data = (await res.json()) as { response: string; held?: boolean; isiDelivered: boolean; followUp: string | null; detailAid: { title: string; label: string } | null; detailAidSlideId?: string | null; provider: string; latencyMs: number; sessionId?: string };
       if (playGenRef.current !== gen) return;
       if (!videoOn && data.sessionId) chatSessionRef.current = data.sessionId;
       if (data.followUp) setNotice(followUpNotice(data.followUp));
       finishPending(gen); // request is done — the caption appears in sync with the voice below
+      if (data.held) {
+        // A human representative has taken over — the AI produced no answer. Show a waiting state and
+        // poll for the human's typed reply, then deliver it like any rep turn.
+        setNotice("A representative is responding…");
+        void pollForHumanReply(data.sessionId ?? sessionId, gen);
+        return;
+      }
       // The caption + detail-aid slide land the moment the rep starts speaking (deliverRep), so
       // the transcript never runs ahead of the voice. Superseded turns (barge-in) are dropped.
       void deliverRep(data.response, data.detailAidSlideId, gen);
     } finally { finishPending(gen); }
+  }
+
+  // Poll for a human rep's reply after the AI handed the turn over (held=true). The first poll sets a
+  // baseline rep-turn count; a later poll delivers the reply once a NEW rep turn lands. Bounded to ~3 min.
+  async function pollForHumanReply(sid: string | undefined, gen: number) {
+    if (!sid) { setNotice(""); return; }
+    let base: number | null = null;
+    for (let i = 0; i < 90 && playGenRef.current === gen; i++) {
+      try {
+        const res = await fetch(`/api/conversation/poll?sessionId=${encodeURIComponent(sid)}&repSeen=${base ?? 0}`);
+        const d = (await res.json()) as { newReply: string | null; repCount: number };
+        if (base === null) base = d.repCount;
+        else if (d.repCount > base) { setNotice(""); if (d.newReply) void deliverRep(d.newReply, null, gen); return; }
+      } catch { /* transient — keep polling */ }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    setNotice("");
   }
 
   // The one place that fetches a presentation STEP and delivers it. Shared by the deck buttons

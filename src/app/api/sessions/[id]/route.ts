@@ -51,6 +51,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       recordingDurationMs: session.recordingDurationMs ?? null,
       timelineSource: session.timelineSource ?? null,
       endReason: session.endReason ?? null,
+      // Live-monitoring / takeover state: a session is "live" while it has no end reason and no recording
+      // yet; takenOverBy names the human rep currently handling it (null = the AI is answering).
+      live: !session.endReason && !session.recordingUrl,
+      takenOverBy: session.takenOverBy ?? null,
     },
     turns,
     audit: audit.map((a) => ({ seq: a.seq, type: a.type, payload: a.payload })),

@@ -39,7 +39,7 @@ export async function POST(req: Request): Promise<NextResponse> {
         }
       : undefined;
   const t0 = Date.now();
-  const { output } = await c.conversation.turn(
+  const { output, held } = await c.conversation.turn(
     {
       sessionId,
       hcpId,
@@ -78,6 +78,9 @@ export async function POST(req: Request): Promise<NextResponse> {
   return NextResponse.json({
     route: output.route,
     response: output.responseText,
+    // A human rep has taken over — the AI produced no answer; the client should show a "representative
+    // is responding" wait and poll the session transcript for the human's reply.
+    held: held ?? false,
     isiDelivered: output.isiAttached,
     followUp: output.followUpType ?? null,
     detailAid,

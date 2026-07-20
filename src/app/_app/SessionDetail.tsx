@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { type AppState } from "./NexusRepApp";
 import { card, eyebrow, h1 } from "./ui";
+import { LiveTakeover } from "./LiveTakeover";
 import { TRAIN_SEED_KEY } from "./data";
 import { SlideView } from "../_components/SlideView";
 import { mmss } from "@lib/format";
@@ -262,6 +263,7 @@ export function SessionDetail({ app }: { app: AppState }) {
         <div style={eyebrow}>Session Detail · live record</div>
         <h1 style={{ ...h1, marginBottom: 6 }}>{s.hcp} — session review</h1>
         <p style={{ font: "400 12.5px/1.5 var(--dn-font-sans)", color: "var(--dn-fg-muted)", margin: "0 0 12px" }}>{app.selectedSessionId} · {mmss(effectiveDuration)} · {detail.audit.length} audited events — every turn is a provable record.</p>
+        {app.selectedSessionId && <LiveTakeover sessionId={app.selectedSessionId} />}
         {videoError && s.recordingUrl && (
           <div style={{ margin: "0 0 12px", padding: "9px 12px", border: "1px solid #f0a3a3", background: "#fdecec", borderRadius: 8, font: "600 11.5px/1.45 var(--dn-font-sans)", color: "#8a1f1f" }}>
             The recording for this session couldn&apos;t be loaded — the clip is likely truncated or corrupted, or it isn&apos;t on this server instance. The click-through transcript + audit below are the complete, provable record.
