@@ -95,12 +95,27 @@ export class ConversationService {
    * escalates — enqueues a CRM event to the outbox (delivered asynchronously by
    * the swappable adapter, never inline in the conversation).
    */
-  async turn(ctx: TurnContext, opts?: TurnOpts): Promise<{ output: TurnOutput; session: ConversationSession | null }> {
+  async turn(ctx: TurnContext, opts?: TurnOpts): Promise<{ output: TurnOutput; session: ConversationSession | null; held?: boolean }> {
     // Recover a mistranscribed/typo'd product name ("no vexian" → "Milvexian") BEFORE the
     // turn is logged, classified, or retrieved — so a garbled name is answered, not bounced.
     const text = canonicalizeProductNames(ctx.text);
     const turnCtx = text === ctx.text ? ctx : { ...ctx, text };
-    const existing = opts?.reuseLatestHcpTurn ? await this.deps.sessions.get(turnCtx.sessionId) : null;
+    const current = await this.deps.sessions.get(turnCtx.sessionId);
+
+    // HUMAN TAKEOVER: a human rep is handling this conversation → log the HCP turn but DON'T run the AI.
+    // The turn is HELD for the human (who answers via humanReply); it still enters the transcript, so it
+    // becomes part of the context the AI is handed back on hand-back.
+    if (current?.takenOverBy) {
+      const last = current.turns[current.turns.length - 1];
+      if (!(last?.speaker === "hcp" && sameTurnText(last.text, turnCtx.text))) {
+        await this.deps.sessions.appendTurn(turnCtx.sessionId, { speaker: "hcp", text: turnCtx.text });
+      }
+      const session = await this.deps.sessions.get(turnCtx.sessionId);
+      const output: TurnOutput = { route: "human_handoff", responseText: "", sourceIds: [], isiAttached: false, decision: "approved", reasons: ["human_takeover"] };
+      return { output, session, held: true };
+    }
+
+    const existing = opts?.reuseLatestHcpTurn ? current : null;
     const latest = existing?.turns[existing.turns.length - 1];
     const alreadyLogged =
       latest?.speaker === "hcp" &&
@@ -142,6 +157,27 @@ export class ConversationService {
 
     const session = await this.deps.sessions.get(ctx.sessionId);
     return { output, session };
+  }
+
+  /** A human rep TAKES OVER a live conversation: from now, turn() holds HCP messages for the human
+   *  instead of answering with the AI. Logged for audit. */
+  async takeOver(sessionId: TurnContext["sessionId"], by: string): Promise<ConversationSession | null> {
+    await this.deps.audit.record(sessionId, "human_takeover", { by, action: "taken_over" });
+    return this.deps.sessions.setTakeover(sessionId, by);
+  }
+
+  /** Hand the conversation BACK to the AI. The AI resumes on the next turn with the full transcript —
+   *  including everything the human said — as its context. */
+  async handBack(sessionId: TurnContext["sessionId"]): Promise<ConversationSession | null> {
+    await this.deps.audit.record(sessionId, "human_takeover", { action: "handed_back" });
+    return this.deps.sessions.setTakeover(sessionId, null);
+  }
+
+  /** Append a HUMAN rep's reply during a takeover — logged + marked human-authored, delivered to the HCP
+   *  like any rep turn, and kept in the transcript so the AI has it as context on hand-back. */
+  async humanReply(sessionId: TurnContext["sessionId"], input: { text: string; by: string }): Promise<ConversationSession | null> {
+    await this.deps.audit.record(sessionId, "human_reply", { by: input.by });
+    return this.deps.sessions.appendTurn(sessionId, { speaker: "rep", text: input.text, human: true });
   }
 
   async end(sessionId: TurnContext["sessionId"], input?: { durationSeconds?: number; endedAt?: string }): Promise<ConversationSession | null> {

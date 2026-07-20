@@ -20,7 +20,9 @@ export type AuditEventType =
   | "follow_up_created"
   | "crm_event"
   | "coaching_rule_applied"
-  | "correction";
+  | "correction"
+  | "human_takeover"
+  | "human_reply";
 
 export interface AuditRecord {
   id: AuditEventId;

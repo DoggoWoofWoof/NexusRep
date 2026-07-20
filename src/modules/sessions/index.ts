@@ -29,6 +29,9 @@ export interface ConversationTurn {
   detailAidSlideId?: string;
   /** ISO timestamp when the turn was logged (drives the click-through transcript). */
   at?: string;
+  /** True when a HUMAN rep authored this turn (during a takeover) rather than the AI — so the
+   *  transcript, audit, and any hand-back-to-AI context can tell them apart. */
+  human?: boolean;
 }
 
 export interface ConversationSession {
@@ -51,6 +54,10 @@ export interface ConversationSession {
   /** Length of the captured recording in ms (client MediaRecorder clock). Lets Session review detect
    *  a recording that ends before the transcript did (video switched off early / truncated). */
   recordingDurationMs?: number;
+  /** When set, a HUMAN rep has TAKEN OVER this live conversation (the username). While set, the AI does
+   *  NOT answer — HCP turns are logged and held for the human; the human's replies are appended directly.
+   *  Cleared on hand-back, after which the AI resumes with the full transcript (incl. human turns) as context. */
+  takenOverBy?: string;
   /** Review timeline source. "recorded" means turn.at is already synced to the playback recording. */
   timelineSource?: "recorded";
   /** True when this is a BRAND-USER PREVIEW (opened /hcp to try the rep) rather than a real invited
@@ -167,7 +174,7 @@ export class SessionService {
 
   async appendTurn(
     sessionId: SessionId,
-    input: { speaker: "hcp" | "rep"; text: string; sourceIds?: string[]; detailAidSlideId?: string; seed?: string; at?: string },
+    input: { speaker: "hcp" | "rep"; text: string; sourceIds?: string[]; detailAidSlideId?: string; seed?: string; at?: string; human?: boolean },
   ): Promise<ConversationSession | null> {
     return this.serialize(sessionId, async () => {
       const s = await this.sessions.get(sessionId);
@@ -179,12 +186,18 @@ export class SessionService {
         text: input.text,
         sourceIds: input.sourceIds ?? [],
         ...(input.detailAidSlideId ? { detailAidSlideId: input.detailAidSlideId } : {}),
+        ...(input.human ? { human: true } : {}),
         at: input.at ?? new Date().toISOString(),
       };
       const turns = [...s.turns, turn];
       const questionCount = turns.filter((t) => t.speaker === "hcp").length;
       return this.sessions.update(sessionId, { turns, questionCount });
     });
+  }
+
+  /** Set (username) or clear (null) which human rep has taken over this live conversation. */
+  async setTakeover(sessionId: SessionId, by: string | null): Promise<ConversationSession | null> {
+    return this.sessions.update(sessionId, { takenOverBy: by ?? undefined });
   }
 
   async removeRecentTurn(
