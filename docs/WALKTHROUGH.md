@@ -10,7 +10,43 @@
 
 ## 1. Current build status
 
-### Latest: Per-session vendor usage & cost ledger (Claude / OpenAI / TTS / Tavus) (2026-07-20)
+### Latest: Human-in-the-loop takeover + live monitoring + realtime transcripts (2026-07-20)
+
+A human brand rep can take over a live HCP conversation at any point; from then the AI stays silent and
+the human answers directly, with the whole exchange kept on **our** side (Postgres transcript + audit),
+not Tavus. "Keep the human trusted but log everything."
+- **Takeover mechanic (`modules/realtime`):** `session.takenOverBy` gates `ConversationService.turn()` —
+  while taken over, an HCP turn is logged but **held** (returns `{held:true}`, empty AI text, orchestrator
+  never runs). `takeOver` / `humanReply` (trusted, NOT gated, but fully logged + marked `human:true`) /
+  `handBack` on `ConversationService`; new `human_takeover` + `human_reply` audit event types.
+- **Take over from Sessions:** `LiveTakeover.tsx` (self-gates on `session.live`) in Session review —
+  Take over / reply / Hand back; `LiveMonitor.tsx` banner (red for needs-human, green "N live now" with a
+  rolling last-utterance preview). Endpoints: `POST /api/conversation/takeover` (brand-gated),
+  `GET /api/sessions/live` (brand-gated), `GET /api/conversation/poll` (**public** — the doctor is
+  unauthenticated — rate-limited "beacon").
+- **Realtime transcripts (few-sec lag):** doctor page polls `/api/conversation/poll` (~3 s) to receive the
+  human's reply; the brand `LiveTakeover` polls `/api/sessions/[id]` (~3 s); `LiveMonitor` polls (~5 s).
+  On a held turn the doctor sees only "A representative is responding…" (never any takeover jargon).
+- **Context/memory given back to the AI (the fix):** `humanReply` now records the reply **text** in the
+  `human_reply` audit event, and `antiRepeatGuidance` scans `human_reply` events too — so on hand-back the
+  AI builds on what the human said instead of parroting it. Advisory only; grounding still validates every
+  composed answer against approved blocks (can make the AI *avoid* repeating a human, never speak
+  ungrounded). `/api/sessions/[id]` returns `human` per turn so review + `LiveTakeover` style human turns.
+- **Verified:** live end-to-end against a running server — AI answers → take over (`takenOverBy` set) →
+  HCP turn **held** (empty AI text) → human reply → doctor poll **delivers** it → hand back → AI resumes
+  with the transcript intact; audit shows `human_takeover ×2` + `human_reply`. Re-driven through the real
+  **doctor UI** in the browser (MOA answer → "A representative is responding…" → human reply on screen →
+  AI resumes on the LIBREXIA question, deck advanced 2/9→3/9). `takeover.test.ts` asserts the loop + that
+  the human text lands in the audit trail. 568 unit/integration pass; typecheck clean. Commits `a07802d`
+  (human flag) + `caf3992` (hand-back context + test).
+- **Known limits / next:** memory is **within-session** (the AI conditions on this conversation's turns +
+  human replies). **Cross-session per-HCP memory** — carrying a doctor's prior sessions into a new one —
+  is **not built** (the transcript substrate exists; aggregation/injection does not). A human's free-text
+  reply has no approved-source ids, so it does not re-bias `contextualRetrievalText` topic selection for a
+  later bare follow-up (stays anchored to the last *approved* topic — the safe choice). Takeover state is
+  in-memory with the session store (durable via the managed-Postgres path).
+
+### Per-session vendor usage & cost ledger (Claude / OpenAI / TTS / Tavus) (2026-07-20)
 
 Detailed, per-conversation tracking of every PAID vendor call, so the admin can see what a session
 actually cost — token/char/minute counts (vendor-reported, exact) + a directional list-price $ estimate.
