@@ -34,7 +34,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
         const answer = await c.content.getAnswer(asId(t.sourceIds[0]));
         detailAidSlideId = answer?.detailAidSlideId ?? null;
       }
-      return { speaker: t.speaker, text: t.text, sourceIds: t.sourceIds, detailAidSlideId, at: t.at ?? null };
+      return { speaker: t.speaker, text: t.text, sourceIds: t.sourceIds, detailAidSlideId, at: t.at ?? null, human: t.human ?? false };
     }),
   );
   return NextResponse.json({
