@@ -125,6 +125,20 @@ export function deriveLexicon(blocks: TopicedBlock[], opts?: { productLimit?: nu
   };
 }
 
+/**
+ * Precision pass for feeding derived synonyms into the retrieval re-rank: keep only terms DISTINCTIVE
+ * to a single topic. A term appearing under two+ topics (e.g. "indications", "three") is non-specific
+ * noise that cross-contaminates routing — dropping it is what lets the derived synonyms enrich matching
+ * without tilting borderline cases. (The full derived set is still kept for the benchmark + candidates.)
+ */
+export function distinctiveTopicSynonyms(topicSynonyms: Record<string, string[]>): Record<string, string[]> {
+  const topicsPerTerm = new Map<string, number>();
+  for (const words of Object.values(topicSynonyms)) for (const w of new Set(words)) topicsPerTerm.set(w, (topicsPerTerm.get(w) ?? 0) + 1);
+  const out: Record<string, string[]> = {};
+  for (const [topic, words] of Object.entries(topicSynonyms)) out[topic] = words.filter((w) => (topicsPerTerm.get(w) ?? 0) <= 1);
+  return out;
+}
+
 /** Union derived ∪ reference (hand-authored stays a floor). Reference terms come first, deduped. */
 export function mergeLexicon(derived: Lexicon, reference: Lexicon): Lexicon {
   const uniq = (xs: string[]) => [...new Set(xs.map((x) => x.trim()).filter(Boolean))];

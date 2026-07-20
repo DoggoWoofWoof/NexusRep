@@ -91,10 +91,18 @@ function hasAny(hay: Set<string>, terms: string[]): boolean {
 // program's trial name, the target pathway). Configured by the container from the
 // BrandProfile so this engine file stays brand-free.
 let TOPIC_SYNONYMS: Record<string, string[]> = {};
-export function configureRetrievalLexicon(topicSynonyms: Record<string, string[]>): void {
-  TOPIC_SYNONYMS = Object.fromEntries(
-    Object.entries(topicSynonyms).map(([topic, words]) => [topic.toLowerCase(), words.map((w) => w.toLowerCase().trim()).filter(Boolean)]),
-  );
+// Learned-from-ingest synonyms (candidates derived from uploaded/seeded content). They contribute only
+// a small, CAPPED nudge in topicBonus — so ingested vocabulary steers toward its topic but can NEVER
+// hijack routing the way a curated rule (or an unbounded raw union) does. This is what makes it safe to
+// feed the derived lexicon into the re-rank: the derivation's noise nudges, it doesn't override.
+let DERIVED_SYNONYMS: Record<string, string[]> = {};
+const DERIVED_SYNONYM_CAP = 2; // max total nudge from learned synonyms; a curated hit is +12/+16
+const normalizeSyns = (m: Record<string, string[]>): Record<string, string[]> =>
+  Object.fromEntries(Object.entries(m).map(([topic, words]) => [topic.toLowerCase(), words.map((w) => w.toLowerCase().trim()).filter(Boolean)]));
+
+export function configureRetrievalLexicon(topicSynonyms: Record<string, string[]>, derivedSynonyms: Record<string, string[]> = {}): void {
+  TOPIC_SYNONYMS = normalizeSyns(topicSynonyms);
+  DERIVED_SYNONYMS = normalizeSyns(derivedSynonyms);
 }
 
 function topicBonus(query: string, queryWords: Set<string>, answer: ApprovedAnswer): number {
@@ -126,6 +134,14 @@ function topicBonus(query: string, queryWords: Set<string>, answer: ApprovedAnsw
   for (const [topicKey, words] of Object.entries(TOPIC_SYNONYMS)) {
     if (hasAny(queryWords, words) && topic.includes(topicKey)) bonus += /program|trial|study/.test(topicKey) ? 16 : 12;
   }
+  // Learned-from-ingest synonyms: a SMALL, capped nudge — never enough to override a curated rule. This
+  // lets ingested docs enrich matching while the derivation's noise can only tilt, not hijack (the raw
+  // union previously fed these in at +12 and derailed routing — see tests/lifecycle, routing-robustness).
+  let derivedNudge = 0;
+  for (const [topicKey, words] of Object.entries(DERIVED_SYNONYMS)) {
+    if (hasAny(queryWords, words) && topic.includes(topicKey)) derivedNudge += 1;
+  }
+  bonus += Math.min(derivedNudge, DERIVED_SYNONYM_CAP);
   if (namedProgramHit && /mechanism|action/i.test(topic) && !namedMechanismHit) bonus -= 8;
   if (hasAny(queryWords, ["isi", "safety", "disclosure", "warning", "warnings"])) {
     if (/safety|isi|important safety/i.test(topic)) bonus += 10;

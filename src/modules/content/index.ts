@@ -12,7 +12,7 @@ export { buildApprovedResponse, slideReference, type BuiltResponse } from "./res
 // parsers (node:fs / node:path via pptx/pdf/ingest), so CLIENT components must import the client-safe
 // leaf `@modules/content/overviewPrompt` directly rather than this barrel.
 export { getComposer, resolveComposer, firstAvailableComposer, defaultComposer, withUsageLedger, composeGreeting, compactCoaching, llmComplete, type GroundedComposer, type ComposeInput } from "./composer";
-export { deriveLexicon, deriveProductTerms, deriveTopicSynonyms, mergeLexicon, scoreLexiconCoverage, type Lexicon, type TopicedBlock, type LexiconCoverage } from "./lexicon";
+export { deriveLexicon, deriveProductTerms, deriveTopicSynonyms, mergeLexicon, distinctiveTopicSynonyms, scoreLexiconCoverage, type Lexicon, type TopicedBlock, type LexiconCoverage } from "./lexicon";
 export {
   mergePlan,
   PresentationSkill,

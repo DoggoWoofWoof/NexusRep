@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveLexicon, deriveProductTerms, deriveTopicSynonyms, mergeLexicon, scoreLexiconCoverage } from "@modules/content";
+import { deriveLexicon, deriveProductTerms, deriveTopicSynonyms, mergeLexicon, distinctiveTopicSynonyms, scoreLexiconCoverage } from "@modules/content";
 
 // Stand-in for "the ingested Milvexian deck" — topic-tagged blocks like ingestSource produces.
 const blocks = [
@@ -48,5 +48,16 @@ describe("benchmark the derivation against the hand-authored lexicon", () => {
     const merged = mergeLexicon(deriveLexicon(blocks), reference);
     expect(merged.productTerms).toContain("apixaban"); // reference floor preserved even though derivation missed it
     expect(merged.productTerms).toContain("milvexian"); // derived terms present too
+  });
+
+  it("distinctiveTopicSynonyms drops cross-topic noise, keeps topic-unique terms (the precision pass)", () => {
+    const filtered = distinctiveTopicSynonyms({
+      program: ["acs", "af", "indications"],
+      status: ["designation", "indications", "track"],
+    });
+    expect(filtered.program).toEqual(expect.arrayContaining(["acs", "af"]));
+    expect(filtered.program).not.toContain("indications"); // appears under BOTH topics → cross-contamination → dropped
+    expect(filtered.status).toEqual(expect.arrayContaining(["designation", "track"]));
+    expect(filtered.status).not.toContain("indications");
   });
 });

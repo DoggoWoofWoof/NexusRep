@@ -14,7 +14,7 @@ import { getRepositoryFactory, makeRepositoryFactory } from "@lib/db";
 import { DEFAULT_OWNER_KEY } from "@lib/active-call";
 import type { RepositoryFactory } from "@lib/repository";
 import { appAuthEnabled, usernameFromCookie, userData, SESSION_COOKIE } from "@lib/auth-session";
-import { ContentService, PresentationSkill, defaultComposer, withUsageLedger, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
+import { ContentService, PresentationSkill, defaultComposer, withUsageLedger, deriveLexicon, distinctiveTopicSynonyms, type ApprovedAnswer, type ContentAsset, type MlrMetadata, type SafetyStatement } from "@modules/content";
 import { getUsageLedger, type UsageLedger } from "@modules/usage";
 import { configureClassifierLexicon, resolveClassifier } from "@modules/compliance";
 import { env } from "@lib/env";
@@ -74,17 +74,15 @@ export interface AppContainer {
 // onboarding a new brand supplies vocabulary via its profile, never engine edits. Per-user
 // containers may pass their OWN brand (e.g. a blank profile for "clean" accounts).
 const baseBrand = getBrandProfile();
-// Runtime steers on the HAND-AUTHORED lexicon only. We tried unioning the derived lexicon in here, but
-// the behavior check (tests/lifecycle, orchestrator, routing-robustness) caught real retrieval drift:
-// the raw derived terms are near-complete (100% product / ~92% topic recall — see tests/lexicon-seed)
-// but too BROAD to steer the re-rank precisely (generic topic synonyms cross-contaminate, and derived
-// "product terms" sweep in indications/sponsors). So the derivation is a CANDIDATE suggester + benchmark
-// (it runs + is logged at ingest), not a blind auto-union — a human approves its extras into the
-// hand-authored lexicon (curation), still far less work than authoring the vocabulary from scratch. A
-// precision pass (keep only drug/program candidates, drop generic synonyms) is the prerequisite before
-// any subset could safely auto-steer the re-rank.
+// Retrieval steers on the curated hand-authored lexicon PLUS vocabulary LEARNED from the brand's approved
+// content — but the learned synonyms go in as a SEPARATE, BOUNDED signal (configureRetrievalLexicon's 2nd
+// arg): topicBonus caps their contribution to +DERIVED_SYNONYM_CAP, so ingested docs enrich matching while
+// the derivation's noise can only tilt, never hijack (a raw union fed these at +12 and derailed routing —
+// see tests/routing-robustness). The classifier stays on curated product terms for now — the derived set
+// mixes in indications/sponsors, a separate precision question. Empty content → derived empty → no-op.
+const derivedLexicon = deriveLexicon(baseBrand.approvedAnswers.map((a) => ({ topic: a.topic, text: a.text })));
 configureClassifierLexicon([...baseBrand.lexicon.productTerms, ...baseBrand.persona.hotwords]);
-configureRetrievalLexicon(baseBrand.lexicon.topicSynonyms);
+configureRetrievalLexicon(baseBrand.lexicon.topicSynonyms, distinctiveTopicSynonyms(derivedLexicon.topicSynonyms));
 
 /** Build a fully-wired, demo-seeded container. Synchronous wiring; async seeding. */
 export async function createContainer(opts?: { seedHistory?: boolean; seedContent?: boolean; seedStudio?: "full" | "draft"; repos?: RepositoryFactory; brand?: BrandProfile; owner?: string }): Promise<AppContainer> {
