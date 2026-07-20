@@ -34,23 +34,40 @@ function tokenize(text: string): string[] {
 
 const norm = (s: string): string => s.toLowerCase().trim();
 
+// International Nonproprietary Name (INN) drug stems — WHO-standardized suffixes shared across a drug
+// CLASS, not any one brand (-xaban = Factor Xa inhibitors, -mab = antibodies, -sartan = ARBs, …).
+// Recognizing them catches drug names — including LOWERCASE comparators like "apixaban" that carry no
+// capital/acronym cue — for ANY pharma brand. Pharma-universal, like the AE/ISI compliance concepts;
+// it holds zero brand-specific vocabulary, so it generalizes rather than hardcoding Milvexian's world.
+const DRUG_STEM = /(?:xaban|parin|sartan|gliptin|gliflozin|tinib|ciclib|rafenib|zumab|ximab|mab|nib|navir|tegravir|ciclovir|prazole|vastatin|statin|dipine|floxacin|conazole|dronate|setron|triptan|profen|coxib|parib|caine|semide|thiazide|glutide)$/;
+
 /**
- * Salient PRODUCT terms: ALL-CAPS acronyms (LIBREXIA, ACS, FXIa) + capitalized proper nouns that recur
- * (Milvexian, Apixaban) — frequency-ranked, stoplisted, deduped. Heuristic, no NLP dependency.
+ * Salient PRODUCT terms from four brand-free signals: ALL-CAPS acronyms (LIBREXIA, ACS, FXIa),
+ * capitalized proper nouns (Milvexian, Johnson), capitalized multi-word phrases (Factor XIa, Bristol
+ * Myers), and drug names by INN stem (apixaban) — frequency-ranked, stoplisted, deduped. No NLP dep.
  */
 export function deriveProductTerms(blocks: { text: string }[], limit = 24): string[] {
   const freq = new Map<string, number>();
-  const bump = (t: string) => freq.set(t, (freq.get(t) ?? 0) + 1);
+  const bump = (t: string, w = 1) => freq.set(t, (freq.get(t) ?? 0) + w);
   for (const b of blocks) {
     // Acronyms / mixed-case program names: ALL-CAPS run (ACS, ISI, LIBREXIA) or Xx…X…digits (FXIa).
     for (const m of b.text.match(/\b[A-Z]{2,10}\b|\b[A-Z][a-zA-Z]*[A-Z][A-Za-z0-9]{0,6}\b/g) ?? []) {
       const t = norm(m);
-      if (t.length >= 2 && !STOP.has(t)) bump(t);
+      if (t.length >= 2 && !STOP.has(t)) bump(t, 2);
     }
     // Capitalized proper nouns NOT at sentence start (so "The" / sentence openers don't dominate).
     for (const m of b.text.match(/(?<=[a-z0-9,;:)\]]\s+)[A-Z][a-z]{3,}/g) ?? []) {
       const t = norm(m);
       if (!STOP.has(t)) bump(t);
+    }
+    // Capitalized multi-word phrases kept whole (Factor XIa, Bristol Myers) — a real multi-token term.
+    for (const m of b.text.match(/\b[A-Z][a-zA-Z]+ [A-Z][a-zA-Z0-9]+\b/g) ?? []) {
+      const t = norm(m);
+      if (!t.split(" ").every((w) => STOP.has(w))) bump(t);
+    }
+    // Drug names by INN stem — the only way to catch a LOWERCASE comparator (apixaban); brand-agnostic.
+    for (const m of b.text.toLowerCase().match(/\b[a-z]{6,}\b/g) ?? []) {
+      if (!STOP.has(m) && DRUG_STEM.test(m)) bump(m, 2);
     }
   }
   return [...freq.entries()]
@@ -63,11 +80,17 @@ export function deriveProductTerms(blocks: { text: string }[], limit = 24): stri
  * Per-topic SYNONYMS via a TF-IDF-style score: a term scores high for a topic when it's frequent in
  * that topic's blocks AND rare across other topics (i.e. it distinguishes the topic).
  */
-export function deriveTopicSynonyms(blocks: TopicedBlock[], perTopic = 8): Record<string, string[]> {
+export function deriveTopicSynonyms(blocks: TopicedBlock[], perTopic = 12): Record<string, string[]> {
   const tokensByTopic = new Map<string, string[]>();
   const topicsPerTerm = new Map<string, Set<string>>();
   for (const b of blocks) {
-    const toks = tokenize(b.text).filter((t) => t.length > 3);
+    const words = tokenize(b.text).filter((t) => t.length > 3);
+    // ALSO keep short ALL-CAPS acronyms (AF, ACS, TIA, FXIa) — strong topic markers the length filter
+    // above would otherwise drop. Taken from the ORIGINAL text so casing survives, then normalized.
+    const acronyms = (b.text.match(/\b[A-Z]{2,6}\b|\b[A-Z][a-z]*[A-Z][A-Za-z0-9]{0,4}\b/g) ?? [])
+      .map(norm)
+      .filter((a) => a.length >= 2 && !STOP.has(a));
+    const toks = [...words, ...acronyms];
     tokensByTopic.set(b.topic, (tokensByTopic.get(b.topic) ?? []).concat(toks));
     for (const t of new Set(toks)) {
       const s = topicsPerTerm.get(t) ?? new Set<string>();
@@ -84,8 +107,10 @@ export function deriveTopicSynonyms(blocks: TopicedBlock[], perTopic = 8): Recor
       const idf = Math.log((topicCount + 1) / (topicsPerTerm.get(t)?.size ?? 1));
       return [t, f * (idf + 0.05)] as [string, number];
     });
+    // Rank by score, then prefer the LONGER term (a distinctive domain word like "thrombosis" is a more
+    // useful synonym than a short common one at the same score), then alphabetical for determinism.
     out[topic] = scored
-      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+      .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length || (a[0] < b[0] ? -1 : 1))
       .slice(0, perTopic)
       .map(([t]) => t);
   }
@@ -116,8 +141,14 @@ export interface LexiconCoverage {
   productTermsMissed: string[];
   /** Derived terms NOT in the reference — candidate new vocabulary the hand-authored set lacked. */
   productTermsExtra: string[];
-  /** Fraction of hand-authored topic synonyms recovered, across all reference topics. */
+  /** Fraction of hand-authored topic synonyms recovered under the SAME topic key (strict — undersells
+   *  when the ingested content uses finer-grained topics than the reference). */
   topicSynonymRecall: number;
+  /** Fraction of hand-authored topic synonyms the derivation surfaced ANYWHERE (any topic, or as a
+   *  product term). This is the real "will the runtime UNION cover it?" number. */
+  topicSynonymRecallGlobal: number;
+  /** Hand-authored topic terms not derived under ANY topic — the residue that still needs authoring. */
+  topicTermsMissedGlobal: string[];
 }
 
 const fuzzyHas = (set: Set<string>, term: string): boolean =>
@@ -136,13 +167,21 @@ export function scoreLexiconCoverage(derived: Lexicon, reference: Lexicon): Lexi
   const refPset = new Set(refP);
   const extra = [...derP].filter((t) => !fuzzyHas(refPset, t)).slice(0, 24);
 
+  // Every derived vocabulary term (topic synonyms + product terms) — what the runtime union provides.
+  const allDerived = new Set<string>(derived.productTerms.map(norm));
+  for (const terms of Object.values(derived.topicSynonyms)) for (const t of terms) allDerived.add(norm(t));
+
   let topicHit = 0;
   let topicTotal = 0;
+  let globalHit = 0;
+  const topicTermsMissedGlobal: string[] = [];
   for (const [topic, refTerms] of Object.entries(reference.topicSynonyms)) {
     const der = new Set((derived.topicSynonyms[topic] ?? []).map(norm));
     for (const rt of refTerms.map(norm)) {
       topicTotal += 1;
-      if (fuzzyHas(der, rt)) topicHit += 1;
+      if (fuzzyHas(der, rt)) topicHit += 1; // strict: same topic key
+      if (fuzzyHas(allDerived, rt)) globalHit += 1; // global: anywhere in the derived vocabulary
+      else topicTermsMissedGlobal.push(rt);
     }
   }
 
@@ -152,5 +191,7 @@ export function scoreLexiconCoverage(derived: Lexicon, reference: Lexicon): Lexi
     productTermsMissed: missed,
     productTermsExtra: extra,
     topicSynonymRecall: topicTotal ? topicHit / topicTotal : 1,
+    topicSynonymRecallGlobal: topicTotal ? globalHit / topicTotal : 1,
+    topicTermsMissedGlobal: [...new Set(topicTermsMissedGlobal)],
   };
 }

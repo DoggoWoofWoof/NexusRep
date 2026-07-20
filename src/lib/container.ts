@@ -74,6 +74,15 @@ export interface AppContainer {
 // onboarding a new brand supplies vocabulary via its profile, never engine edits. Per-user
 // containers may pass their OWN brand (e.g. a blank profile for "clean" accounts).
 const baseBrand = getBrandProfile();
+// Runtime steers on the HAND-AUTHORED lexicon only. We tried unioning the derived lexicon in here, but
+// the behavior check (tests/lifecycle, orchestrator, routing-robustness) caught real retrieval drift:
+// the raw derived terms are near-complete (100% product / ~92% topic recall — see tests/lexicon-seed)
+// but too BROAD to steer the re-rank precisely (generic topic synonyms cross-contaminate, and derived
+// "product terms" sweep in indications/sponsors). So the derivation is a CANDIDATE suggester + benchmark
+// (it runs + is logged at ingest), not a blind auto-union — a human approves its extras into the
+// hand-authored lexicon (curation), still far less work than authoring the vocabulary from scratch. A
+// precision pass (keep only drug/program candidates, drop generic synonyms) is the prerequisite before
+// any subset could safely auto-steer the re-rank.
 configureClassifierLexicon([...baseBrand.lexicon.productTerms, ...baseBrand.persona.hotwords]);
 configureRetrievalLexicon(baseBrand.lexicon.topicSynonyms);
 

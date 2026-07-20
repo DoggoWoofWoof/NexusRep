@@ -22,11 +22,12 @@ describe("derived lexicon vs the REAL seeded Milvexian deck", () => {
         `\n  found            : ${JSON.stringify(cov.productTermsFound)}` +
         `\n  MISSED           : ${JSON.stringify(cov.productTermsMissed)}` +
         `\n  extra candidates : ${JSON.stringify(cov.productTermsExtra.slice(0, 12))}` +
-        `\ntopicSynonym recall: ${(cov.topicSynonymRecall * 100).toFixed(0)}%` +
-        `\n  derived per-topic: ${JSON.stringify(derived.topicSynonyms)}\n`,
+        `\ntopicSynonym recall: ${(cov.topicSynonymRecall * 100).toFixed(0)}% same-key, ${(cov.topicSynonymRecallGlobal * 100).toFixed(0)}% global (union)` +
+        `\n  topic terms still needing authoring: ${JSON.stringify(cov.topicTermsMissedGlobal)}\n`,
     );
 
     // Assert a real floor so the benchmark is a guardrail, not just a printout.
-    expect(cov.productTermRecall).toBeGreaterThan(0.4);
+    expect(cov.productTermRecall).toBe(1); // every hand-authored product term is now derivable
+    expect(cov.topicSynonymRecallGlobal).toBeGreaterThan(0.9); // union covers all topic terms except ones absent from the deck
   });
 });
