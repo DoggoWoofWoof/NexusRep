@@ -176,7 +176,10 @@ export class ConversationService {
   /** Append a HUMAN rep's reply during a takeover — logged + marked human-authored, delivered to the HCP
    *  like any rep turn, and kept in the transcript so the AI has it as context on hand-back. */
   async humanReply(sessionId: TurnContext["sessionId"], input: { text: string; by: string }): Promise<ConversationSession | null> {
-    await this.deps.audit.record(sessionId, "human_reply", { by: input.by });
+    // Log the human's message text into the audit trail (not just "a human replied"). On hand-back the
+    // orchestrator reads this trail for its within-session memory (anti-repeat / already-covered), so
+    // recording the text is what lets the AI account for what the human already said and not parrot it.
+    await this.deps.audit.record(sessionId, "human_reply", { by: input.by, text: input.text });
     return this.deps.sessions.appendTurn(sessionId, { speaker: "rep", text: input.text, human: true });
   }
 

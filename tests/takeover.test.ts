@@ -44,6 +44,14 @@ describe("human takeover — AI stops, human speaks, context preserved, hand bac
     expect(humanTurn?.text).toContain("human representative");
     expect(repCount(afterHuman)).toBe(2); // the human reply added a rep turn
 
+    // 4b) The human's message TEXT is written into the audit trail — not just "a human replied". This is
+    // what the orchestrator reads on hand-back for its within-session memory (anti-repeat / already-said),
+    // so recording the text is what actually feeds the human's words back into the AI's context.
+    const trail = await c.audit.forSession(sid);
+    const humanReplyEvent = trail.find((e) => e.type === "human_reply");
+    expect(humanReplyEvent).toBeTruthy();
+    expect(humanReplyEvent?.payload.text).toContain("human representative");
+
     // 5) Hand back → the AI answers again, and it can SEE the human turn in the transcript (context/memory).
     await c.conversation.handBack(sid);
     const t3 = await c.conversation.turn(turnCtx(c, "And what is the LIBREXIA program?", sid));

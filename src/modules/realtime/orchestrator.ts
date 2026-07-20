@@ -198,8 +198,12 @@ function disclosureAlreadyGiven(priorEvents: AuditEvent[]): boolean {
 }
 
 function antiRepeatGuidance(priorEvents: AuditEvent[]): string[] {
+  // Include human-rep replies (from a takeover) alongside the AI's own outputs: on hand-back the AI
+  // should build on what the human already told the doctor, not restate it. This is advisory only —
+  // it can make the AI AVOID repeating a human's (trusted, free-text) message, never speak something
+  // ungrounded, since grounding still validates every composed answer against approved blocks.
   const priorReplies = priorEvents
-    .filter((e) => e.type === "response_output" && typeof e.payload.text === "string")
+    .filter((e) => (e.type === "response_output" || e.type === "human_reply") && typeof e.payload.text === "string")
     .map((e) => (e.payload.text as string).split(/\n\nImportant Safety Information:/)[0]!.trim())
     .filter((t) => t.length > 20);
   const covered = [...new Set(priorReplies)].slice(-8);
